@@ -29,7 +29,7 @@ func TestCoverageGapsAndBucketsNeverInventAZero(t *testing.T) {
 	gapStart := vocab.PeriodHour.SlotStart(f.now-5*3600) + 120
 	check(t, f.db.RecordCollectionGap(ctx, vocab.CollectionGap{ProviderID: provider, IntervalStartAt: gapStart,
 		IntervalEndAt: gapStart + 1200, Reason: vocab.GapDigestOutsideWindow, DetectedAt: f.now}))
-	f.exec(t, "DELETE FROM flow WHERE observed_at >= ? AND observed_at < ?", gapStart, gapStart+1200)
+	f.exec(t, "DELETE FROM flow WHERE observed_at >= $1 AND observed_at < $2", gapStart, gapStart+1200)
 	_, err = f.db.RefreshAggregates(ctx, 0, f.now, []int64{gapStart})
 	check(t, err)
 
@@ -46,7 +46,7 @@ func TestCoverageGapsAndBucketsNeverInventAZero(t *testing.T) {
 	series := decodeData[timeSeriesData](t, response).Series
 	direct := map[string]int64{}
 	rows, err := f.db.DB().QueryContext(ctx, `SELECT traffic_direction, sum(packet_bytes) FROM classified_flow
-		WHERE observed_at >= ? AND observed_at < ? AND exit_leg_device IS NULL GROUP BY 1`,
+		WHERE observed_at >= $1 AND observed_at < $2 AND exit_leg_device IS NULL GROUP BY 1`,
 		response.Window.Requested.From, response.Window.Requested.To)
 	check(t, err)
 	for rows.Next() {
@@ -91,7 +91,7 @@ func TestAnAggregateBehindItsFlowsIsFlaggedStale(t *testing.T) {
 	if len(fresh.Freshness) != 1 || fresh.Freshness[0].Stale || fresh.Freshness[0].SlotsRead == 0 {
 		t.Errorf("a refreshed window reads %+v", fresh.Freshness)
 	}
-	f.exec(t, "UPDATE volume_aggregate_1h SET computed_at = ? WHERE period_start_at = ?",
+	f.exec(t, "UPDATE volume_aggregate_1h SET computed_at = $1 WHERE period_start_at = $2",
 		f.now-7200, vocab.PeriodHour.SlotStart(f.now-6*3600))
 	stale := f.respond(t, "interface_traffic_matrix", map[string]any{"period": "24h"})
 	if len(stale.Freshness) != 1 || !stale.Freshness[0].Stale || stale.Freshness[0].StaleSlots == 0 {

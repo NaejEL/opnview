@@ -52,7 +52,7 @@ func (r *SettingsReader) readOnly(ctx context.Context, read func(*sql.Tx) error)
 func (r *SettingsReader) Setting(ctx context.Context, key string) (string, bool, error) {
 	var value string
 	err := r.readOnly(ctx, func(transaction *sql.Tx) error {
-		return transaction.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", key).Scan(&value)
+		return transaction.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = $1", key).Scan(&value)
 	})
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -69,7 +69,7 @@ func (r *SettingsReader) Credential(ctx context.Context, name string) (accounts.
 	err := r.readOnly(ctx, func(transaction *sql.Tx) error {
 		return transaction.QueryRowContext(ctx,
 			`SELECT name, algorithm, key_id, nonce, ciphertext, updated_at
-			 FROM encrypted_credential WHERE name = ?`, name).Scan(
+			 FROM encrypted_credential WHERE name = $1`, name).Scan(
 			&credential.Name, &credential.Algorithm, &credential.KeyID,
 			&credential.Nonce, &credential.Ciphertext, &credential.UpdatedAt)
 	})

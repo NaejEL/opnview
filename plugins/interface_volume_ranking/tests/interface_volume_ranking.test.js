@@ -21,7 +21,7 @@ function seed(t) {
     "(10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', '192.0.2.10', :at, :at), " +
     "(20, 'mac', '00:11:22:33:44:66', 2, '00:11:22:33:44:66', '198.51.100.20', :at, :at)", { at: at });
   t.sql("INSERT INTO rule (id, pf_label, description, action, interface, legacy, logs_matches, discovered_at) " +
-    "VALUES (5, 'label-five', 'Quiet pass', 'pass', 'opt1', 0, 0, :at)", { at: at });
+    "VALUES (5, 'label-five', 'Quiet pass', 'pass', 'opt1', false, false, :at)", { at: at });
   var flow = function (id, iface, device, client, address, bytes) {
     t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
       "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, protocol, " +

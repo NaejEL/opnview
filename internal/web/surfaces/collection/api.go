@@ -38,12 +38,9 @@ const ConditionRetentionConfirmationRequired = "retention_confirmation_required"
 // apiRoutes are the surface's JSON rows of the route table.
 func (s *surface) apiRoutes() []web.Route {
 	return []web.Route{
-		{Method: http.MethodGet, Pattern: PathAPICollection, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPICollection},
-		{Method: http.MethodPost, Pattern: PathAPICollectionKind, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPIKind},
-		{Method: http.MethodPost, Pattern: PathAPICollectionSettings, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPISettingCard},
+		web.JSONRoute(http.MethodGet, PathAPICollection, s.handleAPICollection),
+		web.JSONRoute(http.MethodPost, PathAPICollectionKind, s.handleAPIKind),
+		web.JSONRoute(http.MethodPost, PathAPICollectionSettings, s.handleAPISettingCard),
 	}
 }
 

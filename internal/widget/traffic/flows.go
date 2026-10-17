@@ -24,12 +24,6 @@ const (
 	DecisionUnknown                   = "unknown"
 )
 
-// Decisions are the decisions in the order a reader lists them.
-func Decisions() []string {
-	return []string{DecisionAllowed, DecisionFirewallRule, DecisionFirewallNoRule,
-		DecisionFirewallReasonNotRecorded, DecisionUnknown}
-}
-
 // The key of a service no port was recorded for: a protocol carrying no port, or a record whose port
 // was not logged.
 const ServicePortNotRecorded = "port:not_recorded"

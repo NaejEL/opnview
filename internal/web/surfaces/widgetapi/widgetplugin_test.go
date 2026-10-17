@@ -123,7 +123,7 @@ func TestAThirdPartyWidgetPluginIsServedOverHTTPFromFilesAlone(t *testing.T) {
 		latency float64
 	}{{"alpha", 12}, {"alpha", 30}, {"alpha", 18}, {"alpha", 50}, {"beta", 7.5}} {
 		if _, err := harness.Store.DB().ExecContext(context.Background(),
-			"INSERT INTO plugin_example_latency.probe (measured_at, target, latency_ms) VALUES (?, ?, ?)",
+			"INSERT INTO plugin_example_latency.probe (measured_at, target, latency_ms) VALUES ($1, $2, $3)",
 			now-600-int64(index), sample.target, sample.latency); err != nil {
 			t.Fatal(err)
 		}

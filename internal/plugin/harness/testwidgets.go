@@ -3,19 +3,18 @@ package harness
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/dop251/goja"
 
 	"github.com/NaejEL/opnview/internal/plugin/scripthost"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/widget"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/params"
@@ -49,19 +48,11 @@ func (w *testWorld) widgetAPI(vm *goja.Runtime, t *goja.Object, fail func(string
 		if w.database == nil {
 			scripthost.Throw(vm, "t.sql needs a database: the plugin declares neither a table nor a widget")
 		}
-		var arguments []any
+		parameters := map[string]any{}
 		if object, isObject := call.Argument(1).(*goja.Object); isObject {
-			exported, _ := object.Export().(map[string]any)
-			names := make([]string, 0, len(exported))
-			for name := range exported {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-			for _, name := range names {
-				arguments = append(arguments, sql.Named(name, exported[name]))
-			}
+			parameters, _ = object.Export().(map[string]any)
 		}
-		if _, err := w.database.DB().ExecContext(context.Background(), call.Argument(0).String(), arguments...); err != nil {
+		if _, err := sqldb.Exec(context.Background(), w.database.DB(), call.Argument(0).String(), parameters); err != nil {
 			scripthost.Throw(vm, "t.sql: %v", err)
 		}
 		return goja.Undefined()

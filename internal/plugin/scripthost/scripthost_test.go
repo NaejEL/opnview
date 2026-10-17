@@ -139,8 +139,7 @@ func TestAThrownErrorAndAMissingFunctionAreScriptFailures(t *testing.T) {
 	}
 }
 
-// TestTheScriptHostGrantsOnlyThePort replaces the compiled implementations' port test: a script is
-// handed the firewall endpoints its manifest declares, the normaliser and the clock, and nothing
+// TestTheScriptHostGrantsOnlyThePort: a script is handed the firewall endpoints its manifest declares, the normaliser and the clock, and nothing
 // that reaches the store, discovery, availability or another host. The members are pinned here,
 // so a capability added to the host is a decision a test records.
 func TestTheScriptHostGrantsOnlyThePort(t *testing.T) {

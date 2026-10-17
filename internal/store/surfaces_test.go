@@ -71,7 +71,7 @@ func TestSourceAvailabilityIsTheDiagnosticQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("looking up the provider: %v", err)
 	}
-	if _, err := database.DB().Exec("DELETE FROM source_availability WHERE provider_id = ?", missing); err != nil {
+	if _, err := database.DB().Exec("DELETE FROM source_availability WHERE provider_id = $1", missing); err != nil {
 		t.Fatalf("deleting an availability row: %v", err)
 	}
 

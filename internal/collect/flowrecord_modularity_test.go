@@ -100,7 +100,7 @@ func TestASecondExporterIsAddedByItsDirectoryAlone(t *testing.T) {
 	if rows := collecttest.ScalarCount(t, second.Store, `SELECT count(*) FROM capture_interface AS i
 		JOIN capture_interface_parent_of AS p ON p.capture_configuration_id = i.capture_configuration_id
 		  AND p.identifier = i.identifier
-		WHERE i.identifier = ? AND i.exported = 'yes' AND p.of_identifier = 'example_if_b'`,
+		WHERE i.identifier = $1 AND i.exported = 'yes' AND p.of_identifier = 'example_if_b'`,
 		collecttest.InsideIdentifier); rows != 1 {
 		t.Errorf("the second exporter's exported and parent_of were stored %d times, want once", rows)
 	}

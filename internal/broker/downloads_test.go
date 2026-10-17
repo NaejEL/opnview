@@ -23,7 +23,7 @@ func TestADownloadStaysOutOfTheQueue(t *testing.T) {
 	w.broker.Scheduler().SetSettings(schedule.Settings{MaxInFlight: 1, MaxPerSecond: 1})
 	release := make(chan struct{})
 	held := make(chan struct{}, 1)
-	w.fake.answer(func(*http.Request, string) (int, string, string) {
+	w.fake.AnswerWith(func(*http.Request, string) (int, string, string) {
 		held <- struct{}{}
 		<-release
 		return http.StatusOK, "application/json", rowsBody

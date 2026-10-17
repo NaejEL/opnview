@@ -34,12 +34,12 @@ func TestALeasePassStoresEachGenerationAndResolvesTheIdentityCascade(t *testing.
 	// The lease that reports a client identifier uses the most stable level; the one that
 	// reports only a MAC uses the second.
 	if byIdentifier := collecttest.ScalarCount(t, harness.Store,
-		"SELECT count(*) FROM client WHERE identity_kind = ?",
+		"SELECT count(*) FROM client WHERE identity_kind = $1",
 		vocab.IdentityDHCPClientID); byIdentifier == 0 {
 		t.Error("no client was identified by its DHCP client identifier")
 	}
 	if byMAC := collecttest.ScalarCount(t, harness.Store,
-		"SELECT count(*) FROM client WHERE identity_kind = ?", vocab.IdentityMAC); byMAC == 0 {
+		"SELECT count(*) FROM client WHERE identity_kind = $1", vocab.IdentityMAC); byMAC == 0 {
 		t.Error("no client was identified by its MAC")
 	}
 
@@ -222,7 +222,7 @@ func TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs(t *testing.T) {
 	}
 	// Every neighbour is identified by its MAC, which is the level the tables supply.
 	if byMAC := collecttest.ScalarCount(t, harness.Store,
-		"SELECT count(*) FROM client WHERE identity_kind = ?", vocab.IdentityMAC); byMAC != neighbours {
+		"SELECT count(*) FROM client WHERE identity_kind = $1", vocab.IdentityMAC); byMAC != neighbours {
 		t.Errorf("%d of the %d neighbours were identified by MAC", byMAC, neighbours)
 	}
 }

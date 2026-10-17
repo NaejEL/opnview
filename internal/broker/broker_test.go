@@ -7,9 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -25,6 +23,7 @@ import (
 	"github.com/NaejEL/opnview/internal/broker/infer"
 	"github.com/NaejEL/opnview/internal/broker/mirror"
 	"github.com/NaejEL/opnview/internal/broker/schedule"
+	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/storetest"
@@ -55,118 +54,6 @@ func (c *testClock) advance(by time.Duration) {
 	c.mutex.Unlock()
 }
 
-// recorded is one request the fake firewall received.
-type recorded struct {
-	method string
-	path   string
-	query  url.Values
-	body   string
-}
-
-// fakeFirewall answers through a handler and counts every request.
-type fakeFirewall struct {
-	mutex    sync.Mutex
-	server   *httptest.Server
-	requests []recorded
-	handler  func(request *http.Request, body string) (int, string, string)
-	streams  map[string]chan string
-	// open counts the stream connections open, by path; refuse answers the next connections to a
-	// stream path with a server error.
-	open   map[string]int
-	refuse map[string]int
-}
-
-func newFakeFirewall(t *testing.T) *fakeFirewall {
-	t.Helper()
-	fake := &fakeFirewall{streams: map[string]chan string{}, open: map[string]int{}, refuse: map[string]int{}}
-	fake.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		raw, _ := io.ReadAll(request.Body)
-		fake.mutex.Lock()
-		fake.requests = append(fake.requests, recorded{method: request.Method, path: request.URL.Path,
-			query: request.URL.Query(), body: string(raw)})
-		handler := fake.handler
-		stream := fake.streams[request.URL.Path]
-		refused := stream != nil && fake.refuse[request.URL.Path] > 0
-		if refused {
-			fake.refuse[request.URL.Path]--
-		} else if stream != nil {
-			fake.open[request.URL.Path]++
-		}
-		fake.mutex.Unlock()
-		if refused {
-			writer.Header().Set("Content-Type", "application/json")
-			writer.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = writer.Write([]byte(`{}`))
-			return
-		}
-		if stream != nil {
-			defer func() {
-				fake.mutex.Lock()
-				fake.open[request.URL.Path]--
-				fake.mutex.Unlock()
-			}()
-			writer.Header().Set("Content-Type", "text/event-stream")
-			writer.WriteHeader(http.StatusOK)
-			flusher, _ := writer.(http.Flusher)
-			if flusher != nil {
-				flusher.Flush()
-			}
-			for {
-				select {
-				case event, open := <-stream:
-					if !open {
-						return
-					}
-					_, _ = writer.Write([]byte("data: " + event + "\n\n"))
-					if flusher != nil {
-						flusher.Flush()
-					}
-				case <-request.Context().Done():
-					return
-				}
-			}
-		}
-		status, contentType, body := http.StatusNotFound, "application/json", `{"errorMessage":"Endpoint not found"}`
-		if handler != nil {
-			status, contentType, body = handler(request, string(raw))
-		}
-		writer.Header().Set("Content-Type", contentType)
-		writer.WriteHeader(status)
-		_, _ = writer.Write([]byte(body))
-	}))
-	t.Cleanup(fake.server.Close)
-	return fake
-}
-
-func (f *fakeFirewall) answer(handler func(request *http.Request, body string) (int, string, string)) {
-	f.mutex.Lock()
-	f.handler = handler
-	f.mutex.Unlock()
-}
-
-func (f *fakeFirewall) count(path string) int {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-	count := 0
-	for _, request := range f.requests {
-		if path == "" || request.path == path {
-			count++
-		}
-	}
-	return count
-}
-
-func (f *fakeFirewall) last(path string) recorded {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-	for index := len(f.requests) - 1; index >= 0; index-- {
-		if f.requests[index].path == path {
-			return f.requests[index]
-		}
-	}
-	return recorded{}
-}
-
 func secret(t *testing.T) string {
 	t.Helper()
 	raw := make([]byte, 12)
@@ -179,7 +66,7 @@ func secret(t *testing.T) string {
 // world is one broker over the fake, the mirror and the clock.
 type world struct {
 	t       *testing.T
-	fake    *fakeFirewall
+	fake    *providertest.Firewall
 	clock   *testClock
 	broker  *broker.Broker
 	store   *store.Store
@@ -191,11 +78,11 @@ type world struct {
 func newWorld(t *testing.T) *world {
 	t.Helper()
 	database := storetest.Open(t)
-	fake := newFakeFirewall(t)
+	fake := providertest.NewFirewall(t)
 	clock := &testClock{now: time.Unix(1790000000, 0)}
 	w := &world{t: t, fake: fake, clock: clock, store: database, key: secret(t), secret: secret(t),
-		baseURL: fake.server.URL}
-	client := opnsense.NewClient(opnsense.Credentials{BaseURL: fake.server.URL, APIKey: w.key, APISecret: w.secret},
+		baseURL: fake.BaseURL()}
+	client := opnsense.NewClient(opnsense.Credentials{BaseURL: fake.BaseURL(), APIKey: w.key, APISecret: w.secret},
 		http.DefaultTransport, 5*time.Second)
 	w.broker = broker.New(client, mirror.New(database, func() int64 { return clock.Now().Unix() }),
 		broker.Options{Clock: clock, Firewall: func() string { return w.baseURL }})
@@ -326,7 +213,7 @@ func TestTwoReadersShareOneCallAndTheMirrorServesWhileFresh(t *testing.T) {
 	w := newWorld(t)
 	ep := endpoint(t, http.MethodGet, "/api/example/shared/search", opnsense.NoBody)
 	release := make(chan struct{})
-	w.fake.answer(func(*http.Request, string) (int, string, string) {
+	w.fake.AnswerWith(func(*http.Request, string) (int, string, string) {
 		<-release
 		return http.StatusOK, "application/json", rowsBody
 	})
@@ -343,7 +230,7 @@ func TestTwoReadersShareOneCallAndTheMirrorServesWhileFresh(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	close(release)
 	group.Wait()
-	if calls := w.fake.count(ep.Path); calls != 1 {
+	if calls := w.fake.CountTo(ep.Path); calls != 1 {
 		t.Fatalf("two readers caused %d calls", calls)
 	}
 	if fmt.Sprint(reads[0]) != fmt.Sprint(reads[1]) || reads[0]["1.b"] != "q" {
@@ -351,15 +238,15 @@ func TestTwoReadersShareOneCallAndTheMirrorServesWhileFresh(t *testing.T) {
 	}
 	w.clock.advance(10 * time.Second)
 	served, read := w.call("example_reader_0", ep, opnsense.RequestOptions{}, 30*time.Second, "a", "b")
-	if served.ServedFrom != broker.ServedFromMirror || w.fake.count(ep.Path) != 1 || read["1.a"] != "p" ||
+	if served.ServedFrom != broker.ServedFromMirror || w.fake.CountTo(ep.Path) != 1 || read["1.a"] != "p" ||
 		served.AgeSeconds != 10 {
 		t.Errorf("a fresh enough request was served %s (age %v, %d calls, %v)", served.ServedFrom, served.AgeSeconds,
-			w.fake.count(ep.Path), read)
+			w.fake.CountTo(ep.Path), read)
 	}
 	w.clock.advance(31 * time.Second)
 	served, _ = w.call("example_reader_0", ep, opnsense.RequestOptions{}, 30*time.Second, "a")
-	if served.ServedFrom != broker.ServedFromFirewall || w.fake.count(ep.Path) != 2 {
-		t.Errorf("a request past its max age was served %s with %d calls", served.ServedFrom, w.fake.count(ep.Path))
+	if served.ServedFrom != broker.ServedFromFirewall || w.fake.CountTo(ep.Path) != 2 {
+		t.Errorf("a request past its max age was served %s with %d calls", served.ServedFrom, w.fake.CountTo(ep.Path))
 	}
 }
 
@@ -370,7 +257,7 @@ func TestAFieldReadForTheFirstTimeIsAddedAndAReaderOfTheBodyReadsAll(t *testing.
 	t.Parallel()
 	w := newWorld(t)
 	ep := endpoint(t, http.MethodGet, "/api/example/added/search", opnsense.NoBody)
-	w.fake.answer(jsonAnswer(rowsBody))
+	w.fake.AnswerWith(jsonAnswer(rowsBody))
 	w.call("example_reader", ep, opnsense.RequestOptions{}, time.Minute, "a", "b")
 	w.call("example_reader", ep, opnsense.RequestOptions{}, time.Minute, "a", "b")
 	served, err := w.broker.Call(context.Background(), broker.Request{Requester: broker.Requester{Name: "example_reader",
@@ -398,13 +285,13 @@ func TestAFieldReadForTheFirstTimeIsAddedAndAReaderOfTheBodyReadsAll(t *testing.
 	w.call("example_reader", ep, opnsense.RequestOptions{}, time.Minute)
 	var columns int
 	if err := w.store.DB().QueryRow(`SELECT count(*) FROM information_schema.columns WHERE table_schema = 'opnsense'
-		AND table_name = ? AND column_name = 'c'`, mirror.TableName(mirror.Endpoint{Path: ep.Path, Method: ep.Method},
+		AND table_name = $1 AND column_name = 'c'`, mirror.TableName(mirror.Endpoint{Path: ep.Path, Method: ep.Method},
 		"rows[]")).Scan(&columns); err != nil || columns != 1 {
 		t.Errorf("the newly read field has %d columns (%v)", columns, err)
 	}
 
 	whole := endpoint(t, http.MethodGet, "/api/example/whole/get", opnsense.NoBody)
-	w.fake.answer(jsonAnswer(rowsBody))
+	w.fake.AnswerWith(jsonAnswer(rowsBody))
 	response, err := w.broker.GateCall(context.Background(), "core:example", whole, opnsense.RequestOptions{},
 		time.Minute)
 	if err != nil || !response.OK() {
@@ -417,7 +304,7 @@ func TestAFieldReadForTheFirstTimeIsAddedAndAReaderOfTheBodyReadsAll(t *testing.
 	}
 	var readWhole bool
 	if err := w.store.DB().QueryRow(`SELECT d.read_whole FROM opnsense.mirror_datum AS d
-		JOIN opnsense.mirror_endpoint AS e ON e.id = d.endpoint_id WHERE e.path = ?`, whole.Path).Scan(&readWhole); err != nil ||
+		JOIN opnsense.mirror_endpoint AS e ON e.id = d.endpoint_id WHERE e.path = $1`, whole.Path).Scan(&readWhole); err != nil ||
 		!readWhole {
 		t.Errorf("a reader of the body did not make the datum read_whole (%v)", err)
 	}
@@ -433,7 +320,7 @@ func TestARecordStreamIsReadAfterItsCursorWithItsGaps(t *testing.T) {
 	ep := endpoint(t, http.MethodPost, "/api/example/log/search", opnsense.JSONBody)
 	var mutex sync.Mutex
 	rows := []int64{1790000000 - 300, 1790000000 - 200, 1790000000 - 100}
-	w.fake.answer(func(_ *http.Request, body string) (int, string, string) {
+	w.fake.AnswerWith(func(_ *http.Request, body string) (int, string, string) {
 		var request struct {
 			From int64 `json:"from"`
 			To   int64 `json:"to"`
@@ -459,7 +346,7 @@ func TestARecordStreamIsReadAfterItsCursorWithItsGaps(t *testing.T) {
 	rows = append(rows, 1790000000+10)
 	mutex.Unlock()
 	w.call("example_reader", ep, window(), 10*time.Second, "time", "v")
-	if body := w.fake.last(ep.Path).body; !strings.Contains(body, `"from":1789999900`) {
+	if body := string(w.fake.LastTo(ep.Path).Body); !strings.Contains(body, `"from":1789999900`) {
 		t.Errorf("the refresh asked %s, not the window after the newest stored row", body)
 	}
 	after := float64(1790000000 - 150)
@@ -494,21 +381,21 @@ func TestAWindowNotHonouredIsNoLongerReliedOn(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	ep := endpoint(t, http.MethodPost, "/api/example/ignored/search", opnsense.JSONBody)
-	w.fake.answer(jsonAnswer(`{"rows": [{"time": 1789990000, "x": "a"}, {"time": 1789980000, "x": "b"},
+	w.fake.AnswerWith(jsonAnswer(`{"rows": [{"time": 1789990000, "x": "a"}, {"time": 1789980000, "x": "b"},
 		{"time": 1789970000, "x": "c"}]}`))
 	now := w.clock.Now().Unix()
 	w.call("example_reader", ep, opnsense.RequestOptions{JSON: map[string]any{"from": now - 600, "to": now}},
 		10*time.Second, "time", "x")
 	var honoured *bool
 	if err := w.store.DB().QueryRow(`SELECT p.honoured FROM opnsense.mirror_parameter AS p
-		JOIN opnsense.mirror_endpoint AS e ON e.id = p.endpoint_id WHERE e.path = ? AND p.name = 'from'`, ep.Path).
+		JOIN opnsense.mirror_endpoint AS e ON e.id = p.endpoint_id WHERE e.path = $1 AND p.name = 'from'`, ep.Path).
 		Scan(&honoured); err != nil || honoured == nil || *honoured {
 		t.Fatalf("the window parameter is recorded honoured %v (%v)", honoured, err)
 	}
 	w.clock.advance(20 * time.Second)
 	w.call("example_reader", ep, opnsense.RequestOptions{JSON: map[string]any{"from": now - 600, "to": now}},
 		10*time.Second, "time", "x")
-	if body := w.fake.last(ep.Path).body; !strings.Contains(body, fmt.Sprintf(`"from":%d`, now-600)) {
+	if body := string(w.fake.LastTo(ep.Path).Body); !strings.Contains(body, fmt.Sprintf(`"from":%d`, now-600)) {
 		t.Errorf("a window not honoured was narrowed again: %s", body)
 	}
 }
@@ -519,7 +406,7 @@ func TestAPagedDatumIsWalkedToItsEndAndSharedWhateverThePage(t *testing.T) {
 	w := newWorld(t)
 	ep := endpoint(t, http.MethodPost, "/api/example/paged/search", opnsense.FormBody)
 	const total = 35
-	w.fake.answer(func(_ *http.Request, body string) (int, string, string) {
+	w.fake.AnswerWith(func(_ *http.Request, body string) (int, string, string) {
 		form, _ := url.ParseQuery(body)
 		current, _ := strconv.Atoi(form.Get("current"))
 		size, _ := strconv.Atoi(form.Get("rowCount"))
@@ -532,7 +419,7 @@ func TestAPagedDatumIsWalkedToItsEndAndSharedWhateverThePage(t *testing.T) {
 	})
 	served, read := w.call("example_reader", ep, opnsense.RequestOptions{Form: opnsense.Pagination(1, 10)}, time.Minute,
 		"id")
-	if calls := w.fake.count(ep.Path); calls != 4 {
+	if calls := w.fake.CountTo(ep.Path); calls != 4 {
 		t.Errorf("a datum of 3.5 pages took %d calls", calls)
 	}
 	if len(served.Value.Field("rows").Items) != 10 || read["0.id"] != "0" {
@@ -540,8 +427,8 @@ func TestAPagedDatumIsWalkedToItsEndAndSharedWhateverThePage(t *testing.T) {
 	}
 	second, read := w.call("example_reader", ep, opnsense.RequestOptions{Form: opnsense.Pagination(4, 10)}, time.Minute,
 		"id")
-	if w.fake.count(ep.Path) != 4 || second.ServedFrom != broker.ServedFromMirror || len(read) != 5 || read["0.id"] != "30" {
-		t.Errorf("the fourth page was served %s with %v after %d calls", second.ServedFrom, read, w.fake.count(ep.Path))
+	if w.fake.CountTo(ep.Path) != 4 || second.ServedFrom != broker.ServedFromMirror || len(read) != 5 || read["0.id"] != "30" {
+		t.Errorf("the fourth page was served %s with %v after %d calls", second.ServedFrom, read, w.fake.CountTo(ep.Path))
 	}
 }
 
@@ -552,7 +439,7 @@ func TestCadenceFollowsDemandAndAFloorBoundsIt(t *testing.T) {
 	ep := endpoint(t, http.MethodGet, "/api/example/cadence/get", opnsense.NoBody)
 	w.broker.Declare("example_reader", false, ep, broker.EndpointDeclaration{Floor: 5 * time.Second,
 		UpstreamURL: "https://example.invalid/source"})
-	w.fake.answer(jsonAnswer(rowsBody))
+	w.fake.AnswerWith(jsonAnswer(rowsBody))
 	w.call("example_slow", ep, opnsense.RequestOptions{}, 60*time.Second)
 	w.call("example_fast", ep, opnsense.RequestOptions{}, 2*time.Second)
 	keys := w.datumKeys(ep)
@@ -589,7 +476,7 @@ func TestFailuresBackOffAndNotFoundDoesNot(t *testing.T) {
 	w := newWorld(t)
 	failing := endpoint(t, http.MethodGet, "/api/example/failing/get", opnsense.NoBody)
 	absent := endpoint(t, http.MethodGet, "/api/example/absent/get", opnsense.NoBody)
-	w.fake.answer(func(request *http.Request, _ string) (int, string, string) {
+	w.fake.AnswerWith(func(request *http.Request, _ string) (int, string, string) {
 		if request.URL.Path == failing.Path {
 			return http.StatusInternalServerError, "application/json", `{}`
 		}
@@ -598,8 +485,8 @@ func TestFailuresBackOffAndNotFoundDoesNot(t *testing.T) {
 	w.call("example_reader", failing, opnsense.RequestOptions{}, time.Second)
 	w.clock.advance(time.Second)
 	served, _ := w.call("example_reader", failing, opnsense.RequestOptions{}, time.Second)
-	if w.fake.count(failing.Path) != 1 || served.Response.Outcome != opnsense.OutcomeServerError {
-		t.Errorf("a failing datum was called %d times inside its back-off (%s)", w.fake.count(failing.Path),
+	if w.fake.CountTo(failing.Path) != 1 || served.Response.Outcome != opnsense.OutcomeServerError {
+		t.Errorf("a failing datum was called %d times inside its back-off (%s)", w.fake.CountTo(failing.Path),
 			served.Response.Outcome)
 	}
 	for _, reader := range []string{"example_one", "example_two"} {
@@ -608,12 +495,12 @@ func TestFailuresBackOffAndNotFoundDoesNot(t *testing.T) {
 			t.Errorf("%s was answered %s", reader, served.Response.Outcome)
 		}
 	}
-	if w.fake.count(absent.Path) != 1 {
-		t.Errorf("two readers of an absent endpoint caused %d calls", w.fake.count(absent.Path))
+	if w.fake.CountTo(absent.Path) != 1 {
+		t.Errorf("two readers of an absent endpoint caused %d calls", w.fake.CountTo(absent.Path))
 	}
 	w.clock.advance(2 * time.Minute)
 	w.call("example_one", absent, opnsense.RequestOptions{}, time.Minute)
-	if w.fake.count(absent.Path) != 2 {
+	if w.fake.CountTo(absent.Path) != 2 {
 		t.Error("not_found was backed off rather than read at the reader's cadence")
 	}
 }
@@ -622,7 +509,7 @@ func TestFailuresBackOffAndNotFoundDoesNot(t *testing.T) {
 func TestAWriteIsRefusedAndNothingReachesTheFirewall(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	w.fake.answer(jsonAnswer(`{}`))
+	w.fake.AnswerWith(jsonAnswer(`{}`))
 	for _, refused := range []opnsense.Endpoint{
 		{Path: "/api/example/thing/add_item", Method: http.MethodPost},
 		{Path: "/api/diagnostics/interface/carp_status", Method: http.MethodPost},
@@ -638,7 +525,7 @@ func TestAWriteIsRefusedAndNothingReachesTheFirewall(t *testing.T) {
 			t.Errorf("%s %s was not refused as a write: %v", refused.Method, refused.Path, err)
 		}
 	}
-	if count := w.fake.count(""); count != 0 {
+	if count := w.fake.CountTo(""); count != 0 {
 		t.Errorf("%d requests reached the firewall", count)
 	}
 	if counters := w.broker.Counters(); counters.WriteRefused != 6 {
@@ -661,9 +548,7 @@ func TestAnEventStreamIsRecognisedFromItsHeaders(t *testing.T) {
 	w := newWorld(t)
 	ep := endpoint(t, http.MethodGet, "/api/example/sneaky/get", opnsense.NoBody)
 	events := make(chan string)
-	w.fake.mutex.Lock()
-	w.fake.streams[ep.Path] = events
-	w.fake.mutex.Unlock()
+	w.fake.Feed(ep.Path, events)
 	t.Cleanup(func() { close(events) })
 	started := time.Now()
 	served, err := w.broker.Call(context.Background(), broker.Request{Requester: broker.Requester{Name: "example_reader"},
@@ -690,16 +575,16 @@ func TestAChangedFirewallServesNothingAsFresh(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	ep := endpoint(t, http.MethodGet, "/api/example/moved/get", opnsense.NoBody)
-	w.fake.answer(jsonAnswer(rowsBody))
+	w.fake.AnswerWith(jsonAnswer(rowsBody))
 	w.call("example_reader", ep, opnsense.RequestOptions{}, time.Hour, "a")
 	w.call("example_reader", ep, opnsense.RequestOptions{}, time.Hour, "a")
-	if w.fake.count(ep.Path) != 1 {
+	if w.fake.CountTo(ep.Path) != 1 {
 		t.Fatal("the mirror did not serve a fresh answer")
 	}
-	w.baseURL = strings.Replace(w.fake.server.URL, "127.0.0.1", "localhost", 1)
+	w.baseURL = strings.Replace(w.fake.BaseURL(), "127.0.0.1", "localhost", 1)
 	served, _ := w.call("example_reader", ep, opnsense.RequestOptions{}, time.Hour, "a")
-	if served.ServedFrom != broker.ServedFromFirewall || w.fake.count(ep.Path) != 2 {
-		t.Errorf("after the firewall changed, the answer was served from %s after %d calls", served.ServedFrom, w.fake.count(ep.Path))
+	if served.ServedFrom != broker.ServedFromFirewall || w.fake.CountTo(ep.Path) != 2 {
+		t.Errorf("after the firewall changed, the answer was served from %s after %d calls", served.ServedFrom, w.fake.CountTo(ep.Path))
 	}
 }
 
@@ -711,7 +596,7 @@ func TestTheCatalogueHoldsNoValueNoCredentialAndListsAnUncitedEndpoint(t *testin
 	ep := endpoint(t, http.MethodGet, "/api/example/listed/search", opnsense.NoBody)
 	w.broker.Declare("example_third_party", false, ep, broker.EndpointDeclaration{
 		Corrections: infer.Corrections{Key: []string{"id"}}})
-	w.fake.answer(jsonAnswer(`{"rows": [{"id": "value-held-secretly-1", "a": "example-value-a"}]}`))
+	w.fake.AnswerWith(jsonAnswer(`{"rows": [{"id": "value-held-secretly-1", "a": "example-value-a"}]}`))
 	w.call("example_third_party", ep, opnsense.RequestOptions{Query: url.Values{"client": {"value-in-parameter"}}},
 		time.Minute, "id", "a")
 	catalogue, err := w.broker.Catalogue(context.Background())
@@ -784,7 +669,7 @@ func TestTheMirrorTablesAreDatasetsWithInferredRoles(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	ep := endpoint(t, http.MethodGet, "/api/example/lookups/search", opnsense.NoBody)
-	w.fake.answer(jsonAnswer(`{"rows": [{"id": "1", "domain": "www.example.com", "hits": 3},
+	w.fake.AnswerWith(jsonAnswer(`{"rows": [{"id": "1", "domain": "www.example.com", "hits": 3},
 		{"id": "2", "domain": "mail.example.org", "hits": 5}, {"id": "3", "domain": "ftp.example.net", "hits": 1}]}`))
 	w.call("example_reader", ep, opnsense.RequestOptions{}, time.Minute, "id", "domain", "hits")
 	var found bool

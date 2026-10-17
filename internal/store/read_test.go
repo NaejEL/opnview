@@ -26,7 +26,7 @@ func directWindow(t *testing.T, database *store.Store, from, to int64) map[strin
 		sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END),
 		sum(CASE WHEN action IN ('block', 'reject') THEN 1 ELSE 0 END),
 		sum(CASE WHEN action = 'unknown' THEN 1 ELSE 0 END)
-		FROM classified_flow WHERE observed_at >= ? AND observed_at < ? GROUP BY traffic_direction`, from, to)
+		FROM classified_flow WHERE observed_at >= $1 AND observed_at < $2 GROUP BY traffic_direction`, from, to)
 	if err != nil {
 		t.Fatalf("computing a window directly: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 	// them and says what it covers.
 	horizon := network.Now - 4*86400
 	whole := vocab.PeriodHour.SlotStart(horizon) + 3600
-	if _, err := network.DB.DB().Exec("DELETE FROM flow WHERE observed_at < ?", whole); err != nil {
+	if _, err := network.DB.DB().Exec("DELETE FROM flow WHERE observed_at < $1", whole); err != nil {
 		t.Fatalf("purging the old flows: %v", err)
 	}
 	from := network.Now - 8*86400 + 1234
@@ -96,7 +96,7 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 	}
 	var slotBytes int64
 	if err := network.DB.DB().QueryRow(`SELECT sum(bytes) FROM volume_aggregate_1h
-		WHERE period_start_at >= ? AND period_start_at < ?`, firstHour, vocab.PeriodHour.SlotStart(to)).Scan(&slotBytes); err != nil {
+		WHERE period_start_at >= $1 AND period_start_at < $2`, firstHour, vocab.PeriodHour.SlotStart(to)).Scan(&slotBytes); err != nil {
 		t.Fatalf("summing the slots: %v", err)
 	}
 	right := directWindow(t, network.DB, vocab.PeriodHour.SlotStart(to), to)
@@ -136,7 +136,7 @@ func TestASeriesSumsToItsWindowAndMarksItsGaps(t *testing.T) {
 	}
 	// And an hour with no flow at all inside the covered interval.
 	silent := vocab.PeriodHour.SlotStart(network.Now - 10*3600)
-	if _, err := network.DB.DB().Exec("DELETE FROM flow WHERE observed_at >= ? AND observed_at < ?",
+	if _, err := network.DB.DB().Exec("DELETE FROM flow WHERE observed_at >= $1 AND observed_at < $2",
 		silent, silent+3600); err != nil {
 		t.Fatalf("emptying an hour: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
 	var flows, bytes, blocked int64
 	if err := network.DB.DB().QueryRow(`SELECT count(*), sum(packet_bytes),
 		sum(CASE WHEN action IN ('block', 'reject') THEN 1 ELSE 0 END) FROM flow
-		WHERE observed_at >= ? AND observed_at < ?`, from, to).Scan(&flows, &bytes, &blocked); err != nil {
+		WHERE observed_at >= $1 AND observed_at < $2`, from, to).Scan(&flows, &bytes, &blocked); err != nil {
 		t.Fatalf("counting the window: %v", err)
 	}
 	for _, root := range []reads.TreeRoot{reads.TreeRootInterface, reads.TreeRootClient, reads.TreeRootOwner} {
@@ -292,7 +292,7 @@ func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 			assigned = network.Now
 		}
 		if _, err := network.DB.DB().Exec(`INSERT INTO blocklist (id, name, purpose, purpose_assigned_at,
-			first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, 0, 0)`,
+			first_seen_at, last_seen_at) VALUES ($1, $2, $3, $4, 0, 0)`,
 			index+1, fmt.Sprintf("example-list-%d", index), purpose, assigned); err != nil {
 			t.Fatalf("writing a list: %v", err)
 		}
@@ -309,7 +309,7 @@ func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 		}
 		if _, err := network.DB.DB().Exec(`INSERT INTO dns_resolution (lookup_key, client_address, domain,
 			resolver, action, blocklist_id, looked_up_at, ingested_at)
-			VALUES (?, ?, 'blocked.example.invalid', 'unbound', ?, ?, ?, ?)`,
+			VALUES ($1, $2, 'blocked.example.invalid', 'unbound', $3, $4, $5, $6)`,
 			fmt.Sprintf("example-blocked-%d", index), client.Address, action, listID,
 			network.Now-100-int64(index), network.Now); err != nil {
 			t.Fatalf("writing a blocked lookup: %v", err)
@@ -406,18 +406,18 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 	// The eligible flows are those a client sent outside, and no others: a flow with both
 	// ends outside, which classified_flow may call inbound, is not one, and the count is the
 	// one the per-client diagnostic sums to.
-	unsent := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
+	unsent := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow WHERE observed_at >= $1 AND observed_at < $2
 		AND dst_interface_id IS NULL AND src_client_id IS NULL`, network.Now-86400, network.Now+1)
 	if unsent == 0 {
 		t.Fatal("the window holds no flow with both ends outside, so the eligibility rule has no teeth")
 	}
-	if toFirewall := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
-		AND (src_is_this_firewall = 1 OR dst_is_this_firewall = 1)`, network.Now-86400, network.Now+1); toFirewall == 0 {
+	if toFirewall := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow WHERE observed_at >= $1 AND observed_at < $2
+		AND (src_is_this_firewall OR dst_is_this_firewall)`, network.Now-86400, network.Now+1); toFirewall == 0 {
 		t.Fatal("the window holds no flow from or to this firewall, so that half of the rule has no teeth")
 	}
-	if sent := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
+	if sent := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow WHERE observed_at >= $1 AND observed_at < $2
 		AND dst_interface_id IS NULL AND src_client_id IS NOT NULL
-		AND src_is_this_firewall = 0 AND dst_is_this_firewall = 0`, network.Now-86400, network.Now+1); rate.EligibleFlows != sent {
+		AND NOT src_is_this_firewall AND NOT dst_is_this_firewall`, network.Now-86400, network.Now+1); rate.EligibleFlows != sent {
 		t.Errorf("the rate counts %d eligible flows, not the %d a client sent outside", rate.EligibleFlows, sent)
 	}
 	unbound, _ := network.DB.ProviderID(ctx, "dns_lookup", "unbound")
@@ -565,7 +565,7 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 		t.Fatalf("the bound is %d, %v, not twice the interval", bound, err)
 	}
 	leased := network.Clients[0]
-	clientID := storetest.QueryInt(t, network.DB, "SELECT id FROM client WHERE last_address = ?", leased.Address)
+	clientID := storetest.QueryInt(t, network.DB, "SELECT id FROM client WHERE last_address = $1", leased.Address)
 	older, latest := network.Now-500, network.Now-200
 	peers := []string{storetest.Outside(1, leased.V6), storetest.Outside(2, leased.V6)}
 
@@ -599,7 +599,7 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 	pair(mixed.Device, mixed.Address, inner.Address, latest, 30)
 	// A record that carried no outbound total: the client's outbound is unmeasured, not 0.
 	silent := network.Clients[3]
-	silentID := storetest.QueryInt(t, network.DB, "SELECT id FROM client WHERE last_address = ?", silent.Address)
+	silentID := storetest.QueryInt(t, network.DB, "SELECT id FROM client WHERE last_address = $1", silent.Address)
 	endpoint(silent.Device, silent.Address, latest, 10, nil)
 	pair(silent.Device, silent.Address, storetest.Outside(4, silent.V6), latest, 10)
 

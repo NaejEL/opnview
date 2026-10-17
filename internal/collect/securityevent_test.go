@@ -178,13 +178,13 @@ func TestARotationThatDiscardedAWatermarkedFileIsRecordedAsLostAndAsAGap(t *test
 	}
 
 	gaps := collecttest.ScalarCount(t, harness.Store,
-		"SELECT count(*) FROM collection_gap WHERE reason = ?", string(vocab.GapEveRotationLost))
+		"SELECT count(*) FROM collection_gap WHERE reason = $1", string(vocab.GapEveRotationLost))
 	if gaps != 1 {
 		t.Fatalf("the rotation wrote %d gap rows, want exactly one", gaps)
 	}
 	var detail *string
 	if err := harness.Store.DB().QueryRowContext(ctx,
-		"SELECT detail FROM collection_gap WHERE reason = ?",
+		"SELECT detail FROM collection_gap WHERE reason = $1",
 		string(vocab.GapEveRotationLost)).Scan(&detail); err != nil {
 		t.Fatalf("reading the gap back: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestARotationThatDiscardedAWatermarkedFileIsRecordedAsLostAndAsAGap(t *test
 		t.Fatalf("the second pass: %v", err)
 	}
 	if repeated := collecttest.ScalarCount(t, harness.Store,
-		"SELECT count(*) FROM collection_gap WHERE reason = ?",
+		"SELECT count(*) FROM collection_gap WHERE reason = $1",
 		string(vocab.GapEveRotationLost)); repeated != 1 {
 		t.Fatalf("a second pass left %d gap rows for one loss", repeated)
 	}

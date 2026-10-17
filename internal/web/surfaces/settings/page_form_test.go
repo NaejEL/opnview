@@ -10,59 +10,48 @@ import (
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/settingfields"
+	"github.com/NaejEL/opnview/internal/web/surfaces/settings"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
-// TestSavingOneSettingsCardKeepsWhatWasTypedInTheOthers: a firewall URL and a MaxMind
-// account ID typed and not saved survive a save of the Public Suffix List card, drawn
-// in place and marked edited and not saved, and nothing of them is stored.
+// TestSavingOneSettingsCardKeepsWhatWasTypedInTheOthers: a firewall URL typed and not saved
+// survives a save of the appearance card, drawn in place and marked edited and not saved, and
+// is not stored.
 func TestSavingOneSettingsCardKeepsWhatWasTypedInTheOthers(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
 	typedURL := "https://firewall.example.net"
 	status, page := webtest.StatusAndBody(t, h.Post(web.PathSettings, url.Values{
-		webtest.FieldSettingsCard:         {webtest.SettingsCardPublicSuffix},
-		"firewall_url":                    {typedURL},
-		"api_key":                         {""},
-		"certificate_fingerprint":         {""},
-		"maxmind_account_id":              {"424242"},
-		webtest.FieldPublicSuffixInterval: {"12"},
-		settingfields.UnitFieldName(webtest.FieldPublicSuffixInterval): {settingfields.UnitHours},
-		"theme": {string(web.ThemeSystem)},
+		webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
+		"firewall_url":            {typedURL},
+		"api_key":                 {""},
+		"certificate_fingerprint": {""},
+		"theme":                   {string(web.ThemeDark)},
 	}))
 	if status != http.StatusOK {
 		t.Fatalf("a save with edits typed in other cards answered %d, not the page in place", status)
 	}
-	if got := collectiontest.Setting(h, webtest.FieldPublicSuffixInterval); got != "43200" {
-		t.Errorf("the card saved stored %q, want 43200", got)
+	if theme := h.Server.ReadTheme(context.Background()); theme != web.ThemeDark {
+		t.Errorf("the card saved stored the theme %q, want %q", theme, web.ThemeDark)
 	}
-	for _, key := range []string{config.KeyOPNsenseBaseURL, config.KeyMaxMindAccountID} {
-		if _, present, err := h.Store.Setting(context.Background(), key); err != nil || present {
-			t.Errorf("%s, typed in another card, was stored", key)
-		}
+	if _, present, err := h.Store.Setting(context.Background(), config.KeyOPNsenseBaseURL); err != nil || present {
+		t.Errorf("%s, typed in another card, was stored", config.KeyOPNsenseBaseURL)
 	}
 	edited := `<p class="notice">` + collectiontest.CatalogueText(t, msgEditedNotSaved) + "</p>"
 	firewall := settingsCardOf(t, page, webtest.SettingsCardFirewall)
-	geolocation := settingsCardOf(t, page, webtest.SettingsCardGeolocation)
 	if collectiontest.FieldValue(firewall, "firewall_url") != typedURL || !strings.Contains(firewall, edited) {
 		t.Error("the firewall URL typed and not saved was not kept, marked edited")
 	}
-	if collectiontest.FieldValue(geolocation, "maxmind_account_id") != "424242" || !strings.Contains(geolocation, edited) {
-		t.Error("the MaxMind account ID typed and not saved was not kept, marked edited")
-	}
-	suffix := settingsCardOf(t, page, webtest.SettingsCardPublicSuffix)
-	if !strings.Contains(suffix, collectiontest.CatalogueText(t, msgSettingsSaved)) || strings.Contains(suffix, edited) {
+	appearance := settingsCardOf(t, page, webtest.SettingsCardAppearance)
+	if !strings.Contains(appearance, collectiontest.CatalogueText(t, msgSettingsSaved)) || strings.Contains(appearance, edited) {
 		t.Error("the card saved does not confirm its save")
-	}
-	if strings.Contains(settingsCardOf(t, page, webtest.SettingsCardAppearance), edited) {
-		t.Error("a card whose fields were posted unchanged is marked edited")
 	}
 
 	// The firewall card's own save then stores what was kept.
 	webtest.Discard(t, h.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardFirewall},
-		"firewall_url": {typedURL}, "maxmind_account_id": {"424242"}}))
+		"firewall_url": {typedURL}}))
 	if got := collectiontest.Setting(h, config.KeyOPNsenseBaseURL); got != typedURL {
 		t.Errorf("the firewall card's save stored %q", got)
 	}
@@ -79,8 +68,7 @@ func TestASettingsSubmissionNamingNoCardStoresNothing(t *testing.T) {
 
 	before := webtest.DatabaseBytesExcept(t, h, "session")
 	status, page := webtest.StatusAndBody(t, h.Post(web.PathSettings, url.Values{
-		"firewall_url": {"https://firewall.example.net"}, "theme": {string(web.ThemeDark)},
-		"maxmind_account_id": {"7"}}))
+		"firewall_url": {"https://firewall.example.net"}, "theme": {string(web.ThemeDark)}}))
 	if status != http.StatusBadRequest || !strings.Contains(page, collectiontest.CatalogueText(t, msgCardNotNamed)) {
 		t.Errorf("a submission naming no card answered %d without its refusal", status)
 	}
@@ -255,4 +243,78 @@ func TestTheRetentionConfirmationShowsEveryChangeItApplies(t *testing.T) {
 		mode == webtest.AggregateModeNoDomains {
 		t.Error("cancelling stored the site-name mode")
 	}
+}
+
+// TestEachSettingsCardSavesOnlyItsOwnFields: the page is one form and each card's Save
+// names its card. A save stores that card's fields and nothing else, sends the browser
+// back to the card, and the card says what it did, or what it refused, inside itself.
+func TestEachSettingsCardSavesOnlyItsOwnFields(t *testing.T) {
+	t.Parallel()
+	h := collectiontest.SignedInHarness(t)
+	urlBefore, urlPresent, err := h.Store.Setting(context.Background(), config.KeyOPNsenseBaseURL)
+	if err != nil {
+		t.Fatalf("reading the firewall URL: %v", err)
+	}
+
+	page := webtest.PageSource(t, h, web.PathSettings)
+	if !strings.Contains(page, "<h1>"+collectiontest.CatalogueText(t, "settings.title")+"</h1>") {
+		t.Error("the settings surface has no page heading")
+	}
+	if strings.Count(page, `<form method="post" action="`+web.PathSettings+`"`) != 1 {
+		t.Error("the settings cards are not one form")
+	}
+	for _, card := range settings.SettingsCards() {
+		save := `name="` + webtest.FieldSettingsCard + `" value="` + card + `" formaction="` + web.PathSettings +
+			`#settings_` + card + `"`
+		if !strings.Contains(settingsCardOf(t, page, card), save) {
+			t.Errorf("the %s card has no Save naming it and posting to its anchor", card)
+		}
+	}
+
+	answer := h.Post(web.PathSettings, url.Values{
+		webtest.FieldSettingsCard: {webtest.SettingsCardAppearance}, "theme": {string(web.ThemeDark)}})
+	if location := answer.Header.Get("Location"); location != web.PathSettings+"?saved=appearance#settings_appearance" {
+		t.Errorf("the save sent the browser to %q, not back to its card", location)
+	}
+	status, page := webtest.Followed(t, h, answer)
+	if status != http.StatusSeeOther || collectiontest.Setting(h, config.KeyTheme) != string(web.ThemeDark) {
+		t.Fatalf("saving the appearance card answered %d", status)
+	}
+	urlAfter, urlStill, err := h.Store.Setting(context.Background(), config.KeyOPNsenseBaseURL)
+	if err != nil || urlStill != urlPresent || urlAfter != urlBefore {
+		t.Error("saving the appearance card changed the firewall URL")
+	}
+	saved := `<p class="notice ok">` + collectiontest.CatalogueText(t, msgSettingsSaved) + "</p>"
+	if !strings.Contains(settingsCardOf(t, page, webtest.SettingsCardAppearance), saved) ||
+		strings.Count(page, saved) != 1 {
+		t.Error("the save is not confirmed inside the card it was made in, and only there")
+	}
+
+	// A refused firewall URL is refused inside its card, and the theme saved on the other
+	// card is untouched by it.
+	status, page = webtest.StatusAndBody(t, h.Post(web.PathSettings, url.Values{
+		webtest.FieldSettingsCard: {webtest.SettingsCardFirewall}, "firewall_url": {"not-a-url"}}))
+	if status != http.StatusBadRequest {
+		t.Errorf("a refused firewall URL answered %d", status)
+	}
+	if collectiontest.Setting(h, config.KeyTheme) != string(web.ThemeDark) ||
+		collectiontest.SelectedIn(t, settingsCardOf(t, page, webtest.SettingsCardAppearance), "theme") != string(web.ThemeDark) {
+		t.Error("a refused firewall URL discarded the theme")
+	}
+
+	// A card that does not exist is refused.
+	status, page = webtest.StatusAndBody(t, h.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {"no_such_card"}}))
+	if status != http.StatusBadRequest || !strings.Contains(page, collectiontest.CatalogueText(t, msgSettingsCardUnknown)) {
+		t.Errorf("a card that does not exist answered %d", status)
+	}
+}
+
+// settingsCardOf is one card of the settings page, from its section to its end.
+func settingsCardOf(t *testing.T, page, card string) string {
+	t.Helper()
+	start := strings.Index(page, `<section class="card" id="settings_`+card+`"`)
+	if start < 0 {
+		t.Fatalf("the settings page has no %s card", card)
+	}
+	return page[start : start+strings.Index(page[start:], "</section>")]
 }

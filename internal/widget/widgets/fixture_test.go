@@ -62,7 +62,6 @@ type fixtureInterface struct {
 }
 
 type fixtureClient struct {
-	id      int64
 	address string
 	iface   fixtureInterface
 	v6      bool
@@ -134,7 +133,7 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 		check(t, database.UpsertInterfaceMapEntry(ctx, iface.device, fmt.Sprintf("example map %d", index), &id, before))
 		f.interfaces = append(f.interfaces, iface)
 	}
-	f.exec(t, "UPDATE interface SET user_label = 'example label' WHERE id = ?", f.interfaces[0].id)
+	f.exec(t, "UPDATE interface SET user_label = 'example label' WHERE id = $1", f.interfaces[0].id)
 
 	upstreamID, err := database.UpsertInterface(ctx, vocab.Interface{Identifier: "example_if_upstream",
 		Device: "exdevup", Description: "example description upstream", LinkType: "example-link",
@@ -313,18 +312,18 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 			Domain: fmt.Sprintf("blocked%d.example", index), Resolver: "unbound", Action: action, BlocklistName: list,
 			LookedUpAt: f.now - 600 - int64(index)*3600, IngestedAt: f.now - 1}))
 	}
-	f.exec(t, "UPDATE blocklist SET purpose = 'advertising', purpose_assigned_at = ? WHERE name = 'example-list-a'", f.now)
+	f.exec(t, "UPDATE blocklist SET purpose = 'advertising', purpose_assigned_at = $1 WHERE name = 'example-list-a'", f.now)
 	_, err = database.Attribute(ctx, f.now-spec.span-10, f.now+1, 5, f.now)
 	check(t, err)
 
 	// Two owners; three clients assigned to them, by hand.
 	for index, name := range []string{"Example Person A", "Example Person B"} {
-		f.exec(t, "INSERT INTO owner (display_name, created_at, updated_at) VALUES (?, ?, ?)", name, f.now, f.now)
+		f.exec(t, "INSERT INTO owner (display_name, created_at, updated_at) VALUES ($1, $2, $3)", name, f.now, f.now)
 		var id int64
-		check(t, database.DB().QueryRowContext(ctx, "SELECT id FROM owner WHERE display_name = ?", name).Scan(&id))
+		check(t, database.DB().QueryRowContext(ctx, "SELECT id FROM owner WHERE display_name = $1", name).Scan(&id))
 		f.owners = append(f.owners, id)
-		f.exec(t, `UPDATE client SET owner_id = ?, owner_assigned_at = ? WHERE id IN
-			(SELECT id FROM client WHERE identity_kind <> 'address_in_interface' ORDER BY id LIMIT 1 OFFSET ?)`,
+		f.exec(t, `UPDATE client SET owner_id = $1, owner_assigned_at = $2 WHERE id IN
+			(SELECT id FROM client WHERE identity_kind <> 'address_in_interface' ORDER BY id LIMIT 1 OFFSET $3)`,
 			id, f.now, index)
 	}
 

@@ -243,9 +243,6 @@ func run() (err error) {
 		Settings:    live,
 		Collector:   collector,
 		GeoIP:       collector,
-		// The settings surface reads the list in use from here, in memory: drawing it
-		// contacts nothing.
-		PublicSuffix: collector,
 		// The widget API groups names through the active registrable_domain provider, which
 		// answers from the copy its own refresh downloaded.
 		SuffixLists: collector,

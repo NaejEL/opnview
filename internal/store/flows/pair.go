@@ -127,7 +127,7 @@ type pairRecord struct {
 	ipVersion   int64
 	ipID        sql.NullInt64
 	tcpSeq      sql.NullInt64
-	srcFirewall int64
+	srcFirewall bool
 	outcome     sql.NullString
 	partner     sql.NullInt64
 }
@@ -197,7 +197,7 @@ func pairRecords(ctx context.Context, q sqldb.Querier, name string, parameters m
 	if err != nil {
 		return nil, err
 	}
-	rows, err := q.QueryContext(ctx, text, sqldb.Named(text, parameters)...)
+	rows, err := sqldb.Query(ctx, q, text, parameters)
 	if err != nil {
 		return nil, fmt.Errorf("store: %s: %w", name, err)
 	}
@@ -230,7 +230,7 @@ func pairRecordByID(ctx context.Context, q sqldb.Querier, id int64) (pairRecord,
 
 // upstreamDevices returns the devices of the upstream interfaces.
 func upstreamDevices(ctx context.Context, q sqldb.Querier) (map[string]bool, error) {
-	rows, err := q.QueryContext(ctx, "SELECT device FROM interface WHERE is_upstream = 1")
+	rows, err := q.QueryContext(ctx, "SELECT device FROM interface WHERE is_upstream")
 	if err != nil {
 		return nil, fmt.Errorf("store: reading the upstream interfaces: %w", err)
 	}

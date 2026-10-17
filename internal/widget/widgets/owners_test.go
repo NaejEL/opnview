@@ -49,7 +49,7 @@ func TestAReassignmentMovesTheClientsVolumeToItsNewOwnerAfterTheNextDerivation(t
 	periods := []string{"1h", "24h", "7d", "30d"}
 	from, to := f.owners[0], f.owners[1]
 	// The client assigned to the first person, which the fixture gave traffic in every period.
-	client := f.scalar(t, "SELECT id FROM client WHERE owner_id = ? ORDER BY id LIMIT 1", from)
+	client := f.scalar(t, "SELECT id FROM client WHERE owner_id = $1 ORDER BY id LIMIT 1", from)
 
 	before := map[string]map[int64]int64{}
 	sums := map[string]int64{}

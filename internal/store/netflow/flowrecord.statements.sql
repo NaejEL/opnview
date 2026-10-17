@@ -75,7 +75,7 @@ SET join_state = :join_state,
     decided_at = :decided_at,
     counted_copy = CASE WHEN copy_flow_id IS NOT DISTINCT FROM :copy_flow_id
                              AND orientation IS NOT DISTINCT FROM :orientation
-                        THEN counted_copy ELSE 0 END
+                        THEN counted_copy ELSE false END
 WHERE identity = :identity
   AND start_at = :start_at
   AND (join_state IS DISTINCT FROM :join_state
@@ -135,6 +135,6 @@ ORDER BY r.copy_flow_id, r.start_at, r.identity;
 -- statement: measured_volume_open
 SELECT DISTINCT v.connection_flow_id
 FROM connection_measured_volume AS v
-WHERE v.final = 0
+WHERE NOT v.final
   AND v.due_at <= :due
 ORDER BY v.connection_flow_id;

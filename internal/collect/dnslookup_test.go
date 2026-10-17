@@ -271,7 +271,7 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 	}
 
 	gaps := collecttest.ScalarCount(t, harness.Store,
-		"SELECT count(*) FROM collection_gap WHERE reason = ?",
+		"SELECT count(*) FROM collection_gap WHERE reason = $1",
 		string(vocab.GapResolverWindowNotHonoured))
 	if gaps != 1 {
 		t.Fatalf("the pass wrote %d resolver gap rows, want exactly one", gaps)
@@ -280,7 +280,7 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 	var detail *string
 	if err := harness.Store.DB().QueryRowContext(ctx,
 		`SELECT interval_start_at, interval_end_at, detail FROM collection_gap
-		 WHERE reason = ?`, string(vocab.GapResolverWindowNotHonoured)).
+		 WHERE reason = $1`, string(vocab.GapResolverWindowNotHonoured)).
 		Scan(&start, &end, &detail); err != nil {
 		t.Fatalf("reading the gap back: %v", err)
 	}

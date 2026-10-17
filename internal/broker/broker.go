@@ -605,7 +605,7 @@ func methodForMirror(method string) string {
 
 // count increments one of an endpoint's counters.
 func (b *Broker) count(ctx context.Context, endpointID int64, counter string) {
-	_, _ = b.mirror.Exec(ctx, "UPDATE opnsense.mirror_endpoint SET "+counter+" = "+counter+" + 1 WHERE id = ?", endpointID)
+	_, _ = b.mirror.Exec(ctx, "UPDATE opnsense.mirror_endpoint SET "+counter+" = "+counter+" + 1 WHERE id = $1", endpointID)
 }
 
 // unmirrored makes a call the mirror plays no part in.
@@ -849,12 +849,12 @@ func (b *Broker) recordCall(ctx context.Context, datum *mirror.Datum, path strin
 	b.mutex.Unlock()
 	_, err := b.mirror.Exec(ctx, `UPDATE opnsense.mirror_endpoint SET calls = calls + 1,
 		latencies_ms = (SELECT coalesce(jsonb_agg(value), '[]') FROM (SELECT value FROM jsonb_array_elements(
-			latencies_ms || jsonb_build_array(CAST(? AS double precision))) WITH ORDINALITY AS e(value, n)
+			latencies_ms || jsonb_build_array(CAST($1 AS double precision))) WITH ORDINALITY AS e(value, n)
 			ORDER BY n DESC LIMIT 64) AS kept),
 		sizes_bytes = (SELECT coalesce(jsonb_agg(value), '[]') FROM (SELECT value FROM jsonb_array_elements(
-			sizes_bytes || jsonb_build_array(CAST(? AS bigint))) WITH ORDINALITY AS e(value, n)
+			sizes_bytes || jsonb_build_array(CAST($2 AS bigint))) WITH ORDINALITY AS e(value, n)
 			ORDER BY n DESC LIMIT 64) AS kept)
-		WHERE id = ?`, float64(elapsed.Microseconds())/1000, int64(size), datum.EndpointID)
+		WHERE id = $3`, float64(elapsed.Microseconds())/1000, int64(size), datum.EndpointID)
 	if err != nil {
 		b.options.Log(fmt.Sprintf("recording the cost of %s: %v", path, err))
 	}
@@ -862,7 +862,7 @@ func (b *Broker) recordCall(ctx context.Context, datum *mirror.Datum, path strin
 
 // markStream records an endpoint seen to answer with an event stream.
 func (b *Broker) markStream(ctx context.Context, endpointID int64) {
-	_, _ = b.mirror.Exec(ctx, `UPDATE opnsense.mirror_endpoint SET observed_stream = true WHERE id = ?`, endpointID)
+	_, _ = b.mirror.Exec(ctx, `UPDATE opnsense.mirror_endpoint SET observed_stream = true WHERE id = $1`, endpointID)
 }
 
 // medianLatency is an endpoint's median recorded latency.
@@ -871,7 +871,7 @@ func (b *Broker) medianLatency(ctx context.Context, path string) (time.Duration,
 		return 0, false
 	}
 	var encoded *string
-	if err := b.mirror.QueryRow(ctx, `SELECT CAST(latencies_ms AS text) FROM opnsense.mirror_endpoint WHERE path = ?
+	if err := b.mirror.QueryRow(ctx, `SELECT CAST(latencies_ms AS text) FROM opnsense.mirror_endpoint WHERE path = $1
 		ORDER BY id LIMIT 1`, path).Scan(&encoded); err != nil || encoded == nil {
 		return 0, false
 	}

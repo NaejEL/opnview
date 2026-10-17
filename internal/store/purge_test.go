@@ -125,7 +125,7 @@ func TestThePurgeLeavesTheBoundedTablesAndTheUserInputAlone(t *testing.T) {
 
 	// An owner and a classified blocklist, both created long before the horizon.
 	if _, err := database.DB().ExecContext(ctx,
-		`INSERT INTO owner (display_name, created_at, updated_at) VALUES (?, ?, ?)`,
+		`INSERT INTO owner (display_name, created_at, updated_at) VALUES ($1, $2, $3)`,
 		"an owner the maintainer created", now-1000000, now-1000000); err != nil {
 		t.Fatalf("creating an owner: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestThePurgeLeavesTheBoundedTablesAndTheUserInputAlone(t *testing.T) {
 		t.Fatalf("recording a blocklist: %v", err)
 	}
 	if _, err := database.DB().ExecContext(ctx,
-		"UPDATE blocklist SET purpose = 'threat', purpose_assigned_at = ? WHERE id = ?",
+		"UPDATE blocklist SET purpose = 'threat', purpose_assigned_at = $1 WHERE id = $2",
 		now-900000, blocklistID); err != nil {
 		t.Fatalf("assigning a purpose: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestThePurgeLeavesTheBoundedTablesAndTheUserInputAlone(t *testing.T) {
 
 	var purpose *string
 	if err := database.DB().QueryRowContext(ctx,
-		"SELECT purpose FROM blocklist WHERE id = ?", blocklistID).Scan(&purpose); err != nil {
+		"SELECT purpose FROM blocklist WHERE id = $1", blocklistID).Scan(&purpose); err != nil {
 		t.Fatalf("reading the purpose back: %v", err)
 	}
 	if purpose == nil || *purpose != "threat" {
@@ -284,7 +284,7 @@ func seedForPurge(t *testing.T, database *store.Store, now, cutoff int64) (map[s
 		if _, err := database.DB().ExecContext(ctx,
 			`INSERT INTO geo_asn (address, provider_id, lookup_state, country_code,
 			                      dataset_build_at, looked_up_at)
-			 VALUES (?, ?, 'resolved', 'ZZ', ?, ?)`,
+			 VALUES ($1, $2, 'resolved', 'ZZ', $3, $4)`,
 			"example-address-"+string(suffix), geoProviderID, buildAt, instant); err != nil {
 			t.Fatalf("seeding a geo row: %v", err)
 		}
@@ -299,7 +299,7 @@ func seedForPurge(t *testing.T, database *store.Store, now, cutoff int64) (map[s
 		// An interval opnview was not running, detected at the restart.
 		if _, err := database.DB().ExecContext(ctx,
 			`INSERT INTO opnview_downtime (interval_start_at, interval_end_at, clean_stop, detected_at)
-			 VALUES (?, ?, 0, ?)`, instant-600, instant, instant); err != nil {
+			 VALUES ($1, $2, false, $3)`, instant-600, instant, instant); err != nil {
 			t.Fatalf("seeding an interval opnview was not running: %v", err)
 		}
 
@@ -333,14 +333,14 @@ func seedForPurge(t *testing.T, database *store.Store, now, cutoff int64) (map[s
 func countOlderThan(t *testing.T, database *store.Store, table, column string, cutoff int64) int {
 	t.Helper()
 	return scalar(t, database,
-		"SELECT count(*) FROM \""+table+"\" WHERE \""+column+"\" < ?", cutoff)
+		"SELECT count(*) FROM \""+table+"\" WHERE \""+column+"\" < $1", cutoff)
 }
 
 // countAtLeast counts the rows of one table at or after an instant.
 func countAtLeast(t *testing.T, database *store.Store, table, column string, cutoff int64) int {
 	t.Helper()
 	return scalar(t, database,
-		"SELECT count(*) FROM \""+table+"\" WHERE \""+column+"\" >= ?", cutoff)
+		"SELECT count(*) FROM \""+table+"\" WHERE \""+column+"\" >= $1", cutoff)
 }
 
 // scalar runs a counting query. The table and column names come from the map above, which

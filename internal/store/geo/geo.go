@@ -54,7 +54,7 @@ func (s *GeoStore) UpsertGeoASN(ctx context.Context, row GeoASN) error {
 	_, err := s.SQL.ExecContext(ctx,
 		`INSERT INTO geo_asn (address, provider_id, lookup_state, country_code, country_name,
 		        latitude, longitude, asn, operator, dataset_build_at, looked_up_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 ON CONFLICT (address) DO UPDATE SET
 		        provider_id = excluded.provider_id,
 		        lookup_state = excluded.lookup_state,
@@ -90,8 +90,8 @@ func (s *GeoStore) AddressesToGeolocate(ctx context.Context, providerID, build i
 		         SELECT dst_address FROM flow) AS seen
 		   LEFT JOIN geo_asn AS g ON g.address = seen.address
 		  WHERE seen.address IS NOT NULL
-		    AND (g.address IS NULL OR g.dataset_build_at IS NULL OR g.dataset_build_at < ?
-		         OR g.provider_id IS NOT ?)
+		    AND (g.address IS NULL OR g.dataset_build_at IS NULL OR g.dataset_build_at < $1
+		         OR g.provider_id IS NOT $2)
 		  ORDER BY seen.address`,
 		build, providerID)
 	if err != nil {

@@ -10,6 +10,6 @@
 // which any other source of suffix rules can use too.
 //
 // THE LIST IS DATA OPNVIEW READS AND NEVER WRITES INTO A NAME. A site name is stored as the
-// resolver reported it, and its registrable domain is computed at read time; GroupSites never alters
-// a stored site name.
+// resolver reported it, and its registrable domain is computed at read time; nothing here alters a
+// stored site name.
 package suffixlist

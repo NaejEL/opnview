@@ -3,17 +3,10 @@ package settings_test
 import (
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
-	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
-	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/settingfields"
 	"github.com/NaejEL/opnview/internal/web/surfaces/settings"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
@@ -131,21 +124,6 @@ func TestTheSettingsJSONSavesMakeThePagesChangeAndRefuseItsInputs(t *testing.T) 
 			},
 			body: func(*webtest.Harness) map[string]any { return map[string]any{"theme": value} }}
 	}
-	interval := func(seconds string, refused bool) pageAndJSON {
-		field := config.KeyPublicSuffixRefreshInterval
-		return pageAndJSON{what: "public suffix interval " + seconds, refused: refused,
-			path: settings.PathAPIPublicSuffix,
-			form: func(*webtest.Harness) url.Values {
-				return url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix}, field: {seconds},
-					settingfields.UnitFieldName(field): {settingfields.UnitSeconds}}
-			},
-			body: func(*webtest.Harness) map[string]any {
-				if number, err := strconv.ParseInt(seconds, 10, 64); err == nil {
-					return map[string]any{"refresh_interval_seconds": number}
-				}
-				return map[string]any{"refresh_interval_seconds": seconds}
-			}}
-	}
 	assertSameChange(t, []pageAndJSON{
 		firewall(fake, apiKey, apiSecret, "", false, "the firewall's URL, key and secret"),
 		firewall(fake, "", "", "", false, "the firewall's URL alone"),
@@ -154,56 +132,6 @@ func TestTheSettingsJSONSavesMakeThePagesChangeAndRefuseItsInputs(t *testing.T) 
 		firewall(fake, "", apiSecret, "", true, "a secret with no key"),
 		theme(string(web.ThemeDark), false),
 		theme("sepia", true),
-		interval("7200", false),
-		interval("0", true),
-		interval("seven", true),
-	})
-}
-
-// TestTheMaxMindCardsJSONEquivalentIsTheMaxMindPluginsSettings is C-AC9 for the geolocation card:
-// the maxmind plugin's declared settings store the rows the page stores, refuse what it refuses,
-// and null removes the account ID as an empty field does.
-func TestTheMaxMindCardsJSONEquivalentIsTheMaxMindPluginsSettings(t *testing.T) {
-	t.Parallel()
-	licence := webtest.RandomHex(t, 16)
-	path := "/api/plugins/" + settings.GeolocationPlugin + "/settings"
-	geolocation := func(what, accountID string, body map[string]any, refused bool) pageAndJSON {
-		return pageAndJSON{what: what, refused: refused, path: path,
-			form: func(*webtest.Harness) url.Values {
-				form := url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardGeolocation},
-					"maxmind_account_id": {accountID}}
-				if _, set := body["licence_key"]; set {
-					form.Set("maxmind_licence_key", licence)
-				}
-				return form
-			},
-			body: func(*webtest.Harness) map[string]any { return body }}
-	}
-	assertSameChange(t, []pageAndJSON{
-		geolocation("an account ID and a licence key", "100001",
-			map[string]any{"account_id": 100001, "licence_key": licence}, false),
-		geolocation("an account ID that is no number", "first", map[string]any{"account_id": "first"}, true),
-		geolocation("an account ID of nought", "0", map[string]any{"account_id": 0}, true),
-	})
-
-	t.Run("an emptied account ID is removed by both", func(t *testing.T) {
-		t.Parallel()
-		pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
-		for _, h := range []*webtest.Harness{pageSide, jsonSide} {
-			if status, answer := settingstest.SendJSON(h, path, map[string]any{"account_id": 100001}); status != http.StatusOK {
-				t.Fatalf("storing an account ID answered %d %v", status, answer)
-			}
-		}
-		webtest.Discard(t, pageSide.Post(web.PathSettings, url.Values{
-			webtest.FieldSettingsCard: {webtest.SettingsCardGeolocation}, "maxmind_account_id": {""}}))
-		if status, answer := settingstest.SendJSON(jsonSide, path, map[string]any{"account_id": nil}); status != http.StatusOK {
-			t.Fatalf("clearing the account ID answered %d %v", status, answer)
-		}
-		for _, h := range []*webtest.Harness{pageSide, jsonSide} {
-			if _, present, err := h.Store.Setting(t.Context(), config.KeyMaxMindAccountID); err != nil || present {
-				t.Errorf("the account ID is still stored (%v)", err)
-			}
-		}
 	})
 }
 
@@ -247,16 +175,6 @@ func TestTheSettingsJSONCarriesEveryFigureOfThePage(t *testing.T) {
 			value, _ := settingstest.Path(answer, path...).(string)
 			return value
 		}
-		number := func(path ...any) (int64, bool) {
-			value, ok := settingstest.Path(answer, path...).(float64)
-			return int64(value), ok
-		}
-		instant := func(path ...any) string {
-			if value, ok := number(path...); ok {
-				return settingfields.Instant(value)
-			}
-			return ""
-		}
 		state := func(name, code string) {
 			t.Helper()
 			if figures[name] == "" || web.ConditionOf(web.MessageKey(figures[name])) != code {
@@ -274,31 +192,6 @@ func TestTheSettingsJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		same("certificate_fingerprint", text("firewall", "certificate_fingerprint"))
 		state("credential_state", text("firewall", "credential_state"))
 		state("verification", text("firewall", "verification"))
-		state("licence_key_state", text("geolocation", "licence_key_state"))
-		same("account_id", text("geolocation", "account_id"))
-		state("geoip_state", text("geolocation", "download_state"))
-		same("geoip_build", instant("geolocation", "build_at"))
-		state("public_suffix.state", text("public_suffix", "state"))
-		inUse, _ := settingstest.Path(answer, "public_suffix", "in_use").(bool)
-		state("public_suffix.in_use", map[bool]string{true: "yes", false: "no"}[inUse])
-		same("public_suffix.version", text("public_suffix", "version"))
-		stated, _ := settingstest.Path(answer, "public_suffix", "version_stated").(bool)
-		if (figures["public_suffix.version_state"] != "") != (inUse && !stated) {
-			t.Errorf("the page's unstated version (%q) disagrees with the answer's (in use %v, stated %v)",
-				figures["public_suffix.version_state"], inUse, stated)
-		}
-		rules := ""
-		if value, ok := number("public_suffix", "rules"); ok && inUse {
-			rules = strconv.FormatInt(value, 10)
-		}
-		same("public_suffix.rules", rules)
-		same("public_suffix.confirmed", instant("public_suffix", "confirmed_at"))
-		if (figures["public_suffix.confirmed_state"] != "") != (settingstest.Path(answer, "public_suffix", "confirmed_at") == nil) {
-			t.Errorf("the page's never-confirmed state (%q) disagrees with the answer", figures["public_suffix.confirmed_state"])
-		}
-		seconds, _ := number("public_suffix", "refresh_interval_seconds")
-		figure, unit := settingfields.FieldDuration(seconds)
-		same("public_suffix.interval", figure+" "+unit)
 		same("theme", text("theme", "value"))
 	}
 
@@ -310,23 +203,9 @@ func TestTheSettingsJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		t.Parallel()
 		h := collectiontest.SignedInHarness(t)
 		webtest.Discard(t, settingstest.StoreCredentials(h, webtest.RandomHex(t, 8), webtest.RandomHex(t, 16)))
-		if status, answer := settingstest.SendJSON(h, "/api/plugins/"+settings.GeolocationPlugin+"/settings",
-			map[string]any{"account_id": 100001, "licence_key": webtest.RandomHex(t, 16)}); status != http.StatusOK {
-			t.Fatalf("storing the MaxMind settings answered %d %v", status, answer)
-		}
-		h.GeoIP.SetBuild(h.Clock.Now().Add(-time.Hour).Unix())
-		settingstest.SetGeoIPProbe(h, vocab.StateReachable, ipgeolocation.ProbeCurrent)
-		h.Suffix.Hold("2026-09-20_00-00-00_UTC", 9876, h.Clock.Now().Add(-time.Hour).Unix())
-		settingstest.SetPublicSuffixProbe(h, vocab.StateReachable, registrabledomain.ProbeDownloaded, nil)
 		if status, answer := settingstest.SendJSON(h, settings.PathAPITheme, map[string]any{"theme": "dark"}); status != http.StatusOK {
 			t.Fatalf("storing the theme answered %d %v", status, answer)
 		}
-		check(t, h)
-	})
-	t.Run("a copy in use that states no version", func(t *testing.T) {
-		t.Parallel()
-		h := collectiontest.SignedInHarness(t)
-		h.Suffix.Hold("", 12, 0)
 		check(t, h)
 	})
 }

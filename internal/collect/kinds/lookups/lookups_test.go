@@ -36,7 +36,7 @@ func TestALeasePassResolvesOnlyTheHostNameLookupsSinceThePreviousOne(t *testing.
 	resolution := func(key string) string {
 		t.Helper()
 		var value string
-		if err := harness.Store.DB().QueryRow("SELECT client_resolution FROM dns_resolution WHERE lookup_key = ?",
+		if err := harness.Store.DB().QueryRow("SELECT client_resolution FROM dns_resolution WHERE lookup_key = $1",
 			key).Scan(&value); err != nil {
 			t.Fatalf("reading %s: %v", key, err)
 		}
@@ -91,7 +91,7 @@ func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.
 	source, destination := "198.51.100.10", "203.0.113.20"
 	var flowID, observedAt int64
 	if err := harness.Store.DB().QueryRow(`SELECT id, observed_at FROM flow
-		WHERE src_address = ? AND dst_address = ?`, source, destination).Scan(&flowID, &observedAt); err != nil {
+		WHERE src_address = $1 AND dst_address = $2`, source, destination).Scan(&flowID, &observedAt); err != nil {
 		t.Fatalf("reading the flow: %v", err)
 	}
 	provider, err := harness.Store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
@@ -130,8 +130,8 @@ func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.
 		if _, err := harness.Store.Attribute(ctx, observedAt-60, observedAt, 5, collecttest.ReferenceEpoch()); err != nil {
 			t.Fatalf("attributing: %v", err)
 		}
-		attributed := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM domain_attribution WHERE flow_id = ?", flowID)
-		if _, err := harness.Store.DB().Exec("DELETE FROM dns_resolution WHERE lookup_key = ?",
+		attributed := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM domain_attribution WHERE flow_id = $1", flowID)
+		if _, err := harness.Store.DB().Exec("DELETE FROM dns_resolution WHERE lookup_key = $1",
 			record.DeduplicationKey); err != nil {
 			t.Fatalf("clearing the lookup: %v", err)
 		}

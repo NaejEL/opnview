@@ -115,16 +115,17 @@ func CredentialTablesRead(reads QueryReads) []string {
 // privilege on the credential tables, so a query reading one would not plan for it at all, and
 // this check exists to name that table.
 func (s *ReadStore) Reads(ctx context.Context, text string, parameters []string) (QueryReads, error) {
-	lexed := sqldb.LexSQL(text)
-	body := sqldb.StatementBody(text, lexed)
+	planned, arguments, err := sqldb.NullArguments(sqldb.StatementBody(text, sqldb.LexSQL(text)))
+	if err != nil {
+		return QueryReads{}, fmt.Errorf("store: planning a query: %w", err)
+	}
 	tx, err := s.SQL.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return QueryReads{}, fmt.Errorf("store: planning a query: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	var plan string
-	if err := tx.QueryRowContext(ctx, "EXPLAIN (VERBOSE, FORMAT JSON) "+body,
-		sqldb.NullArguments(lexed.Parameters)...).Scan(&plan); err != nil {
+	if err := tx.QueryRowContext(ctx, "EXPLAIN (VERBOSE, FORMAT JSON) "+planned, arguments...).Scan(&plan); err != nil {
 		return QueryReads{}, fmt.Errorf("store: planning a query: %w", err)
 	}
 	var decoded any
@@ -221,7 +222,7 @@ func (s *ReadStore) tableColumnNames(ctx context.Context, q sqldb.Querier, table
 		schema, relation = table[:dot], table[dot+1:]
 	}
 	rows, err := q.QueryContext(ctx,
-		"SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = ?",
+		"SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2",
 		schema, relation)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading the columns of %s: %w", table, err)
@@ -254,18 +255,25 @@ func (s *ReadStore) ReadRows(ctx context.Context, text string, parameters map[st
 	if s.Reader == nil {
 		return nil, fmt.Errorf("store: no read connections")
 	}
-	lexed := sqldb.LexSQL(text)
-	body := sqldb.StatementBody(text, lexed)
-	arguments := make([]any, 0, len(lexed.Parameters))
-	for _, name := range lexed.Parameters {
-		arguments = append(arguments, sql.Named(name, parameters[name]))
+	translation, err := sqldb.Translate(sqldb.StatementBody(text, sqldb.LexSQL(text)))
+	if err != nil {
+		return nil, err
 	}
-	rows, err := s.Reader.DB.QueryContext(ctx, body, arguments...)
+	// A parameter the caller does not hand is bound to NULL.
+	arguments := make([]any, len(translation.Names))
+	for index, name := range translation.Names {
+		arguments[index] = parameters[name]
+	}
+	rows, err := s.Reader.DB.QueryContext(ctx, translation.Text, arguments...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	converter, err := newCellConverter(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -279,14 +287,10 @@ func (s *ReadStore) ReadRows(ctx context.Context, text string, parameters map[st
 		if err := rows.Scan(pointers...); err != nil {
 			return nil, err
 		}
+		converter.convert(cells)
 		row := make(map[string]any, len(columns))
 		for index, column := range columns {
-			switch value := cells[index].(type) {
-			case []byte:
-				row[column] = string(value)
-			default:
-				row[column] = value
-			}
+			row[column] = cells[index]
 		}
 		result = append(result, row)
 	}

@@ -1,10 +1,11 @@
 package webtest
 
 import (
-	"github.com/NaejEL/opnview/internal/secret"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/secret"
 )
 
 // VisibleText returns the text nodes of an HTML document, with the markup removed.

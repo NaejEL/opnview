@@ -52,8 +52,8 @@ WHERE i.dst_address = :dst_address
   AND i.dst_port IS NOT DISTINCT FROM :dst_port
   AND i.ip_id IS NOT DISTINCT FROM :ip_id
   AND i.tcp_seq IS NOT DISTINCT FROM :tcp_seq
-  AND i.src_is_this_firewall = 0
-  AND (:src_is_this_firewall = 1 OR (i.src_address = :src_address AND i.src_port IS NOT DISTINCT FROM :src_port))
+  AND NOT i.src_is_this_firewall
+  AND (:src_is_this_firewall OR (i.src_address = :src_address AND i.src_port IS NOT DISTINCT FROM :src_port))
 ORDER BY i.id
 LIMIT 2;
 
@@ -73,7 +73,7 @@ WHERE o.dst_address = :dst_address
   AND o.dst_port IS NOT DISTINCT FROM :dst_port
   AND o.ip_id IS NOT DISTINCT FROM :ip_id
   AND o.tcp_seq IS NOT DISTINCT FROM :tcp_seq
-  AND (o.src_is_this_firewall = 1 OR (o.src_address = :src_address AND o.src_port IS NOT DISTINCT FROM :src_port))
+  AND (o.src_is_this_firewall OR (o.src_address = :src_address AND o.src_port IS NOT DISTINCT FROM :src_port))
 ORDER BY o.id
 LIMIT 2;
 

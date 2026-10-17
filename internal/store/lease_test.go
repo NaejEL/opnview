@@ -151,7 +151,7 @@ func TestALeaseNamesTheServerThatIssuedIt(t *testing.T) {
 	rows, err := database.DB().QueryContext(ctx,
 		`SELECT p.display_name FROM dhcp_lease AS l
 		 JOIN provider AS p ON p.id = l.provider_id
-		 WHERE l.client_id = ?
+		 WHERE l.client_id = $1
 		 ORDER BY p.provider_key`, clientID)
 	if err != nil {
 		t.Fatalf("reading the machine's leases: %v", err)

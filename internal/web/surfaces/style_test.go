@@ -1,11 +1,12 @@
 package surfaces_test
 
 import (
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/webtest"
 )
 
 // innermostBlock is one rule's declarations: braces holding no brace.

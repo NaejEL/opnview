@@ -31,9 +31,9 @@ LEFT JOIN flow AS f ON d.source_table = 'flow' AND f.id = d.source_id
 LEFT JOIN security_event AS e ON d.source_table = 'security_event' AND e.id = d.source_id
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
-  AND (:engine_kinds IS NULL OR d.engine_kind IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:engine_kinds AS jsonb)) AS j(value)))
-  AND (:client_ids IS NULL OR d.client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
-  AND (:interface_ids IS NULL
+  AND (CAST(:engine_kinds AS jsonb) IS NULL OR d.engine_kind IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:engine_kinds AS jsonb)) AS j(value)))
+  AND (CAST(:client_ids AS jsonb) IS NULL OR d.client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR d.interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 ORDER BY d.occurred_at DESC, d.source_table, d.source_id DESC
 LIMIT :limit;
@@ -45,8 +45,8 @@ SELECT d.engine_kind AS engine_kind, count(*) AS refusals
 FROM blocked_decision AS d
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
-  AND (:client_ids IS NULL OR d.client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
-  AND (:interface_ids IS NULL
+  AND (CAST(:client_ids AS jsonb) IS NULL OR d.client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR d.interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 GROUP BY d.engine_kind;
 
@@ -57,9 +57,9 @@ SELECT d.client_id AS client_id, count(*) AS refusals
 FROM blocked_decision AS d
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
-  AND (:engine_kinds IS NULL OR d.engine_kind IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:engine_kinds AS jsonb)) AS j(value)))
-  AND (:client_ids IS NULL OR d.client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
-  AND (:interface_ids IS NULL
+  AND (CAST(:engine_kinds AS jsonb) IS NULL OR d.engine_kind IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:engine_kinds AS jsonb)) AS j(value)))
+  AND (CAST(:client_ids AS jsonb) IS NULL OR d.client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR d.interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 GROUP BY d.client_id;
 
@@ -69,9 +69,9 @@ SELECT d.target AS target, d.target_kind AS target_kind, count(*) AS refusals
 FROM blocked_decision AS d
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
-  AND (:engine_kinds IS NULL OR d.engine_kind IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:engine_kinds AS jsonb)) AS j(value)))
-  AND (:client_ids IS NULL OR d.client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
-  AND (:interface_ids IS NULL
+  AND (CAST(:engine_kinds AS jsonb) IS NULL OR d.engine_kind IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:engine_kinds AS jsonb)) AS j(value)))
+  AND (CAST(:client_ids AS jsonb) IS NULL OR d.client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR d.interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 GROUP BY d.target, d.target_kind;
 

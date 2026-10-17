@@ -64,11 +64,9 @@ type surface struct {
 
 func (s *surface) routes() []web.Route {
 	return []web.Route{
-		{Method: http.MethodGet, Pattern: PathStrip, Access: web.AccessAuthenticated, JSON: true, Handler: s.handleStrip},
-		{Method: http.MethodGet, Pattern: PathSettings, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleSettings},
-		{Method: http.MethodPost, Pattern: PathSettings, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleWrite},
+		web.JSONRoute(http.MethodGet, PathStrip, s.handleStrip),
+		web.JSONRoute(http.MethodGet, PathSettings, s.handleSettings),
+		web.JSONRoute(http.MethodPost, PathSettings, s.handleWrite),
 	}
 }
 

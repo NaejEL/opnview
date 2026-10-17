@@ -46,10 +46,3 @@ func Number(name string) (int64, bool) {
 	number, found := byName[strings.ToLower(strings.TrimSpace(name))]
 	return number, found
 }
-
-// Keyword returns the registry's keyword of a number; ok is false for a number with none.
-func Keyword(number int64) (string, bool) {
-	once.Do(load)
-	keyword, found := byNumber[number]
-	return keyword, found
-}

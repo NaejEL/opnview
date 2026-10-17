@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"testing"
 
@@ -63,7 +62,7 @@ func flowEnd(t *testing.T, database *store.Store, address string, source bool) e
 	}
 	var (
 		state             endState
-		firewall          int64
+		firewall          bool
 		iface, client     *int64
 		srcAddr, dstAddr  string
 		trafficDirection  string
@@ -73,13 +72,13 @@ func flowEnd(t *testing.T, database *store.Store, address string, source bool) e
 		selectedClient    = column + "_client_id"
 	)
 	query := fmt.Sprintf(`SELECT %s, %s, %s, src_address, dst_address, traffic_direction
-		FROM classified_flow WHERE %s = ? ORDER BY id LIMIT 1`, selectedFirewall, selectedInterface,
+		FROM classified_flow WHERE %s = $1 ORDER BY id LIMIT 1`, selectedFirewall, selectedInterface,
 		selectedClient, selectedAddress)
 	if err := database.DB().QueryRow(query, address).Scan(&firewall, &iface, &client, &srcAddr,
 		&dstAddr, &trafficDirection); err != nil {
 		t.Fatalf("reading the flow at %s: %v", address, err)
 	}
-	state.firewall, state.iface, state.client, state.direction = firewall == 1, iface, client, trafficDirection
+	state.firewall, state.iface, state.client, state.direction = firewall, iface, client, trafficDirection
 	return state
 }
 
@@ -182,7 +181,7 @@ func TestThisFirewallIsRecognisedAtEveryEndInBothFamilies(t *testing.T) {
 
 			for address, iface := range expected {
 				for _, source := range []bool{true, false} {
-					if storetest.QueryInt(t, network.DB, fmt.Sprintf("SELECT count(*) FROM flow WHERE %s_address = ?",
+					if storetest.QueryInt(t, network.DB, fmt.Sprintf("SELECT count(*) FROM flow WHERE %s_address = $1",
 						map[bool]string{true: "src", false: "dst"}[source]), address) == 0 {
 						continue
 					}
@@ -199,33 +198,33 @@ func TestThisFirewallIsRecognisedAtEveryEndInBothFamilies(t *testing.T) {
 					}
 				}
 				if got := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM security_event
-					WHERE src_address = ? AND src_is_this_firewall = 1 AND src_client_id IS NULL
-					  AND src_interface_id IS NOT DISTINCT FROM ?`, address, sqldb.Optional(iface)); got != 1 {
+					WHERE src_address = $1 AND src_is_this_firewall AND src_client_id IS NULL
+					  AND src_interface_id IS NOT DISTINCT FROM $2`, address, sqldb.Optional(iface)); got != 1 {
 					t.Errorf("the event from %s is not recorded as this firewall's", address)
 				}
 				if got := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM dns_resolution
-					WHERE client_address = ? AND client_is_this_firewall = 1 AND client_id IS NULL
-					  AND interface_id IS NOT DISTINCT FROM ?`, address, sqldb.Optional(iface)); got != 1 {
+					WHERE client_address = $1 AND client_is_this_firewall AND client_id IS NULL
+					  AND interface_id IS NOT DISTINCT FROM $2`, address, sqldb.Optional(iface)); got != 1 {
 					t.Errorf("the lookup from %s is not recorded as this firewall's", address)
 				}
-				if clients := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE last_address = ?",
+				if clients := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE last_address = $1",
 					address); clients != 0 {
 					t.Errorf("%d client rows sit at the firewall address %s", clients, address)
 				}
 			}
 			if got := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM dns_resolution
-				WHERE lookup_key = 'example-localhost-lookup' AND client_is_this_firewall = 1
+				WHERE lookup_key = 'example-localhost-lookup' AND client_is_this_firewall
 				  AND client_id IS NULL`); got != 1 {
 				t.Error("the lookup logged under `localhost` is not recorded as this firewall's")
 			}
 			if carried := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow
-				WHERE (src_is_this_firewall = 1 AND src_client_id IS NOT NULL)
-				   OR (dst_is_this_firewall = 1 AND dst_client_id IS NOT NULL)`); carried != 0 {
+				WHERE (src_is_this_firewall AND src_client_id IS NOT NULL)
+				   OR (dst_is_this_firewall AND dst_client_id IS NOT NULL)`); carried != 0 {
 				t.Errorf("%d flows carry a client on an end that is this firewall", carried)
 			}
 			if outsideEnds := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM classified_flow
 				WHERE traffic_direction IN ('inbound', 'outbound')
-				  AND (src_is_this_firewall = 1 OR dst_is_this_firewall = 1)`); outsideEnds != 0 {
+				  AND (src_is_this_firewall OR dst_is_this_firewall)`); outsideEnds != 0 {
 				t.Errorf("%d flows with an end that is this firewall count as crossing the edge", outsideEnds)
 			}
 		})
@@ -263,11 +262,11 @@ func TestThisFirewallIsDecidedAsOfTheRowsInstant(t *testing.T) {
 				}
 				if _, err := network.DB.DB().ExecContext(ctx, `INSERT INTO interface_address
 					(interface_id, source_field, address, prefix_length, address_family, first_seen_at,
-					 last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, network.Upstream.ID, field, held, bits,
+					 last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`, network.Upstream.ID, field, held, bits,
 					map[bool]int64{false: 4, true: 6}[v6], first, last); err != nil {
 					t.Fatalf("writing the held address: %v", err)
 				}
-				if _, err := network.DB.DB().ExecContext(ctx, "UPDATE interface SET last_seen_at = ? WHERE id = ?",
+				if _, err := network.DB.DB().ExecContext(ctx, "UPDATE interface SET last_seen_at = $1 WHERE id = $2",
 					network.Now, network.Upstream.ID); err != nil {
 					t.Fatalf("moving the discovery: %v", err)
 				}
@@ -288,8 +287,8 @@ func TestThisFirewallIsDecidedAsOfTheRowsInstant(t *testing.T) {
 				}
 				network.ClassifyAndRefresh(t, network.Insert(t, specs))
 				for _, one := range cases {
-					got := storetest.QueryInt(t, network.DB, `SELECT src_is_this_firewall FROM flow
-						WHERE src_address = ? AND observed_at = ?`, held, one.at)
+					got := storetest.QueryInt(t, network.DB, `SELECT CAST(src_is_this_firewall AS INTEGER) FROM flow
+						WHERE src_address = $1 AND observed_at = $2`, held, one.at)
 					if (got == 1) != one.held {
 						t.Errorf("a record at %+d s from the holding is this firewall: %t, want %t",
 							one.at-first, got == 1, one.held)
@@ -336,7 +335,7 @@ func TestThisFirewallIsItsOwnKeyAndHasATreeNodeOnEachSide(t *testing.T) {
 
 			// The volume key equals a direct sum over flow.
 			direct := storetest.QueryInt(t, network.DB, `SELECT coalesce(sum(packet_bytes), 0) FROM flow
-				WHERE src_is_this_firewall = 1 OR dst_is_this_firewall = 1`)
+				WHERE src_is_this_firewall OR dst_is_this_firewall`)
 			if direct == 0 {
 				t.Fatal("no flow has an end that is this firewall, so the key is not exercised")
 			}
@@ -404,7 +403,7 @@ func TestThisFirewallIsItsOwnKeyAndHasATreeNodeOnEachSide(t *testing.T) {
 					}
 				}
 				others := storetest.QueryInt(t, network.DB, `SELECT coalesce(sum(packet_bytes), 0) FROM classified_flow
-					WHERE observed_at >= ? AND observed_at < ? AND exit_leg_device IS NULL
+					WHERE observed_at >= $1 AND observed_at < $2 AND exit_leg_device IS NULL
 					  AND NOT (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
 					           AND (peer_address IS NOT NULL OR local_interface_id IS NULL))`,
 					network.Now-86400, network.Now+1)
@@ -476,8 +475,7 @@ func TestAFlowToThisFirewallIsNeverAttributedAndAFlowFromItIsOutsideTheRate(t *t
 			if err != nil {
 				t.Fatal(err)
 			}
-			rows, err := network.DB.DB().QueryContext(ctx, candidates, sql.Named("from", network.Now-100),
-				sql.Named("to", network.Now))
+			rows, err := sqldb.Query(ctx, network.DB.DB(), candidates, map[string]any{"from": network.Now - 100, "to": network.Now})
 			if err != nil {
 				t.Fatalf("reading the candidates: %v", err)
 			}
@@ -496,7 +494,7 @@ func TestAFlowToThisFirewallIsNeverAttributedAndAFlowFromItIsOutsideTheRate(t *t
 			}
 			_ = rows.Close()
 			for _, id := range candidateIDs {
-				if storetest.QueryInt(t, network.DB, "SELECT dst_is_this_firewall FROM flow WHERE id = ?", id) == 1 {
+				if storetest.QueryInt(t, network.DB, "SELECT CAST(dst_is_this_firewall AS INTEGER) FROM flow WHERE id = $1", id) == 1 {
 					t.Errorf("the flow %d to this firewall is an attribution candidate", id)
 				}
 			}
@@ -504,7 +502,7 @@ func TestAFlowToThisFirewallIsNeverAttributedAndAFlowFromItIsOutsideTheRate(t *t
 				t.Fatalf("attributing: %v", err)
 			}
 			if named := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM domain_attribution AS a
-				JOIN flow AS f ON f.id = a.flow_id WHERE f.dst_is_this_firewall = 1`); named != 0 {
+				JOIN flow AS f ON f.id = a.flow_id WHERE f.dst_is_this_firewall`); named != 0 {
 				t.Errorf("%d flows to this firewall carry a site name", named)
 			}
 			rate, err := network.DB.ReadAttributionRate(ctx, network.Now-100, network.Now, nil)
@@ -541,7 +539,7 @@ func TestAnAttributionMadeBeforeTheFirewallWasRecognisedIsRemoved(t *testing.T) 
 	// method, which the method column now names.
 	if _, err := network.DB.DB().ExecContext(ctx, `INSERT INTO domain_attribution (flow_id, dns_resolution_id,
 		site_name, correlation_delay_seconds, attributed_at, method)
-		SELECT f.id, r.id, 'example.invalid', 2, ?, 'lookup_timing' FROM flow AS f, dns_resolution AS r
+		SELECT f.id, r.id, 'example.invalid', 2, $1, 'lookup_timing' FROM flow AS f, dns_resolution AS r
 		WHERE r.lookup_key = 'example-stale'`, network.Now); err != nil {
 		t.Fatalf("writing the stale attribution: %v", err)
 	}
@@ -595,7 +593,7 @@ func TestReclassifyEverythingPurgesThePhantomClientsAtFirewallAddresses(t *testi
 			for _, address := range phantoms {
 				var interfaceID int64
 				if err := network.DB.DB().QueryRow(`SELECT interface_id FROM this_firewall_address
-					WHERE address = ? LIMIT 1`, address).Scan(&interfaceID); err != nil {
+					WHERE address = $1 LIMIT 1`, address).Scan(&interfaceID); err != nil {
 					t.Fatalf("reading the interface of %s: %v", address, err)
 				}
 				id, err := network.DB.UpsertClient(ctx, vocab.Client{
@@ -605,14 +603,14 @@ func TestReclassifyEverythingPurgesThePhantomClientsAtFirewallAddresses(t *testi
 				if err != nil {
 					t.Fatalf("writing a phantom: %v", err)
 				}
-				if _, err := network.DB.DB().ExecContext(ctx, `UPDATE flow SET dst_is_this_firewall = 0,
-					dst_interface_id = ?, dst_client_id = ?,
+				if _, err := network.DB.DB().ExecContext(ctx, `UPDATE flow SET dst_is_this_firewall = false,
+					dst_interface_id = $1, dst_client_id = $2,
 					traffic_scope = CASE WHEN src_interface_id IS NOT NULL THEN 'east_west' ELSE 'north_south' END
-					WHERE dst_address = ?`, interfaceID, id, address); err != nil {
+					WHERE dst_address = $3`, interfaceID, id, address); err != nil {
 					t.Fatalf("writing the 5A state: %v", err)
 				}
 				if _, err := network.DB.DB().ExecContext(ctx, `UPDATE address_classification
-					SET evidence = ? WHERE address = ?`, fmt.Sprintf("network|%d|-", interfaceID), address); err != nil {
+					SET evidence = $1 WHERE address = $2`, fmt.Sprintf("network|%d|-", interfaceID), address); err != nil {
 					t.Fatalf("writing the 5A fingerprint: %v", err)
 				}
 			}
@@ -690,7 +688,7 @@ func discoveryPass(t *testing.T, network *storetest.Network, at int64, upstreamF
 		previous = &latest
 	}
 	writeInterface := func(id int64, addresses []vocab.InterfaceAddress) {
-		if _, err := network.DB.DB().ExecContext(ctx, "UPDATE interface SET last_seen_at = ? WHERE id = ?",
+		if _, err := network.DB.DB().ExecContext(ctx, "UPDATE interface SET last_seen_at = $1 WHERE id = $2",
 			at, id); err != nil {
 			t.Fatalf("writing an interface: %v", err)
 		}
@@ -756,7 +754,7 @@ func TestAnAddressReleasedAndReacquiredIsNotHeldInBetween(t *testing.T) {
 					port := int64(443)
 					for _, held := range []string{held4, held6} {
 						if holdings := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM interface_address
-							WHERE address = ?`, held); holdings != 2 {
+							WHERE address = $1`, held); holdings != 2 {
 							t.Errorf("the address %s released and re-acquired is %d rows, not two holdings", held, holdings)
 						}
 						v6 := held == held6
@@ -777,8 +775,8 @@ func TestAnAddressReleasedAndReacquiredIsNotHeldInBetween(t *testing.T) {
 						}
 						network.ClassifyAndRefresh(t, network.Insert(t, specs))
 						for _, one := range cases {
-							got := storetest.QueryInt(t, network.DB, `SELECT src_is_this_firewall FROM flow
-								WHERE src_address = ? AND observed_at = ?`, held, one.at)
+							got := storetest.QueryInt(t, network.DB, `SELECT CAST(src_is_this_firewall AS INTEGER) FROM flow
+								WHERE src_address = $1 AND observed_at = $2`, held, one.at)
 							if (got == 1) != one.held {
 								t.Errorf("a record from %s at %d is this firewall: %t, want %t", held,
 									one.at-network.Now, got == 1, one.held)

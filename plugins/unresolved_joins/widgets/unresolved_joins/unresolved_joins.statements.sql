@@ -20,7 +20,7 @@ SELECT coalesce(sum(CASE WHEN f.interface_lookup_state <> 'resolved' THEN 1 ELSE
 FROM flow AS f
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
-  AND (:interface_ids IS NULL
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.src_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value))
        OR f.dst_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)));
 
@@ -38,7 +38,7 @@ WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND ((:counter = 'interface' AND f.interface_lookup_state <> 'resolved')
        OR (:counter = 'rule' AND f.rid IS NOT NULL AND f.rule_lookup_state <> 'resolved'))
-  AND (:interface_ids IS NULL
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.src_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value))
        OR f.dst_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 ORDER BY f.observed_at DESC, f.id DESC
@@ -55,7 +55,7 @@ FROM classified_flow AS f
 JOIN client AS c ON c.id = f.local_client_id
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
-  AND (:interface_ids IS NULL
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.local_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 ORDER BY f.local_client_id;
 
@@ -69,6 +69,6 @@ LEFT JOIN geo_asn AS g ON g.address = f.peer_address
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.peer_address IS NOT NULL
-  AND (:interface_ids IS NULL
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.local_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 ORDER BY f.peer_address;

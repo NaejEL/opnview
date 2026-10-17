@@ -2,7 +2,6 @@ package sqldb_test
 
 import (
 	"context"
-	"database/sql"
 	"sort"
 	"testing"
 
@@ -78,19 +77,11 @@ func TestEveryStatementPreparesForEveryPeriod(t *testing.T) {
 // explainStatement plans a statement on the database with every parameter bound to NULL, which is
 // how a test asks PostgreSQL whether a statement is valid against the schema without running it.
 func explainStatement(ctx context.Context, s *store.Store, text string) error {
-	names, err := sqldb.ParameterNames(text)
+	planned, arguments, err := sqldb.NullArguments(text)
 	if err != nil {
 		return err
 	}
-	arguments := make([]any, 0, len(names))
-	for _, name := range names {
-		if name == "" {
-			arguments = append(arguments, nil)
-			continue
-		}
-		arguments = append(arguments, sql.Named(name, nil))
-	}
-	rows, err := s.SQL.QueryContext(ctx, "EXPLAIN "+text, arguments...)
+	rows, err := s.SQL.QueryContext(ctx, "EXPLAIN "+planned, arguments...)
 	if err != nil {
 		return err
 	}

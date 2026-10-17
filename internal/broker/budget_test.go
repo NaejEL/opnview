@@ -56,7 +56,7 @@ func median(durations []time.Duration) time.Duration {
 func TestBrokerBudgets(t *testing.T) {
 	w := newWorld(t)
 	body := thousandRows()
-	w.fake.answer(jsonAnswer(body))
+	w.fake.AnswerWith(jsonAnswer(body))
 	ep := endpoint(t, http.MethodGet, "/api/example/budget/search", opnsense.NoBody)
 	requester := broker.Requester{Name: "example_reader", Version: "1"}
 	w.call(requester.Name, ep, opnsense.RequestOptions{}, time.Hour, budgetFields...)
@@ -77,7 +77,7 @@ func TestBrokerBudgets(t *testing.T) {
 	}
 
 	// The broker's overhead: a fresh call, less the client's own time on the same answer.
-	client := opnsense.NewClient(opnsense.Credentials{BaseURL: w.fake.server.URL, APIKey: w.key, APISecret: w.secret},
+	client := opnsense.NewClient(opnsense.Credentials{BaseURL: w.fake.BaseURL(), APIKey: w.key, APISecret: w.secret},
 		http.DefaultTransport, 5*time.Second)
 	var overhead []time.Duration
 	for run := 0; run < budgetRuns; run++ {

@@ -19,10 +19,8 @@ func init() {
 		Name:  "firewallcatalogue",
 		Files: files,
 		Routes: func(host web.Host) []web.Route {
-			return []web.Route{{Method: http.MethodGet, Pattern: PathCatalogue, Access: web.AccessAuthenticated,
-				JSON: true, Handler: func(writer http.ResponseWriter, request *http.Request) {
-					serve(host, writer, request)
-				}}}
+			return []web.Route{web.JSONRoute(http.MethodGet, PathCatalogue,
+				func(writer http.ResponseWriter, request *http.Request) { serve(host, writer, request) })}
 		},
 	})
 }

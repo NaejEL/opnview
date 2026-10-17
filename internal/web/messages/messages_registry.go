@@ -16,8 +16,6 @@ const (
 	msgGapResolverWindow       Key = "gap_reason.resolver_window_not_honoured"
 	msgGroupImplementations    Key = "collection.group.implementations"
 	msgPageNotAdjustable       Key = "state.sizing.page_not_adjustable"
-	msgLabelGeoIPState         Key = "settings.label.geoip_state"
-	msgLabelGeoIPBuild         Key = "settings.label.geoip_build"
 	msgKindFlowVolume          Key = "collection.kind.flow_volume"
 	msgKindIPGeolocation       Key = "collection.kind.ip_geolocation"
 	msgKindMeasurementSample   Key = "collection.kind.measurement_sample"
@@ -56,8 +54,6 @@ func vocabularyKeys() []Key {
 		msgGapResolverWindow,
 		msgGroupImplementations,
 		msgPageNotAdjustable,
-		msgLabelGeoIPState,
-		msgLabelGeoIPBuild,
 		msgKindFlowVolume,
 		msgKindIPGeolocation,
 		msgKindMeasurementSample,

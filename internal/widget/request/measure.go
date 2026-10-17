@@ -351,14 +351,14 @@ func (r *Request) captureHistory(provider int64) ([]netflow.CaptureConfiguration
 		func(row reads.RowScanner) error {
 			var (
 				configuration     netflow.CaptureConfiguration
-				readable, enabled int64
+				readable, enabled bool
 			)
 			if err := row.Scan(&configuration.ID, &configuration.FirstReadAt, &configuration.LastReadAt, &readable,
 				&enabled); err != nil {
 				return err
 			}
 			configuration.ProviderID = provider
-			configuration.Readable, configuration.Enabled = readable == 1, enabled == 1
+			configuration.Readable, configuration.Enabled = readable, enabled
 			byID[configuration.ID] = len(configurations)
 			configurations = append(configurations, configuration)
 			return nil
@@ -369,15 +369,16 @@ func (r *Request) captureHistory(provider int64) ([]netflow.CaptureConfiguration
 	err = r.Db.WidgetRows(r.Ctx, "widget_capture_interfaces", vocab.Period{}, parameters,
 		func(row reads.RowScanner) error {
 			var (
-				id, ingress, egress int64
-				identifier          string
+				id              int64
+				ingress, egress bool
+				identifier      string
 			)
 			if err := row.Scan(&id, &identifier, &ingress, &egress); err != nil {
 				return err
 			}
 			if index, known := byID[id]; known {
 				configurations[index].Interfaces = append(configurations[index].Interfaces,
-					netflow.CaptureInterface{Identifier: identifier, Ingress: ingress == 1, Egress: egress == 1})
+					netflow.CaptureInterface{Identifier: identifier, Ingress: ingress, Egress: egress})
 			}
 			return nil
 		})

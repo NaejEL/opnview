@@ -198,7 +198,7 @@ func TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets(t *testing.T) {
 			parameters[param.Key] = json.RawMessage("null")
 		}
 		encoded, _ := json.Marshal(parameters)
-		parsed, err := params.ParseParameters(string(encoded), preset.Params)
+		parsed, err := params.ParseParametersWith(string(encoded), preset.Params, nil)
 		check(t, err)
 		if len(parsed.Unknown) != 0 {
 			t.Errorf("%s reported its own keys unknown: %v", preset.Type, parsed.Unknown)

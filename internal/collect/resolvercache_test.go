@@ -361,7 +361,7 @@ func TestACacheReadNamesAFlowThatThreeLookupsCouldNot(t *testing.T) {
 	source, destination := "198.51.100.10", "203.0.113.20"
 	var flowID, observedAt int64
 	if err := harness.Store.DB().QueryRow(`SELECT id, observed_at FROM flow
-		WHERE src_address = ? AND dst_address = ?`, source, destination).Scan(&flowID, &observedAt); err != nil {
+		WHERE src_address = $1 AND dst_address = $2`, source, destination).Scan(&flowID, &observedAt); err != nil {
 		t.Fatalf("reading the flow: %v", err)
 	}
 	answerLookups(harness.Fake,
@@ -373,9 +373,9 @@ func TestACacheReadNamesAFlowThatThreeLookupsCouldNot(t *testing.T) {
 	}
 	attributionOf := func() (int, string) {
 		var method string
-		count := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM domain_attribution WHERE flow_id = ?", flowID)
+		count := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM domain_attribution WHERE flow_id = $1", flowID)
 		if count == 1 {
-			if err := harness.Store.DB().QueryRow("SELECT method FROM domain_attribution WHERE flow_id = ?",
+			if err := harness.Store.DB().QueryRow("SELECT method FROM domain_attribution WHERE flow_id = $1",
 				flowID).Scan(&method); err != nil {
 				t.Fatal(err)
 			}
@@ -401,7 +401,7 @@ func TestACacheReadNamesAFlowThatThreeLookupsCouldNot(t *testing.T) {
 		t.Fatalf("the cache pass left the flow with %d attributions by %q", count, method)
 	}
 	var site string
-	if err := harness.Store.DB().QueryRow("SELECT site_name FROM domain_attribution WHERE flow_id = ?",
+	if err := harness.Store.DB().QueryRow("SELECT site_name FROM domain_attribution WHERE flow_id = $1",
 		flowID).Scan(&site); err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func resolutionOf(t *testing.T, database *store.Store, hostname string) (string,
 	t.Helper()
 	var resolution, address string
 	if err := database.DB().QueryRow(`SELECT client_resolution, client_address FROM dns_resolution
-		WHERE client_hostname = ?`, hostname).Scan(&resolution, &address); err != nil {
+		WHERE client_hostname = $1`, hostname).Scan(&resolution, &address); err != nil {
 		t.Fatalf("reading the lookup of %s: %v", hostname, err)
 	}
 	return resolution, address
@@ -554,23 +554,10 @@ func TestALeasePassWaitsForTheLocalDataBeforeExaminingALookup(t *testing.T) {
 	}
 }
 
-// arrangeProcessorStream stands up a measurement harness and answers the processor's
-// stream with these events, held open as the firewall's is.
-func arrangeProcessorStream(t *testing.T, events ...string) *collecttest.ProbeHarness {
-	t.Helper()
-	harness := arrangeMeasurementCollection(t)
-	payloads := make([][]byte, 0, len(events))
-	for _, event := range events {
-		payloads = append(payloads, []byte(event))
-	}
-	harness.Fake.AnswerStream(opnsense.CPUUsageStream, payloads, true)
-	return harness
-}
-
 // processorReadings reads the stored processor readings.
 func processorReadings(t *testing.T, database *store.Store) []float64 {
 	t.Helper()
-	rows, err := database.DB().Query("SELECT value FROM measurement_sample WHERE measure = ?",
+	rows, err := database.DB().Query("SELECT value FROM measurement_sample WHERE measure = $1",
 		string(vocab.MeasureCPUUseRatio))
 	if err != nil {
 		t.Fatal(err)

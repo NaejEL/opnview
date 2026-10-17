@@ -62,7 +62,7 @@ func StoreBurst(h *webtest.Harness, from int64, count int) {
 	StoreFlows(h, from)
 	db := h.Store.DB()
 	var seed string
-	if err := db.QueryRow(`SELECT log_digest FROM flow WHERE observed_at = ? ORDER BY id DESC LIMIT 1`,
+	if err := db.QueryRow(`SELECT log_digest FROM flow WHERE observed_at = $1 ORDER BY id DESC LIMIT 1`,
 		from).Scan(&seed); err != nil {
 		h.T.Fatalf("reading the seed record back: %v", err)
 	}
@@ -82,9 +82,9 @@ func StoreBurst(h *webtest.Harness, from int64, count int) {
 		}
 		copied = append(copied, `"`+column+`"`)
 	}
-	statement := `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+	statement := `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $1)
 		INSERT INTO flow (` + strings.Join(copied, ", ") + `)
-		SELECT ` + strings.Join(selected, ", ") + ` FROM flow, n WHERE log_digest = ?`
+		SELECT ` + strings.Join(selected, ", ") + ` FROM flow, n WHERE log_digest = $2`
 	if _, err := db.Exec(statement, count-1, seed); err != nil {
 		h.T.Fatalf("copying the seed record: %v", err)
 	}

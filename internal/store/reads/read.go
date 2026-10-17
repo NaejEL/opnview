@@ -411,7 +411,7 @@ func (s *ReadStore) readVolume(ctx context.Context, name string, from, to int64,
 	if err != nil {
 		return err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return fmt.Errorf("store: %s: %w", name, err)
 	}
@@ -546,7 +546,7 @@ func (s *ReadStore) firewallLogGaps(ctx context.Context, from, to int64) ([]Inte
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return nil, fmt.Errorf("store: read_firewall_log_gaps: %w", err)
 	}
@@ -633,7 +633,7 @@ func (s *ReadStore) ReadConnectionTree(ctx context.Context, from, to int64, root
 	if err != nil {
 		return tree, err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return tree, fmt.Errorf("store: read_connection_tree: %w", err)
 	}
@@ -840,8 +840,7 @@ func (s *ReadStore) ReadAttributionRate(ctx context.Context, from, to int64, cli
 		mean    sql.NullFloat64
 		maximum sql.NullInt64
 	)
-	if err := s.Reader.QueryRowContext(ctx, text, sql.Named("from", from), sql.Named("to", to),
-		sql.Named("client_id", sqldb.Optional(clientID))).Scan(&result.EligibleFlows, &result.NamedFlows,
+	if err := sqldb.QueryRow(ctx, s.Reader, text, map[string]any{"from": from, "to": to, "client_id": sqldb.Optional(clientID)}).Scan(&result.EligibleFlows, &result.NamedFlows,
 		&mean, &maximum, &result.NamedByCacheAnswer, &result.NamedByLookupTiming); err != nil {
 		return result, fmt.Errorf("store: read_attribution_rate: %w", err)
 	}
@@ -874,7 +873,7 @@ func (s *ReadStore) ReadSiteTotals(ctx context.Context, period vocab.Period, fro
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return nil, fmt.Errorf("store: read_site_totals: %w", err)
 	}
@@ -923,7 +922,7 @@ func (s *ReadStore) ReadOwnerTotals(ctx context.Context, period vocab.Period, fr
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return nil, fmt.Errorf("store: read_owner_totals: %w", err)
 	}
@@ -951,7 +950,7 @@ func (s *ReadStore) ReadOwnerTotals(ctx context.Context, period vocab.Period, fr
 	if err != nil {
 		return nil, err
 	}
-	counts, err := s.Reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	counts, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return nil, fmt.Errorf("store: read_owner_client_counts: %w", err)
 	}
@@ -1006,7 +1005,7 @@ func (s *ReadStore) ReadInterfaceClients(ctx context.Context, from, to int64) ([
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return nil, fmt.Errorf("store: read_interface_seen_clients: %w", err)
 	}
@@ -1075,7 +1074,7 @@ func (s *ReadStore) ReadBlockedDecisionCounts(ctx context.Context, from, to int6
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return nil, fmt.Errorf("store: read_blocked_decision_counts: %w", err)
 	}
@@ -1138,7 +1137,7 @@ func (s *ReadStore) ReadRuleLogging(ctx context.Context) (RuleLogging, error) {
 		var (
 			id                   int64
 			interfaceList        sql.NullString
-			legacy, logsMatching sql.NullInt64
+			legacy, logsMatching sql.NullBool
 		)
 		if err := rows.Scan(&id, &interfaceList, &legacy, &logsMatching); err != nil {
 			return result, fmt.Errorf("store: read_rules: %w", err)
@@ -1147,7 +1146,7 @@ func (s *ReadStore) ReadRuleLogging(ctx context.Context) (RuleLogging, error) {
 			result.NotReported++
 			continue
 		}
-		if logsMatching.Int64 != 0 {
+		if logsMatching.Bool {
 			continue
 		}
 		keys := splitInterfaceList(interfaceList.String)
@@ -1158,7 +1157,7 @@ func (s *ReadStore) ReadRuleLogging(ctx context.Context) (RuleLogging, error) {
 			result.UnresolvedNotLogging++
 		case len(keys) == 0:
 			result.FloatingNotLogging++
-		case legacy.Valid && legacy.Int64 == 1:
+		case legacy.Valid && legacy.Bool:
 			result.UnresolvedNotLogging++
 		default:
 			resolved := map[int64]struct{}{}
@@ -1238,7 +1237,7 @@ func (s *ReadStore) ReadPublicAddresses(ctx context.Context) ([]PublicAddress, e
 		if !iface.upstream {
 			continue
 		}
-		rows, err := s.Reader.QueryContext(ctx, text, sql.Named("interface_id", iface.id))
+		rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"interface_id": iface.id})
 		if err != nil {
 			return nil, fmt.Errorf("store: read_interface_addresses: %w", err)
 		}

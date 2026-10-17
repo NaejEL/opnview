@@ -24,21 +24,6 @@ const (
 	TypeInstant = "instant"
 )
 
-// Types is the vocabulary, in the order docs/plugins.md lists it.
-func Types() []string {
-	return []string{TypeInteger, TypeReal, TypeText, TypeBoolean, TypeIP, TypeMAC, TypeInstant}
-}
-
-// IsType reports whether a word is a type of the vocabulary.
-func IsType(word string) bool {
-	for _, known := range Types() {
-		if known == word {
-			return true
-		}
-	}
-	return false
-}
-
 // ErrValueInvalid is a value that does not convert to its column's type: counted as
 // push_value_invalid, never coerced.
 var ErrValueInvalid = errors.New("push: the value does not convert to the column's type")

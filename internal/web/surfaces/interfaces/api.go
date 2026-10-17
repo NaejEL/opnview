@@ -19,10 +19,8 @@ const PathAPIInterfaceNetworks = "/api/interface-networks"
 // apiRoutes are the surface's JSON rows of the route table.
 func (s *surface) apiRoutes() []web.Route {
 	return []web.Route{
-		{Method: http.MethodGet, Pattern: PathAPIInterfaceNetworks, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPIInterfaceNetworks},
-		{Method: http.MethodPost, Pattern: PathAPIInterfaceNetworks, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPIEdit},
+		web.JSONRoute(http.MethodGet, PathAPIInterfaceNetworks, s.handleAPIInterfaceNetworks),
+		web.JSONRoute(http.MethodPost, PathAPIInterfaceNetworks, s.handleAPIEdit),
 	}
 }
 

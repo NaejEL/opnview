@@ -158,13 +158,13 @@ func columnName(relative string) string {
 // loadTable reads one data table's metadata, or nil when it does not exist yet.
 func (m *Mirror) loadTable(ctx context.Context, name string) (*tableInfo, error) {
 	var rowSet string
-	err := m.db.QueryRowContext(ctx, `SELECT row_set FROM opnsense.mirror_table WHERE name = ?`, name).Scan(&rowSet)
+	err := m.db.QueryRowContext(ctx, `SELECT row_set FROM opnsense.mirror_table WHERE name = $1`, name).Scan(&rowSet)
 	if err != nil {
 		return nil, nil
 	}
 	table := &tableInfo{name: name, rowSet: rowSet, columns: map[string]*columnInfo{}}
 	rows, err := m.db.QueryContext(ctx, `SELECT path, column_name, type, carries_domain FROM opnsense.mirror_column
-		WHERE table_name = ?`, name)
+		WHERE table_name = $1`, name)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +223,7 @@ func (m *Mirror) ensureTable(ctx context.Context, datum *Datum, rowSet, parentRo
 		parent = parentRowSet
 	}
 	if _, err := m.db.ExecContext(ctx, `INSERT INTO opnsense.mirror_table (name, endpoint_id, row_set, parent_row_set,
-		created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (name) DO NOTHING`, name, datum.EndpointID, rowSet, parent,
+		created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING`, name, datum.EndpointID, rowSet, parent,
 		m.now()); err != nil {
 		return nil, fmt.Errorf("mirror: recording the table %s: %w", name, err)
 	}
@@ -251,7 +251,7 @@ func (m *Mirror) bringUpToDate(ctx context.Context, name string) error {
 	}
 	var present bool
 	if err := m.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
-		WHERE table_schema = ? AND table_name = ? AND column_name = '#held')`, Schema, name).Scan(&present); err != nil {
+		WHERE table_schema = $1 AND table_name = $2 AND column_name = '#held')`, Schema, name).Scan(&present); err != nil {
 		return fmt.Errorf("mirror: reading the columns of %s: %w", name, err)
 	}
 	if !present {
@@ -299,7 +299,7 @@ func (m *Mirror) ensureColumn(ctx context.Context, datum *Datum, table *tableInf
 			}
 		}
 		if _, err := m.db.ExecContext(ctx, `INSERT INTO opnsense.mirror_column (table_name, path, column_name, type,
-			carries_domain, added_at) VALUES (?, ?, ?, ?, CAST(? AS boolean), ?)
+			carries_domain, added_at) VALUES ($1, $2, $3, $4, CAST($5 AS boolean), $6)
 			ON CONFLICT (table_name, path) DO NOTHING`, table.name, relative, column.name, kind,
 			strconv.FormatBool(domains), m.now()); err != nil {
 			return nil, err
@@ -313,7 +313,7 @@ func (m *Mirror) ensureColumn(ctx context.Context, datum *Datum, table *tableInf
 	}
 	if column.domains != domains && domains {
 		if _, err := m.db.ExecContext(ctx, `UPDATE opnsense.mirror_column SET carries_domain = true
-			WHERE table_name = ? AND path = ?`, table.name, relative); err != nil {
+			WHERE table_name = $1 AND path = $2`, table.name, relative); err != nil {
 			return nil, err
 		}
 		column.domains = true
@@ -336,7 +336,7 @@ func (m *Mirror) ensureColumn(ctx context.Context, datum *Datum, table *tableInf
 			return nil, fmt.Errorf("mirror: converting %s.%s to JSONB: %w", table.name, column.name, err)
 		}
 	}
-	if _, err := m.db.ExecContext(ctx, `UPDATE opnsense.mirror_column SET type = ? WHERE table_name = ? AND path = ?`,
+	if _, err := m.db.ExecContext(ctx, `UPDATE opnsense.mirror_column SET type = $1 WHERE table_name = $2 AND path = $3`,
 		target, table.name, relative); err != nil {
 		return nil, err
 	}
@@ -360,7 +360,7 @@ func (m *Mirror) recordVersion(ctx context.Context, endpointID int64, cause stri
 	}
 	_, err := m.db.ExecContext(ctx, `INSERT INTO opnsense.mirror_schema_version
 		(endpoint_id, version, changed_at, cause, firewall_version)
-		SELECT ?, coalesce(max(version), 0) + 1, ?, ?, ? FROM opnsense.mirror_schema_version WHERE endpoint_id = ?`,
+		SELECT $1, coalesce(max(version), 0) + 1, $2, $3, $4 FROM opnsense.mirror_schema_version WHERE endpoint_id = $5`,
 		endpointID, m.now(), cause, version, endpointID)
 	if err != nil {
 		return fmt.Errorf("mirror: recording a schema version: %w", err)
@@ -410,19 +410,19 @@ func (m *Mirror) Purge(ctx context.Context, horizon int64) error {
 				WHEN d.cursor_type = 'timestamp' AND r."#cursor" IS NOT NULL THEN r."#cursor"
 				WHEN d.nature = 'record_stream' THEN CAST(r."#first_seen" AS double precision)
 				WHEN r."#held" THEN CAST(coalesce(d.fetched_at, r."#last_seen") AS double precision)
-				ELSE CAST(r."#last_seen" AS double precision) END) < ?`, horizon); err != nil {
+				ELSE CAST(r."#last_seen" AS double precision) END) < $1`, horizon); err != nil {
 			return fmt.Errorf("mirror: purging %s: %w", table, err)
 		}
 		history := identifier(table + "#history")
 		var exists bool
-		if err := m.db.QueryRowContext(ctx, `SELECT to_regclass(?) IS NOT NULL`, Schema+"."+quote(history)).
+		if err := m.db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, Schema+"."+quote(history)).
 			Scan(&exists); err == nil && exists {
-			if _, err := m.db.ExecContext(ctx, "DELETE FROM "+qualified(history)+` WHERE "#changed_at" < ?`,
+			if _, err := m.db.ExecContext(ctx, "DELETE FROM "+qualified(history)+` WHERE "#changed_at" < $1`,
 				horizon); err != nil {
 				return fmt.Errorf("mirror: purging %s: %w", history, err)
 			}
 		}
 	}
-	_, err = m.db.ExecContext(ctx, `DELETE FROM opnsense.mirror_gap WHERE to_at < ?`, horizon)
+	_, err = m.db.ExecContext(ctx, `DELETE FROM opnsense.mirror_gap WHERE to_at < $1`, horizon)
 	return err
 }

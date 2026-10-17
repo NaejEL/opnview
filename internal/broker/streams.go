@@ -430,7 +430,7 @@ func (b *Broker) recordCutoff(ctx context.Context, endpoint opnsense.Endpoint, s
 		return
 	}
 	_, _ = b.mirror.Exec(ctx, `UPDATE opnsense.mirror_endpoint SET observed_stream = true,
-		stream_cutoff_seconds = greatest(coalesce(stream_cutoff_seconds, 0), CAST(? AS double precision)) WHERE id = ?`,
+		stream_cutoff_seconds = greatest(coalesce(stream_cutoff_seconds, 0), CAST($1 AS double precision)) WHERE id = $2`,
 		seconds, endpointID)
 }
 
@@ -440,7 +440,7 @@ func (b *Broker) recordStreamGap(key string, from, to int64) {
 		return
 	}
 	_, err := b.mirror.Exec(context.Background(), `INSERT INTO opnsense.mirror_gap (stream, from_at, to_at, reason,
-		recorded_at) VALUES (?, ?, ?, 'stream_cut', ?)`, key, from, to, b.now())
+		recorded_at) VALUES ($1, $2, $3, 'stream_cut', $4)`, key, from, to, b.now())
 	if err != nil {
 		b.options.Log(fmt.Sprintf("recording a gap of %s: %v", key, err))
 	}
@@ -452,8 +452,8 @@ func (b *Broker) StreamGaps(ctx context.Context, endpoint opnsense.Endpoint, opt
 	if b.mirror == nil {
 		return []mirror.Gap{}, nil
 	}
-	rows, err := b.mirror.Query(ctx, `SELECT from_at, to_at, reason FROM opnsense.mirror_gap WHERE stream = ?
-		AND to_at >= ? AND from_at <= ? ORDER BY from_at`, streamKey(endpoint, options), from, to)
+	rows, err := b.mirror.Query(ctx, `SELECT from_at, to_at, reason FROM opnsense.mirror_gap WHERE stream = $1
+		AND to_at >= $2 AND from_at <= $3 ORDER BY from_at`, streamKey(endpoint, options), from, to)
 	if err != nil {
 		return nil, err
 	}

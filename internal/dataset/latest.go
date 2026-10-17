@@ -1,7 +1,6 @@
 package dataset
 
 import (
-	"database/sql"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -43,7 +42,7 @@ func CompileLatest(declaration Declaration, query *Query, window Window, columns
 	relation := "(" + declaration.relation + ") AS d"
 	timeColumn, timed := declaration.TimeColumn()
 	if timed {
-		c.args = append(c.args, sql.Named("from", window.From), sql.Named("to", window.To))
+		c.args = append(c.args, window.From, window.To)
 	}
 	where := c.where(window)
 	selected := make([]string, 0, len(columns)+1)

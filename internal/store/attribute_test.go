@@ -196,7 +196,7 @@ func TestPurgingALookupOrAFlowRemovesItsAttribution(t *testing.T) {
 	if _, err := network.DB.DB().Exec("DELETE FROM dns_resolution WHERE lookup_key = 'example-purge-lookup-0'"); err != nil {
 		t.Fatalf("purging a lookup: %v", err)
 	}
-	if _, err := network.DB.DB().Exec("DELETE FROM flow WHERE observed_at = ?", network.Now-500); err != nil {
+	if _, err := network.DB.DB().Exec("DELETE FROM flow WHERE observed_at = $1", network.Now-500); err != nil {
 		t.Fatalf("purging a flow: %v", err)
 	}
 	if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM domain_attribution"); rows != 0 {

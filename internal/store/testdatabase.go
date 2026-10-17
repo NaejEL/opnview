@@ -178,7 +178,7 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 		return "", err
 	}
 	var exists bool
-	if err := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = ?)", name).
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", name).
 		Scan(&exists); err != nil {
 		return "", fmt.Errorf("store: looking for the test template: %w", err)
 	}
@@ -210,7 +210,7 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 		_, _ = db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{building}.Sanitize()+" WITH (FORCE)")
 		_, _ = db.ExecContext(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{sqldb.ReadRoleName(building)}.Sanitize())
 		var nowExists bool
-		if checkErr := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = ?)",
+		if checkErr := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
 			name).Scan(&nowExists); checkErr == nil && nowExists {
 			return name, nil
 		}

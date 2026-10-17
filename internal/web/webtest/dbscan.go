@@ -35,14 +35,14 @@ func DatabaseContains(t *testing.T, harness *Harness, value string) string {
 	// first column holding the value, in the scan's order, is the one named.
 	for _, table := range databaseTables(t, harness.Store.DB()) {
 		counts := make([]string, 0, len(table.columns))
-		arguments := make([]any, 0, len(table.columns))
+		// Every condition reads the value as $1.
+		arguments := []any{value}
 		for _, column := range table.columns {
-			condition := fmt.Sprintf("strpos(CAST(%s AS TEXT), ?) > 0", quoteIdentifier(column.name))
+			condition := fmt.Sprintf("strpos(CAST(%s AS TEXT), $1) > 0", quoteIdentifier(column.name))
 			if column.dataType == "bytea" {
-				condition = fmt.Sprintf("position(convert_to(?, 'UTF8') IN %s) > 0", quoteIdentifier(column.name))
+				condition = fmt.Sprintf("position(convert_to($1, 'UTF8') IN %s) > 0", quoteIdentifier(column.name))
 			}
 			counts = append(counts, "count(*) FILTER (WHERE "+condition+")")
-			arguments = append(arguments, value)
 		}
 		hits := make([]int, len(table.columns))
 		destinations := make([]any, len(table.columns))
@@ -60,18 +60,6 @@ func DatabaseContains(t *testing.T, harness *Harness, value string) string {
 		}
 	}
 	return ""
-}
-
-// DatabaseTables lists the tables of every schema but PostgreSQL's and TimescaleDB's own, each as
-// schema.table; views are excluded: a view holds no rows of its own, so scanning one would report
-// the table beneath it twice.
-func DatabaseTables(t *testing.T, db *sql.DB) []string {
-	t.Helper()
-	var names []string
-	for _, table := range databaseTables(t, db) {
-		names = append(names, table.name)
-	}
-	return names
 }
 
 func databaseTables(t *testing.T, db *sql.DB) []scannedTable {

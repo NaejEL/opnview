@@ -301,7 +301,7 @@ func TestAnUnavailableConfigurationIsReportedAndNothingIsGuessed(t *testing.T) {
 				t.Errorf("%s: the availability says %s, want %s", scenario.name, outcome, scenario.outcome)
 			}
 			if stored := collecttest.ScalarCount(t, h.Store,
-				"SELECT count(*) FROM capture_configuration WHERE fingerprint IS NULL AND outcome = ?",
+				"SELECT count(*) FROM capture_configuration WHERE fingerprint IS NULL AND outcome = $1",
 				string(scenario.outcome)); stored != 1 {
 				t.Errorf("%s: the unreadable configuration was recorded %d times with its outcome", scenario.name, stored)
 			}
@@ -373,7 +373,7 @@ func availabilityOf(t *testing.T, h *collecttest.NetflowHarness) (string, string
 	var outcome string
 	var detail *string
 	if err := h.Store.DB().QueryRowContext(context.Background(),
-		"SELECT outcome, detail FROM source_availability WHERE provider_id = ?", providerID).Scan(&outcome, &detail); err != nil {
+		"SELECT outcome, detail FROM source_availability WHERE provider_id = $1", providerID).Scan(&outcome, &detail); err != nil {
 		t.Fatal(err)
 	}
 	return outcome, collecttest.OrNull(detail)

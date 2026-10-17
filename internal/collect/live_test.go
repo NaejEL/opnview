@@ -218,7 +218,7 @@ func TestLiveEndpointsVerifiedAFailedLivePassYieldsAClosedOutcome(t *testing.T) 
 	}
 	var outcome string
 	if err := harness.Store.DB().QueryRowContext(ctx, `SELECT a.outcome FROM source_availability AS a
-		JOIN provider AS p ON p.id = a.provider_id WHERE p.kind = 'measurement_sample' AND p.provider_key = ?`,
+		JOIN provider AS p ON p.id = a.provider_id WHERE p.kind = 'measurement_sample' AND p.provider_key = $1`,
 		collecttest.ProviderInsight).Scan(&outcome); err != nil {
 		t.Fatal(err)
 	}

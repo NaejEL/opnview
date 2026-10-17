@@ -55,7 +55,7 @@ func TestAFilterLogPassStoresEveryRecordAndResolvesBothJoinKeys(t *testing.T) {
 	// classified without.
 	for _, family := range []int64{4, 6} {
 		if collecttest.ScalarCount(t, harness.Store,
-			"SELECT count(*) FROM flow WHERE ip_version = ?", family) == 0 {
+			"SELECT count(*) FROM flow WHERE ip_version = $1", family) == 0 {
 			t.Errorf("no flow carries IP version %d", family)
 		}
 	}

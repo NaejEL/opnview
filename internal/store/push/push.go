@@ -27,8 +27,8 @@ func (s *PushStore) RecordPushGap(ctx context.Context, providerID int64, reason 
 	}
 	defer func() { _ = transaction.Rollback() }()
 	result, err := transaction.ExecContext(ctx,
-		`UPDATE collection_gap SET interval_end_at = greatest(interval_end_at, ?), detail = ?, detected_at = ?
-		 WHERE provider_id = ? AND reason = ? AND interval_start_at = ?`,
+		`UPDATE collection_gap SET interval_end_at = greatest(interval_end_at, $1), detail = $2, detected_at = $3
+		 WHERE provider_id = $4 AND reason = $5 AND interval_start_at = $6`,
 		to, detail, now, providerID, string(reason), from)
 	if err != nil {
 		return fmt.Errorf("store: recording a %s gap: %w", reason, err)
@@ -36,7 +36,7 @@ func (s *PushStore) RecordPushGap(ctx context.Context, providerID int64, reason 
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		if _, err := transaction.ExecContext(ctx,
 			`INSERT INTO collection_gap (provider_id, interval_start_at, interval_end_at, reason, detail, detected_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
 			providerID, from, to, string(reason), detail, now); err != nil {
 			return fmt.Errorf("store: recording a %s gap: %w", reason, err)
 		}
@@ -50,7 +50,7 @@ func (s *PushStore) RecordPushGap(ctx context.Context, providerID int64, reason 
 // ListenerAliveAt returns when a push listener was last heard alive, and whether it ever was.
 func (s *PushStore) ListenerAliveAt(ctx context.Context, protocol, transport string) (int64, bool, error) {
 	var at int64
-	err := s.SQL.QueryRowContext(ctx, "SELECT alive_at FROM push_listener WHERE protocol = ? AND transport = ?",
+	err := s.SQL.QueryRowContext(ctx, "SELECT alive_at FROM push_listener WHERE protocol = $1 AND transport = $2",
 		protocol, transport).Scan(&at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
@@ -64,7 +64,7 @@ func (s *PushStore) ListenerAliveAt(ctx context.Context, protocol, transport str
 // RecordListenerAlive records that a push listener is alive at an instant.
 func (s *PushStore) RecordListenerAlive(ctx context.Context, protocol, transport string, at int64) error {
 	if _, err := s.SQL.ExecContext(ctx,
-		`INSERT INTO push_listener (protocol, transport, alive_at) VALUES (?, ?, ?)
+		`INSERT INTO push_listener (protocol, transport, alive_at) VALUES ($1, $2, $3)
 		 ON CONFLICT (protocol, transport) DO UPDATE SET alive_at = greatest(push_listener.alive_at, excluded.alive_at)`,
 		protocol, transport, at); err != nil {
 		return fmt.Errorf("store: recording the %s/%s listener alive: %w", protocol, transport, err)
@@ -89,7 +89,7 @@ const (
 // SourcePeriods returns a provider's source periods, oldest first.
 func (s *PushStore) SourcePeriods(ctx context.Context, providerID int64) ([]SourcePeriod, error) {
 	rows, err := s.SQL.QueryContext(ctx,
-		"SELECT path, from_at, to_at FROM provider_source_period WHERE provider_id = ? ORDER BY from_at", providerID)
+		"SELECT path, from_at, to_at FROM provider_source_period WHERE provider_id = $1 ORDER BY from_at", providerID)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading the source periods: %w", err)
 	}
@@ -120,7 +120,7 @@ func (s *PushStore) OpenSourcePeriod(ctx context.Context, providerID int64, path
 	}
 	defer func() { _ = transaction.Rollback() }()
 	var count int64
-	if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM provider_source_period WHERE provider_id = ?",
+	if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM provider_source_period WHERE provider_id = $1",
 		providerID).Scan(&count); err != nil {
 		return fmt.Errorf("store: opening a source period: %w", err)
 	}
@@ -130,17 +130,17 @@ func (s *PushStore) OpenSourcePeriod(ctx context.Context, providerID int64, path
 	}
 	if count == 0 {
 		if _, err := transaction.ExecContext(ctx,
-			"INSERT INTO provider_source_period (provider_id, path, from_at, to_at) VALUES (?, ?, 0, ?)",
+			"INSERT INTO provider_source_period (provider_id, path, from_at, to_at) VALUES ($1, $2, 0, $3)",
 			providerID, previous, boundary); err != nil {
 			return fmt.Errorf("store: opening a source period: %w", err)
 		}
 	} else if _, err := transaction.ExecContext(ctx,
-		"UPDATE provider_source_period SET to_at = greatest(from_at, ?) WHERE provider_id = ? AND to_at IS NULL",
+		"UPDATE provider_source_period SET to_at = greatest(from_at, $1) WHERE provider_id = $2 AND to_at IS NULL",
 		boundary, providerID); err != nil {
 		return fmt.Errorf("store: closing a source period: %w", err)
 	}
 	if _, err := transaction.ExecContext(ctx,
-		"INSERT INTO provider_source_period (provider_id, path, from_at) VALUES (?, ?, ?)",
+		"INSERT INTO provider_source_period (provider_id, path, from_at) VALUES ($1, $2, $3)",
 		providerID, path, boundary+1); err != nil {
 		return fmt.Errorf("store: opening a source period: %w", err)
 	}
@@ -154,7 +154,7 @@ func (s *PushStore) OpenSourcePeriod(ctx context.Context, providerID int64, path
 // carries the pushed prefix.
 func (s *PushStore) NewestPushedFlowObservedAt(ctx context.Context, prefix string) (int64, bool, error) {
 	var newest sql.NullInt64
-	if err := s.SQL.QueryRowContext(ctx, "SELECT max(observed_at) FROM flow WHERE log_digest LIKE ?",
+	if err := s.SQL.QueryRowContext(ctx, "SELECT max(observed_at) FROM flow WHERE log_digest LIKE $1",
 		prefix+"%").Scan(&newest); err != nil {
 		return 0, false, fmt.Errorf("store: reading the newest pushed flow: %w", err)
 	}

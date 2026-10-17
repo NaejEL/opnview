@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -253,8 +254,8 @@ func (s *AttributionStore) MeasureRecordRate(ctx context.Context, spec RecordRat
 			fmt.Errorf("store: a record-rate bucket of %d seconds is not a bucket", bucketSeconds)
 	}
 
-	rows, err := s.SQL.QueryContext(ctx, RecordRateBranch(spec, bucketSeconds)+" ORDER BY g.reason",
-		sql.Named("window_start", window.StartAt), sql.Named("window_end", window.EndAt))
+	rows, err := sqldb.Query(ctx, s.SQL, RecordRateBranch(spec, bucketSeconds)+" ORDER BY g.reason",
+		map[string]any{"window_start": window.StartAt, "window_end": window.EndAt})
 	if err != nil {
 		return measurement, fmt.Errorf("store: measuring the %s record rate: %w", spec.Kind, err)
 	}
@@ -380,7 +381,7 @@ func (s *AttributionStore) ProvidersOfKind(ctx context.Context, kind string) ([]
 	rows, err := s.SQL.QueryContext(ctx, `SELECT p.provider_key, p.display_name, coalesce(a.state, ''), p.is_active
 		   FROM provider AS p
 		   LEFT JOIN source_availability AS a ON a.provider_id = p.id
-		  WHERE p.kind = ?
+		  WHERE p.kind = $1
 		  ORDER BY p.provider_key`,
 		kind)
 	if err != nil {
@@ -392,12 +393,12 @@ func (s *AttributionStore) ProvidersOfKind(ctx context.Context, kind string) ([]
 	for rows.Next() {
 		var provider ProviderOfKind
 		var state string
-		var active int
+		var active bool
 		if err := rows.Scan(&provider.ProviderKey, &provider.DisplayName, &state, &active); err != nil {
 			return nil, fmt.Errorf("store: listing the %s providers: %w", kind, err)
 		}
 		provider.State = vocab.AvailabilityState(strings.TrimSpace(state))
-		provider.IsActive = active == 1
+		provider.IsActive = active
 		providers = append(providers, provider)
 	}
 	if err := rows.Err(); err != nil {

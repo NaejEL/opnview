@@ -114,11 +114,11 @@ SELECT f.id AS flow_id,
        fw.bytes AS forward_bytes,
        fw.packets AS forward_packets,
        fw.state AS forward_state,
-       fw.counted_copy AS forward_counted_copy,
+       CAST(fw.counted_copy AS INTEGER) AS forward_counted_copy,
        rv.bytes AS reverse_bytes,
        rv.packets AS reverse_packets,
        rv.state AS reverse_state,
-       rv.counted_copy AS reverse_counted_copy
+       CAST(rv.counted_copy AS INTEGER) AS reverse_counted_copy
 FROM flow AS f
 LEFT JOIN interface_map AS m ON m.device = f.interface_device
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address

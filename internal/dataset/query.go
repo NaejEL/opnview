@@ -57,14 +57,6 @@ const (
 	RefusalTooManyRows = "too_many_rows"
 )
 
-// RefusalCodes is every refusal code, for the document and its test.
-func RefusalCodes() []string {
-	return []string{RefusalUnknownDataset, RefusalMalformedParameters, RefusalUnknownColumn,
-		RefusalColumnRoleNotAdmitted, RefusalAggregationNotAdmitted, RefusalOperatorNotAdmitted,
-		RefusalValueTypeMismatch, RefusalBucketNotAdmitted, RefusalTooManyBuckets, RefusalTooManySeries,
-		RefusalTooManyRows}
-}
-
 // The bounds, each written once here and documented in docs/widget-api.md, "Data catalogue".
 const (
 	// MaxBuckets is the most buckets one series may have.

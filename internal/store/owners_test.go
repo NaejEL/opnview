@@ -375,10 +375,10 @@ func TestAnAssignedClientSurvivesThePurgeAndAnUnassignedOneIsPurgedAsBefore(t *t
 	if err := database.Purge(ctx, now); err != nil {
 		t.Fatalf("purging: %v", err)
 	}
-	if storetest.QueryInt(t, database, "SELECT count(*) FROM client WHERE id = ?", assigned) != 1 {
+	if storetest.QueryInt(t, database, "SELECT count(*) FROM client WHERE id = $1", assigned) != 1 {
 		t.Error("the purge removed a client somebody assigned to a person")
 	}
-	if storetest.QueryInt(t, database, "SELECT count(*) FROM client WHERE id = ?", unassigned) != 0 {
+	if storetest.QueryInt(t, database, "SELECT count(*) FROM client WHERE id = $1", unassigned) != 0 {
 		t.Error("the purge kept an unassigned client older than the horizon")
 	}
 	// Unassigned, it goes at the next purge like any other.
@@ -388,7 +388,7 @@ func TestAnAssignedClientSurvivesThePurgeAndAnUnassignedOneIsPurgedAsBefore(t *t
 	if err := database.Purge(ctx, now+1); err != nil {
 		t.Fatal(err)
 	}
-	if storetest.QueryInt(t, database, "SELECT count(*) FROM client WHERE id = ?", assigned) != 0 {
+	if storetest.QueryInt(t, database, "SELECT count(*) FROM client WHERE id = $1", assigned) != 0 {
 		t.Error("an unassigned client older than the horizon survived the purge")
 	}
 }
@@ -402,7 +402,7 @@ func ownerFamilyBytes(t *testing.T, database *store.Store, period string, owner 
 			" WHERE owner_id IS NULL")
 	}
 	return storetest.QueryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period+
-		" WHERE owner_id = ?", *owner)
+		" WHERE owner_id = $1", *owner)
 }
 
 // TestAReassignmentForcesTheOwnerFamilyToBeRecomputed is C1's rule 3 at the store: a change of
@@ -425,7 +425,7 @@ func TestAReassignmentForcesTheOwnerFamilyToBeRecomputed(t *testing.T) {
 	}
 	client := storetest.QueryInt(t, database, `SELECT client_id FROM client_volume_aggregate_1h
 		GROUP BY client_id ORDER BY count(*) DESC, client_id LIMIT 1`)
-	clientBytes := storetest.QueryInt(t, database, "SELECT sum(bytes) FROM client_volume_aggregate_30d WHERE client_id = ?", client)
+	clientBytes := storetest.QueryInt(t, database, "SELECT sum(bytes) FROM client_volume_aggregate_30d WHERE client_id = $1", client)
 	totals := map[string]int64{}
 	for _, period := range vocab.Periods() {
 		totals[period.Name] = storetest.QueryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period.Name)

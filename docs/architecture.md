@@ -425,7 +425,6 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/plugin/harness` — the runner of a plugin's own tests, `opnview plugin test`'s and the Go suite's.
 - `internal/plugin/listing` — what the API surfaces read of the loaded plugins.
 - `internal/plugin/mmdbwrite` — small MaxMind DB files and their archives, for a plugin's tests.
-- `internal/plugin/plugintest` — what the built-in plugins' own tests share.
 - `internal/plugin/scripthost` — the bindings of a plugin's JavaScript to the host.
 - `internal/push` — what the firewall sends to opnview: the listeners, the routing and the batching.
 - `internal/push/ipfixregistry` — the IANA IPFIX Information Elements registry.

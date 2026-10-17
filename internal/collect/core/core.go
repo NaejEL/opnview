@@ -270,41 +270,6 @@ func (c *Collector) FirewallOffsetSeconds() int {
 // Now is the current instant as the UTC epoch every column stores.
 func (c *Collector) Now() int64 { return c.Clock.Now().UTC().Unix() }
 
-// recordOutcome turns one response into the availability state the survey names
-// for it, and writes it with the probe and the instant.
-//
-// The mapping is the survey's, not an invention, and the important half is what
-// it refuses to do: an OK response with an empty collection is `reachable`, never
-// `unavailable`, because a source that is working and has nothing to say is a
-// normal state — a reachable IDS with a narrow ruleset and nothing to report is
-// the case the verified section describes, and treating it as a fault would be
-// the defect.
-func (c *Collector) recordOutcome(ctx context.Context, providerID int64,
-	response opnsense.Response, extra string) error {
-	state := vocab.StateUnavailable
-	switch response.Outcome {
-	case opnsense.OutcomeOK:
-		state = vocab.StateReachable
-	case opnsense.OutcomeNotFound:
-		// An absent module is unavailable, and it is the normal signal that an
-		// optional component is not installed.
-		state = vocab.StateUnavailable
-	case opnsense.OutcomeForbidden, opnsense.OutcomeEmptyBody,
-		opnsense.OutcomeResultFailed, opnsense.OutcomeServerError,
-		opnsense.OutcomeTransportFailure:
-		state = vocab.StateUnavailable
-	}
-	detail := response.Detail
-	if extra != "" {
-		if detail == "" {
-			detail = extra
-		} else {
-			detail += "; " + extra
-		}
-	}
-	return c.WriteAvailability(ctx, providerID, state, provider.ResponseOutcome(response), response.Endpoint, detail)
-}
-
 // WriteAvailability records a state determined by one probe endpoint, with the outcome
 // code that names why. An empty outcome is refused rather than defaulted: a code nobody
 // chose is a code that would have to be guessed back from the detail.

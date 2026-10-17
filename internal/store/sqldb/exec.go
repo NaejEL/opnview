@@ -19,20 +19,6 @@ type Querier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// Named turns a parameter map into the named arguments database/sql binds,
-// keeping only those the statement names: an argument a statement does not use
-// is refused by the driver, and one parameter map serves several statements.
-func Named(text string, parameters map[string]any) []any {
-	arguments := make([]any, 0, len(parameters))
-	for name, value := range parameters {
-		if !usesParameter(text, name) {
-			continue
-		}
-		arguments = append(arguments, sql.Named(name, value))
-	}
-	return arguments
-}
-
 // ExecNamed runs one named statement and returns how many rows it changed.
 func ExecNamed(ctx context.Context, q Querier, name string, parameters map[string]any) (int64, error) {
 	text, err := Statement(name)
@@ -44,7 +30,7 @@ func ExecNamed(ctx context.Context, q Querier, name string, parameters map[strin
 
 // ExecText runs a statement text and returns how many rows it changed.
 func ExecText(ctx context.Context, q Querier, name, text string, parameters map[string]any) (int64, error) {
-	result, err := q.ExecContext(ctx, text, Named(text, parameters)...)
+	result, err := Exec(ctx, q, text, parameters)
 	if err != nil {
 		return 0, fmt.Errorf("store: %s: %w", name, err)
 	}
@@ -62,7 +48,7 @@ func QueryInts(ctx context.Context, q Querier, name string, parameters map[strin
 	if err != nil {
 		return nil, err
 	}
-	rows, err := q.QueryContext(ctx, text, Named(text, parameters)...)
+	rows, err := Query(ctx, q, text, parameters)
 	if err != nil {
 		return nil, fmt.Errorf("store: %s: %w", name, err)
 	}
@@ -99,7 +85,7 @@ func QueryOptionalInt(ctx context.Context, q Querier, name string, parameters ma
 func QueryOptionalIntText(ctx context.Context, q Querier, name, text string,
 	parameters map[string]any) (int64, bool, error) {
 	var value sql.NullInt64
-	err := q.QueryRowContext(ctx, text, Named(text, parameters)...).Scan(&value)
+	err := QueryRow(ctx, q, text, parameters).Scan(&value)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return 0, false, nil
@@ -115,23 +101,6 @@ func Optional(value *int64) any {
 		return nil
 	}
 	return *value
-}
-
-// usesParameter reports whether a statement names :name, as a whole parameter
-// rather than as the start of a longer one.
-func usesParameter(text, name string) bool {
-	token := ":" + name
-	for offset := 0; ; {
-		index := strings.Index(text[offset:], token)
-		if index < 0 {
-			return false
-		}
-		after := offset + index + len(token)
-		if after >= len(text) || !isParameterCharacter(text[after]) {
-			return true
-		}
-		offset = after
-	}
 }
 
 // isParameterCharacter reports whether a byte can continue a parameter name.

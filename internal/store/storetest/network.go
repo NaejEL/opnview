@@ -353,7 +353,7 @@ func ForeignKeyViolations(t *testing.T, database *store.Store) int {
 		        JOIN pg_attribute AS a ON a.attrelid = c.confrelid AND a.attnum = k.attnum)
 		FROM pg_constraint AS c
 		JOIN pg_namespace AS n ON n.oid = c.connamespace
-		WHERE c.contype = 'f' AND n.nspname = ?`, sqldb.CoreSchema)
+		WHERE c.contype = 'f' AND n.nspname = $1`, sqldb.CoreSchema)
 	if err != nil {
 		t.Fatalf("listing the foreign keys: %v", err)
 	}
@@ -474,7 +474,7 @@ func OutcomeOf(t *testing.T, database *store.Store, device, src, dst string) (st
 	if err := database.DB().QueryRow(`SELECT coalesce(f.pair_outcome, '-'),
 		coalesce(p.interface_device || ' ' || p.src_address || ' ' || p.dst_address, '-')
 		FROM flow AS f LEFT JOIN flow AS p ON p.id = f.paired_flow_id
-		WHERE f.interface_device = ? AND f.src_address = ? AND f.dst_address = ?`, device, src, dst).
+		WHERE f.interface_device = $1 AND f.src_address = $2 AND f.dst_address = $3`, device, src, dst).
 		Scan(&outcome, &partner); err != nil {
 		t.Fatalf("reading the record %s %s -> %s: %v", device, src, dst, err)
 	}
@@ -504,6 +504,7 @@ type PlanNode struct {
 // size.
 func PlanOf(t testing.TB, s *store.Store, text string, arguments ...any) []PlanNode {
 	t.Helper()
+	text, arguments = Bound(t, text, arguments...)
 	ctx := context.Background()
 	tx, err := s.SQL.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -577,4 +578,31 @@ func Prefixes(t *testing.T, texts ...string) []netip.Prefix {
 		prefixes = append(prefixes, prefix)
 	}
 	return prefixes
+}
+
+// Bound turns a :name statement and its database/sql named arguments into the statement PostgreSQL
+// runs and its arguments in order (internal/store/sqldb, translate.go). A text with no named
+// argument is returned as it is.
+func Bound(t testing.TB, text string, arguments ...any) (string, []any) {
+	t.Helper()
+	parameters := map[string]any{}
+	named := false
+	for _, argument := range arguments {
+		if one, isNamed := argument.(sql.NamedArg); isNamed {
+			parameters[one.Name] = one.Value
+			named = true
+		}
+	}
+	if !named {
+		return text, arguments
+	}
+	translation, err := sqldb.Translate(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordered, err := translation.Arguments(parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return translation.Text, ordered
 }

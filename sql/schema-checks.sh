@@ -82,10 +82,6 @@ fi
 # so what is checked here is what ships.
 SCHEMA_FILE="$REPO_ROOT/internal/store/schema.sql"
 PURGE_FILE="$REPO_ROOT/internal/store/purge/purge.sql"
-REFERENCE_FILE="$REPO_ROOT/sql/testdata/sqlite_reference_queries.json"
-# The rows the seed gained since that reference was recorded, each named with the cycle that added
-# it (ci/referencerows, -added): the reference cannot be recorded again, the image carrying no SQLite.
-REFERENCE_ADDED_FILE="$REPO_ROOT/sql/testdata/reference_rows_added_since.json"
 WORK="$(mktemp -d)"
 
 # Every connection reads the core's schema first, as the store's own connections do
@@ -654,10 +650,10 @@ printf -- 'psql            : %s\n' "$(psql --version)"
 printf -- 'server          : %s\n' "$(admin 'SHOW server_version;')"
 printf -- 'timescaledb     : %s\n' "$(admin "SELECT default_version FROM pg_available_extensions WHERE name = 'timescaledb';")"
 
-# The programs the checks read plans and reference rows with, find the statements files with,
+# The programs the checks read plans with, find the statements files with,
 # create, seed and purge the plugins' tables with, and time the widgets with, built once.
 mkdir -p "$WORK/bin"
-if ! (cd "$REPO_ROOT" && go build -o "$WORK/bin/" ./ci/planjson ./ci/referencerows ./ci/statementfiles \
+if ! (cd "$REPO_ROOT" && go build -o "$WORK/bin/" ./ci/planjson ./ci/statementfiles \
         ./ci/plugintables ./ci/widgetbudget); then
     printf -- 'schema-checks: the programs under ci/ the checks run do not build\n' >&2
     exit 1
@@ -1581,13 +1577,13 @@ check 'AC13 the Overview query classifies flows east-west, north-south and this 
     'east_west,north_south,this_firewall' "$SCOPES"
 check 'AC13 every stored traffic_scope agrees with interface membership and this firewall' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE traffic_scope <> (CASE
-        WHEN src_is_this_firewall = 1 OR dst_is_this_firewall = 1 THEN 'this_firewall'
+        WHEN src_is_this_firewall OR dst_is_this_firewall THEN 'this_firewall'
         WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
         THEN 'east_west' ELSE 'north_south' END);")"
 expect_sql_failure 'LC-AC4 a flow with an end that is this firewall cannot claim another scope' "$MAIN_DB" \
     "UPDATE flow SET traffic_scope = 'north_south' WHERE traffic_scope = 'this_firewall';"
 expect_sql_failure 'LC-AC4 an end that is this firewall cannot carry a client' "$MAIN_DB" \
-    "UPDATE flow SET dst_client_id = 1 WHERE dst_is_this_firewall = 1;"
+    "UPDATE flow SET dst_client_id = 1 WHERE dst_is_this_firewall;"
 check_ge 'LC-AC4 the third scope passes the CHECK, and the seed fills it' 1 \
     "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE traffic_scope = 'this_firewall';")"
 expect_sql_failure 'AC13 a traffic_scope disagreeing with interface membership is rejected' "$MAIN_DB" \
@@ -1730,52 +1726,20 @@ PARTIAL_ATTR="$(run_query "$MAIN_DB" "$(wrap_query "$DIAG_ATTR" \
 check_ge 'AC19 the attribution rate is a real rate, strictly between 0 and 100 per cent' 1 "$PARTIAL_ATTR"
 
 # ===========================================================================
-section 'P-AC6 — every query of sql/queries returns what it returned on SQLite'
+section 'P-AC6 — every query of sql/queries runs on the seed'
 # ===========================================================================
-# sql/testdata/sqlite_reference_queries.json holds each query's rows as SQLite returned
-# them on this 100 000-row seed, with these query parameters, before the store moved.
-# Each query is run here on the same seed and compared by ci/referencerows as TYPED rows.
-# The row order is compared exactly where the query's ORDER BY makes it total, and as a
-# multiset elsewhere:
-#   * exact: the per-client attribution rate (rate, then client_id, one row per client);
-#     the source availability (kind, provider_key, unique); clients per owner (state,
-#     name, owner_id, one row per owner); blocked lookups by list (count, then
-#     blocklist_id, one row per list); and the five that group by the very key they
-#     order on (Unresolved host names by cause, live_upstream_firewall_source_outcomes,
-#     live_resolver_records_per_hour, live_client_resolution_counts);
-#   * multiset: the seven screens and the leases per client, which order by a byte total
-#     or an instant that two rows may share, and every diagnostic with no ORDER BY.
-EXACT_ORDER='diagnostic: Attribution rate per client
-diagnostic: Source availability
-diagnostic: Clients per owner
-diagnostic: Blocked lookups by list
-diagnostic: Unresolved host names by cause
-diagnostic: live_upstream_firewall_source_outcomes
-diagnostic: live_resolver_records_per_hour
-diagnostic: live_client_resolution_counts'
-# The one dialect artefact the comparison allows for: the Matrix's matching_rules was SQLite's
-# group_concat(DISTINCT ...), whose element order SQLite leaves undefined, and is now
-# string_agg(DISTINCT ... ORDER BY ...). Its elements are compared as a multiset, each byte
-# for byte; every other column of every query is compared as it is.
+# Each screen and diagnostic query of sql/queries is run on this 100 000-row seed and must answer
+# without an error. The rows were once compared with what SQLite returned before the store moved;
+# that migration is finished and the database is pre-POC (cleanup-amendment.md B6, 17 October
+# 2026), so what is kept is the PostgreSQL behaviour the comparison guarded: every query runs.
 reference_check() {
-    local key="$1" file="$2" order='multiset' lists='' out
-    if printf -- '%s\n' "$EXACT_ORDER" | grep -qxF -- "$key"; then
-        order='exact'
-    fi
-    [ "$key" != 'screen: Matrix' ] || lists='matching_rules'
-    if ! run_query "$MAIN_DB" "$(wrap_query "$file" 'SELECT row_to_json(reference_row) FROM (' \
-            ') AS reference_row;')" > "$WORK/reference_actual.txt" 2> "$WORK/reference_error.txt"; then
-        fail "P-AC6: $key equals the SQLite reference (the query failed: $(head -n 1 "$WORK/reference_error.txt"))"
+    local key="$1" file="$2"
+    if ! run_query "$MAIN_DB" "$(wrap_query "$file" 'SELECT count(*) FROM (' ') AS reference_row;')" \
+            >"$WORK/reference_actual.txt" 2> "$WORK/reference_error.txt"; then
+        fail "P-AC6: $key runs on the seed (the query failed: $(head -n 1 "$WORK/reference_error.txt"))"
         return
     fi
-    if out="$("$WORK/bin/referencerows" -reference "$REFERENCE_FILE" -key "$key" \
-            -actual "$WORK/reference_actual.txt" -order "$order" -list-columns "$lists" \
-            -added "$REFERENCE_ADDED_FILE" 2>&1)"; then
-        [ -z "$out" ] || printf -- '  %s: %s\n' "$key" "$out"
-        pass "P-AC6: $key equals the SQLite reference ($order order)"
-    else
-        fail "P-AC6: $key equals the SQLite reference ($order order): $out"
-    fi
+    pass "P-AC6: $key runs on the seed ($(cat "$WORK/reference_actual.txt") rows)"
 }
 for f in "$WORK"/screens/[0-9]*.sql; do
     reference_check "screen: $(head -n 1 "$f" | sed 's/^-- screen: //')" "$f"
@@ -3100,9 +3064,9 @@ check 'E10 the kept alternative seed carries the digest of what it was built fro
 # counts the interfaces clients sit behind, so it is compared with those, and the
 # upstream one is asserted separately rather than absorbed into the count.
 check 'AC35 the alternative seed has a different interface count' "$ALT_INTERFACES" \
-    "$(q "$ALT_DB" 'SELECT count(*) FROM interface WHERE is_upstream = 0;')"
+    "$(q "$ALT_DB" 'SELECT count(*) FROM interface WHERE NOT is_upstream;')"
 check 'AC35 the alternative seed discovers exactly one upstream interface' '1' \
-    "$(q "$ALT_DB" 'SELECT count(*) FROM interface WHERE is_upstream = 1;')"
+    "$(q "$ALT_DB" 'SELECT count(*) FROM interface WHERE is_upstream;')"
 check 'AC35 the alternative seed has a different owner count' "$ALT_OWNERS" \
     "$(q "$ALT_DB" 'SELECT count(*) FROM owner;')"
 check 'AC35 the alternative database is consistent' '' "$(fk_violations "$ALT_DB")"
@@ -3316,7 +3280,7 @@ expect_sql_success 'AD3 an interval opnview was not running is recorded' "$FRESH
 check 'VOC-AC4 a freshly migrated database attributes nothing to anybody' '0' \
     "$(q "$FRESH_DB" 'SELECT count(*) FROM owner;')"
 check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
-    "$(q "$FRESH_DB" 'SELECT count(*) FROM provider WHERE is_active = 1;')"
+    "$(q "$FRESH_DB" 'SELECT count(*) FROM provider WHERE is_active;')"
 
 # Restated by the resolver-cache cycle, whose decision 1 added two kinds: nine became
 # eleven. Restated again by the plugin cycle (specs/SPEC-backend-completion-plugins.md, A3): the
@@ -3389,21 +3353,21 @@ resolver_cache/unbound
 resolver_local_data/unbound
 security_event/suricata'
 check 'PN-AC12 the seed activates exactly the providers it names' "$EXPECTED_ACTIVE"     "$(q "$MAIN_DB" "SELECT kind || '/' || provider_key FROM provider
-        WHERE is_active = 1 ORDER BY kind, provider_key;")"
+        WHERE is_active ORDER BY kind, provider_key;")"
 ACTIVE_PROVIDER_COUNT="$(printf -- '%s
 ' "$EXPECTED_ACTIVE" | wc -l | tr -d ' ')"
 # flow_volume is not activated: nothing collects it, because its destination is
 # derived from flow.
-check 'PN-AC12 the kind nothing collects has no active provider' '0'     "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'flow_volume' AND is_active = 1;")"
+check 'PN-AC12 the kind nothing collects has no active provider' '0'     "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'flow_volume' AND is_active;")"
 check 'PN-AC12 no EXCLUSIVE kind has two active providers' '0'     "$(q "$MAIN_DB" "SELECT count(*) FROM (SELECT p.kind FROM provider AS p
-        WHERE p.is_active = 1 AND $EXCLUSIVE_PREDICATE
+        WHERE p.is_active AND $EXCLUSIVE_PREDICATE
         GROUP BY p.kind HAVING count(*) > 1);")"
-check 'PN-AC12 the seed models a two-server DHCP estate, which is why the kind is concurrent' '2'     "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'dhcp_lease' AND is_active = 1;")"
+check 'PN-AC12 the seed models a two-server DHCP estate, which is why the kind is concurrent' '2'     "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'dhcp_lease' AND is_active;")"
 expect_sql_failure 'PN-AC12 marking a second provider of an EXCLUSIVE kind active is rejected' "$MAIN_DB" \
-    "UPDATE provider SET is_active = 1
+    "UPDATE provider SET is_active = true
      WHERE id = (SELECT p.id FROM provider p
-                 JOIN provider q ON q.kind = p.kind AND q.is_active = 1
-                 WHERE p.is_active = 0 AND $EXCLUSIVE_PREDICATE LIMIT 1);"
+                 JOIN provider q ON q.kind = p.kind AND q.is_active
+                 WHERE NOT p.is_active AND $EXCLUSIVE_PREDICATE LIMIT 1);"
 # And the index that enforces it says which kinds it exempts, in its own
 # definition, so the rule cannot be documented one way and enforced another.
 check 'PN-AC12 the exclusivity index exists under its new name' '1' \
@@ -3444,7 +3408,7 @@ check 'PN-AC13 the diagnostic names every active provider, two DHCP servers incl
 check 'PN-AC13 the two active DHCP servers carry two different probes' '2' \
     "$(q "$MAIN_DB" "SELECT count(DISTINCT a.probe) FROM source_availability a
         JOIN provider p ON p.id = a.provider_id
-        WHERE p.kind = 'dhcp_lease' AND p.is_active = 1;")"
+        WHERE p.kind = 'dhcp_lease' AND p.is_active;")"
 
 # ===========================================================================
 section 'PN-AC8, PN-AC18 — registering a second provider of an existing kind'
@@ -3517,13 +3481,13 @@ section 'EX-AC1 .. EX-AC4 — two active providers of one kind, which is the nor
 # rows and no figure is doubled -- which is exactly the condition under which the
 # rule permits two active providers.
 expect_sql_success 'EX-AC1 two providers of the security_event kind can both be active' "$REGISTER_DB" \
-    "UPDATE provider SET is_active = 1 WHERE kind = 'security_event';"
+    "UPDATE provider SET is_active = true WHERE kind = 'security_event';"
 check 'EX-AC1 and both stay active' '2' \
     "$(q "$REGISTER_DB" "SELECT count(*) FROM provider
-        WHERE kind = 'security_event' AND is_active = 1;")"
+        WHERE kind = 'security_event' AND is_active;")"
 check 'EX-AC1 the two active providers are distinguishable by key' 'second-event-provider|suricata' \
     "$(q "$REGISTER_DB" "SELECT string_agg(CAST(provider_key AS text), '|' ORDER BY provider_key) FROM
-        (SELECT provider_key FROM provider WHERE kind = 'security_event' AND is_active = 1
+        (SELECT provider_key FROM provider WHERE kind = 'security_event' AND is_active
          ORDER BY provider_key);")"
 
 # EX-AC2: the same event key under two active providers is two rows, because the
@@ -3535,7 +3499,7 @@ expect_sql_success 'EX-AC2 one event key under two active providers is two rows'
      SELECT id, 'ex-ac2-shared-event-key', $WINDOW_END - 120, $WINDOW_END - 60,
             'named-rule-identity-alpha', 'ex-ac2 signature', 'blocked',
             'ex-ac2-source', 'ex-ac2-destination'
-     FROM provider WHERE kind = 'security_event' AND is_active = 1;"
+     FROM provider WHERE kind = 'security_event' AND is_active;"
 check 'EX-AC2 both rows are stored and attributed' '2' \
     "$(q "$REGISTER_DB" "SELECT count(*) FROM security_event
         WHERE provider_event_key = 'ex-ac2-shared-event-key';")"
@@ -3565,12 +3529,12 @@ check 'EX-AC2 each of the two resolves its severity through its own provider ent
 # to permit two, and the kinds that did not move still refuse them, on the same
 # database, which keeps the rule a discrimination rather than a blanket permission.
 expect_sql_success 'EX-AC3 two providers of the dhcp_lease kind CAN both be active' "$REGISTER_DB" \
-    "UPDATE provider SET is_active = 1 WHERE kind = 'dhcp_lease';"
+    "UPDATE provider SET is_active = true WHERE kind = 'dhcp_lease';"
 check 'EX-AC3 and all of them stay active' '3' \
     "$(q "$REGISTER_DB" "SELECT count(*) FROM provider
-        WHERE kind = 'dhcp_lease' AND is_active = 1;")"
+        WHERE kind = 'dhcp_lease' AND is_active;")"
 expect_sql_failure 'EX-AC3 two providers of the dns_lookup kind cannot both be active' "$REGISTER_DB" \
-    "UPDATE provider SET is_active = 1 WHERE kind = 'dns_lookup';"
+    "UPDATE provider SET is_active = true WHERE kind = 'dns_lookup';"
 
 # EX-AC4: the concurrency is still bounded by the registry. A kind that admits
 # several active providers does not admit a malformed one. Restated by the plugin cycle: the kind
@@ -3800,7 +3764,7 @@ expect_sql_success 'DL-AC5 one address leased by two servers is two leases' "$LE
     "INSERT INTO dhcp_lease (provider_id, backend, address, lease_state, generation_key,
          observed_at)
      SELECT id, 'kea', 'dl-ac5-two-servers', 'active', 'start:1', $NOW
-     FROM provider WHERE kind = 'dhcp_lease' AND is_active = 1;"
+     FROM provider WHERE kind = 'dhcp_lease' AND is_active;"
 check 'DL-AC5 both of them are stored' '2' \
     "$(q "$LEASE_DB" "SELECT count(*) FROM dhcp_lease WHERE address = 'dl-ac5-two-servers';")"
 expect_sql_failure 'DL-AC5 and one server still cannot report it twice' "$LEASE_DB" \
@@ -3903,7 +3867,7 @@ for admitted in aggregates/pairvolume.statements.sql purge/purge.sql; do
     fi
 done
 check 'PV-AC2 the kind whose destination is derived has no active provider' '0' \
-    "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'flow_volume' AND is_active = 1;")"
+    "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'flow_volume' AND is_active;")"
 for needle in 'DERIVED, NOT COLLECTED' "step 5's to COMPUTE from"; do
     if grep -qF "$needle" "$SCHEMA_FILE"; then
         pass "PV-AC2 the schema records the ruling: $needle"
@@ -4908,7 +4872,7 @@ for db in "$MAIN_DB" "$ALT_DB"; do
     check_ge "S5A-AC35 $tag: rule.interface is filled, a floating rule's empty value included" 1 \
         "$(q "$db" "SELECT count(*) FROM rule WHERE interface = '';")"
     check_ge "S5A-AC35 $tag: rule.legacy marks legacy rows" 1 \
-        "$(q "$db" "SELECT count(*) FROM rule WHERE legacy = 1;")"
+        "$(q "$db" "SELECT count(*) FROM rule WHERE legacy;")"
     check "S5A-AC35 $tag: dns_resolution carries every interface lookup state it is seeded with" \
         'not_found,resolved' \
         "$(q "$db" "SELECT string_agg(CAST(interface_lookup_state AS text), ',' ORDER BY interface_lookup_state) FROM
@@ -4949,7 +4913,7 @@ for db in "$MAIN_DB" "$SCALE_DB"; do
     check "E17 $tag: every capture shape of NJ10: egress only, not exported, a parent, and an unreadable run" \
         'egress_only,not_exported,parent_of,unreadable' \
         "$(q "$db" "SELECT string_agg(shape, ',' ORDER BY shape) FROM (
-            SELECT 'egress_only' AS shape WHERE EXISTS (SELECT 1 FROM capture_interface WHERE ingress = 0 AND egress = 1)
+            SELECT 'egress_only' AS shape WHERE EXISTS (SELECT 1 FROM capture_interface WHERE NOT ingress AND egress)
             UNION ALL SELECT 'not_exported' WHERE EXISTS (SELECT 1 FROM capture_interface WHERE exported = 'no')
             UNION ALL SELECT 'parent_of' WHERE EXISTS (SELECT 1 FROM capture_interface_parent_of)
             UNION ALL SELECT 'unreadable' WHERE EXISTS (SELECT 1 FROM capture_configuration WHERE fingerprint IS NULL)
@@ -5061,7 +5025,7 @@ check 'S5A-AC26 the five directions are every flow' \
         WHERE traffic_direction IN ('inbound', 'outbound', 'inter_interface',
                                     'to_this_firewall', 'from_this_firewall');")"
 check 'S5A-AC26 a flow with an end that is this firewall is in one of its two directions, and only it' \
-    "$(q "$MAIN_DB" 'SELECT count(*) FROM flow WHERE src_is_this_firewall = 1 OR dst_is_this_firewall = 1;')" \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM flow WHERE src_is_this_firewall OR dst_is_this_firewall;')" \
     "$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
         WHERE traffic_direction IN ('to_this_firewall', 'from_this_firewall');")"
 check_ge 'S5A-AC26 a flow leaving a client is outbound although pf logged it in' 1 \
@@ -5070,7 +5034,7 @@ check_ge 'S5A-AC26 a flow leaving a client is outbound although pf logged it in'
 check_ge 'S5A-AC26 a flow with neither end inside is placed by pf dir' 1 \
     "$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
         WHERE src_interface_id IS NULL AND dst_interface_id IS NULL AND traffic_direction = 'inbound'
-          AND src_is_this_firewall = 0 AND dst_is_this_firewall = 0;")"
+          AND NOT src_is_this_firewall AND NOT dst_is_this_firewall;")"
 
 # ===========================================================================
 section 'LC-AC2 .. LC-AC17 — the step-5A live corrections, on both seeds'
@@ -5088,22 +5052,22 @@ for db in "$MAIN_DB" "$ALT_DB"; do
         "$(q "$db" "SELECT count(DISTINCT traffic_direction) FROM classified_flow
             WHERE traffic_direction IN ('to_this_firewall', 'from_this_firewall');")"
     check "LC-AC2 $tag: no end that is this firewall carries a client" '0' \
-        "$(q "$db" "SELECT count(*) FROM flow WHERE (src_is_this_firewall = 1 AND src_client_id IS NOT NULL)
-            OR (dst_is_this_firewall = 1 AND dst_client_id IS NOT NULL);")"
+        "$(q "$db" "SELECT count(*) FROM flow WHERE (src_is_this_firewall AND src_client_id IS NOT NULL)
+            OR (dst_is_this_firewall AND dst_client_id IS NOT NULL);")"
     check "LC-AC2 $tag: every end held by the firewall at its instant is recorded as this firewall" '0' \
         "$(run_query "$db" "$(diag_file live_this_firewall_unmarked)" | tr -d ' ')"
     check_ge "LC-AC2 $tag: a security event and a lookup from this firewall are seeded" 2 \
-        "$(q "$db" "SELECT CAST((SELECT count(*) > 0 FROM security_event WHERE src_is_this_firewall = 1) AS integer)
-            + CAST((SELECT count(*) > 0 FROM dns_resolution WHERE client_is_this_firewall = 1) AS integer);")"
+        "$(q "$db" "SELECT CAST((SELECT count(*) > 0 FROM security_event WHERE src_is_this_firewall) AS integer)
+            + CAST((SELECT count(*) > 0 FROM dns_resolution WHERE client_is_this_firewall) AS integer);")"
     check "LC-AC2 $tag: no security event or lookup from this firewall carries a client" '0' \
-        "$(q "$db" "SELECT (SELECT count(*) FROM security_event WHERE src_is_this_firewall = 1
+        "$(q "$db" "SELECT (SELECT count(*) FROM security_event WHERE src_is_this_firewall
                               AND src_client_id IS NOT NULL)
-            + (SELECT count(*) FROM dns_resolution WHERE client_is_this_firewall = 1
+            + (SELECT count(*) FROM dns_resolution WHERE client_is_this_firewall
                  AND client_id IS NOT NULL);")"
     # LC-AC4: this firewall is its own key, and never part of the outside column.
     check "LC-AC4 $tag: this firewall's volume key equals a direct sum over flow" \
         "$(q "$db" "SELECT sum(packet_bytes) FROM flow
-            WHERE (src_is_this_firewall = 1 OR dst_is_this_firewall = 1)
+            WHERE (src_is_this_firewall OR dst_is_this_firewall)
               AND (pair_outcome IS NULL OR pair_outcome <> 'second_leg');")" \
         "$(q "$db" "SELECT sum(bytes) FROM volume_aggregate_30d
             WHERE traffic_direction IN ('to_this_firewall', 'from_this_firewall')
@@ -5125,7 +5089,7 @@ for db in "$MAIN_DB" "$ALT_DB"; do
     check "LC-AC10 $tag: both outcomes are seeded, and only they" 'not_paired,second_leg' \
         "$(q "$db" "SELECT string_agg(CAST(pair_outcome AS text), ',' ORDER BY pair_outcome) FROM (SELECT DISTINCT f.pair_outcome FROM flow AS f
             JOIN interface AS i ON i.device = f.interface_device
-            WHERE f.direction = 'out' AND f.src_is_this_firewall = 1 AND i.is_upstream = 1 ORDER BY 1);")"
+            WHERE f.direction = 'out' AND f.src_is_this_firewall AND i.is_upstream ORDER BY 1);")"
     check "LC-AC10 $tag: no unpaired record carries a client" '0' \
         "$(q "$db" "SELECT count(*) FROM flow WHERE pair_outcome = 'not_paired'
             AND src_client_id IS NOT NULL;")"
@@ -5261,7 +5225,7 @@ for db in "$MAIN_DB" "$ALT_DB"; do
         DELETE FROM domain_attribution WHERE flow_id = (SELECT min(a.flow_id)
         FROM domain_attribution AS a JOIN flow AS f ON f.id = a.flow_id
         WHERE a.method = 'lookup_timing' AND f.observed_at >= $WINDOW_START
-          AND f.dst_interface_id IS NULL AND f.dst_is_this_firewall = 0 AND f.src_client_id IS NOT NULL);
+          AND f.dst_interface_id IS NULL AND NOT f.dst_is_this_firewall AND f.src_client_id IS NOT NULL);
         UPDATE resource_record_observation SET address = 'not-the-destination'
         WHERE id = (SELECT min(a.address_observation_id) FROM domain_attribution AS a
                     JOIN flow AS f ON f.id = a.flow_id
@@ -5315,7 +5279,7 @@ for db in "$MAIN_DB" "$ALT_DB"; do
             FROM flow AS f JOIN domain_attribution AS a ON a.flow_id = f.id
             WHERE f.observed_at >= $WINDOW_START AND f.observed_at < $WINDOW_END
               AND f.src_client_id IS NOT NULL AND f.dst_interface_id IS NULL
-              AND f.src_is_this_firewall = 0 AND f.dst_is_this_firewall = 0
+              AND NOT f.src_is_this_firewall AND NOT f.dst_is_this_firewall
               AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg');")" \
         "$(run_query "$db" "$(wrap_query "$DIAG_ATTR_FILE" \
             'SELECT sum(named_by_resolver_cache_answer) || '"'|'"' || sum(named_by_lookup_timing) FROM (' ')')")"
@@ -5665,7 +5629,7 @@ check_ge 'FC-AC5 two distinct log reasons are representable, so a denial and a d
 check_ge 'FC-AC5 the blocked projection carries the reason the record was logged' 1 \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM blocked_event WHERE log_reason IS NOT NULL;')"
 check_ge 'FC-AC5 a rule that does not log is representable' 1 \
-    "$(q "$MAIN_DB" 'SELECT count(*) FROM rule WHERE logs_matches = 0;')"
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM rule WHERE NOT logs_matches;')"
 check_ge 'FC-AC5 a rule whose logging flag was not reported stays distinguishable' 1 \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM rule WHERE logs_matches IS NULL;')"
 expect_sql_failure 'FC-AC5 a logging flag outside the two states is rejected' "$MAIN_DB" \

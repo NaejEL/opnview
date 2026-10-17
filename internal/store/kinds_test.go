@@ -31,7 +31,7 @@ func TestTwoSecurityEventProvidersCanBothBeActive(t *testing.T) {
 	// A second implementation of the kind is an INSERT and never a schema change.
 	if _, err := database.DB().ExecContext(ctx,
 		`INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-		 VALUES ('security_event', 'example-second-engine', 'Example second engine', 0, 1750000000)`,
+		 VALUES ('security_event', 'example-second-engine', 'Example second engine', false, 1750000000)`,
 	); err != nil {
 		t.Fatalf("registering a second security-event provider: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestActivatingSeveralProvidersOfAnExclusiveKindIsRefused(t *testing.T) {
 	// The partial index is still there for the kinds it governs, and it is what makes the
 	// refusal above a belt-and-braces check rather than the only guard.
 	if _, directErr := database.DB().ExecContext(context.Background(),
-		"UPDATE provider SET is_active = 1 WHERE kind = 'dns_lookup'"); directErr == nil {
+		"UPDATE provider SET is_active = true WHERE kind = 'dns_lookup'"); directErr == nil {
 		t.Fatal("a direct statement activated every dns_lookup provider, so the index that " +
 			"replaced universal exclusivity does not cover the exclusive kinds")
 	}

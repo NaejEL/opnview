@@ -130,11 +130,11 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 
 	// Every line is stored exactly once, by one path, and none is lost.
 	for second := 0; second <= 50; second++ {
-		stored := collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM flow WHERE observed_at = ?", lineSecond(second))
+		stored := collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM flow WHERE observed_at = $1", lineSecond(second))
 		if stored != 2 {
 			t.Errorf("second %d holds %d flows, want 2", second, stored)
 		}
-		pushed := collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM flow WHERE observed_at = ? AND log_digest LIKE 'push:%'",
+		pushed := collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM flow WHERE observed_at = $1 AND log_digest LIKE 'push:%'",
 			lineSecond(second))
 		wantPushed := 0
 		if second >= 25 && second <= 40 {
@@ -167,7 +167,7 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 	if state.Superseded != 43 {
 		t.Errorf("superseded %d, want 43", state.Superseded)
 	}
-	if gaps := collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM collection_gap WHERE provider_id = ?", providerID); gaps != 0 {
+	if gaps := collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM collection_gap WHERE provider_id = $1", providerID); gaps != 0 {
 		t.Errorf("%d gaps were recorded over an interval both paths covered", gaps)
 	}
 	if digests := collecttest.ScalarCount(t, h.Store, "SELECT count(DISTINCT log_digest) FROM flow"); digests != 102 {
@@ -202,7 +202,7 @@ func TestAPullGapIsClippedByThePushPeriod(t *testing.T) {
 	providerID, _ := h.Store.ProviderID(ctx, core.KindFirewallLog, collecttest.ProviderPf)
 	var from, to int64
 	if err := h.Store.DB().QueryRowContext(ctx,
-		"SELECT interval_start_at, interval_end_at FROM collection_gap WHERE provider_id = ?", providerID).
+		"SELECT interval_start_at, interval_end_at FROM collection_gap WHERE provider_id = $1", providerID).
 		Scan(&from, &to); err != nil {
 		t.Fatalf("no gap was recorded: %v", err)
 	}

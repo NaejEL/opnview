@@ -14,9 +14,9 @@ SELECT r.looked_up_at - r.looked_up_at % :width AS bucket_start,
 FROM dns_resolution AS r
 WHERE r.looked_up_at >= :from
   AND r.looked_up_at < :to
-  AND (:resolver IS NULL OR r.resolver = :resolver)
-  AND (:client_id IS NULL OR r.client_id = :client_id)
-  AND (:interface_ids IS NULL
+  AND (CAST(:resolver AS TEXT) IS NULL OR r.resolver = :resolver)
+  AND (CAST(:client_id AS BIGINT) IS NULL OR r.client_id = :client_id)
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR r.interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 GROUP BY 1;
 
@@ -29,8 +29,8 @@ SELECT e.occurred_at - e.occurred_at % :width AS bucket_start,
 FROM security_event AS e
 WHERE e.occurred_at >= :from
   AND e.occurred_at < :to
-  AND (:provider_id IS NULL OR e.provider_id = :provider_id)
-  AND (:client_id IS NULL OR e.src_client_id = :client_id)
-  AND (:interface_ids IS NULL
+  AND (CAST(:provider_id AS BIGINT) IS NULL OR e.provider_id = :provider_id)
+  AND (CAST(:client_id AS BIGINT) IS NULL OR e.src_client_id = :client_id)
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR e.src_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 GROUP BY 1;

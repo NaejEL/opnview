@@ -78,7 +78,7 @@ type storedTable struct {
 // tablesOf reads the tables of an endpoint.
 func (m *Mirror) tablesOf(ctx context.Context, endpointID int64) (map[string]*storedTable, error) {
 	rows, err := m.db.QueryContext(ctx, `SELECT name, row_set, coalesce(parent_row_set, '') FROM opnsense.mirror_table
-		WHERE endpoint_id = ?`, endpointID)
+		WHERE endpoint_id = $1`, endpointID)
 	if err != nil {
 		return nil, err
 	}
@@ -230,17 +230,17 @@ func (m *Mirror) loadRows(ctx context.Context, datum *Datum, table *tableInfo, r
 	for _, column := range columns {
 		selected = append(selected, "CAST("+quote(column.name)+" AS text)")
 	}
-	query := "SELECT " + strings.Join(selected, ", ") + " FROM " + qualified(table.name) + ` WHERE "#datum" = ?`
+	query := "SELECT " + strings.Join(selected, ", ") + " FROM " + qualified(table.name) + ` WHERE "#datum" = $1`
 	arguments := []any{datum.ID}
 	limit := ""
 	switch {
 	case rowSet == "":
 		query += ` AND "#parent" = 0 AND "#key" = ''`
 	case main && selection.After != nil:
-		query += ` AND "#cursor" > ?`
+		query += ` AND "#cursor" > $2`
 		arguments = append(arguments, *selection.After)
 		if selection.Before != nil {
-			query += ` AND "#cursor" <= ?`
+			query += ` AND "#cursor" <= $3`
 			arguments = append(arguments, *selection.Before)
 		}
 		if datum.CursorDescending {
@@ -250,10 +250,10 @@ func (m *Mirror) loadRows(ctx context.Context, datum *Datum, table *tableInfo, r
 		}
 	case main:
 		// The rows the datum's newest answer holds: those it wrote, and those it held unchanged.
-		query += ` AND "#held" AND "#parent" = ANY(CAST(? AS bigint[])) ORDER BY "#ordinal"`
+		query += ` AND "#held" AND "#parent" = ANY(CAST($2 AS bigint[])) ORDER BY "#ordinal"`
 		arguments = append(arguments, int64ArrayLiteral(parents))
 	default:
-		query += ` AND "#parent" = ANY(CAST(? AS bigint[])) ORDER BY "#parent", "#ordinal"`
+		query += ` AND "#parent" = ANY(CAST($2 AS bigint[])) ORDER BY "#parent", "#ordinal"`
 		arguments = append(arguments, int64ArrayLiteral(parents))
 	}
 	if main && selection.Limit > 0 {

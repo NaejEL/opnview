@@ -70,14 +70,14 @@ func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testi
 	// is how a future provider arrives, and until its file exists the collector has to say so.
 	if _, err := harness.Store.DB().ExecContext(ctx,
 		`INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-		 VALUES (?, ?, ?, 0, ?)`,
+		 VALUES ($1, $2, $3, false, $4)`,
 		core.KindDHCPLease, "an-unimplemented-backend", "An unimplemented backend",
 		collecttest.ReferenceEpoch()); err != nil {
 		t.Fatalf("registering a provider with no implementation: %v", err)
 	}
 	if _, err := harness.Store.DB().ExecContext(ctx,
 		`INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
-		 SELECT id, ?, 'not_yet_probed', NULL, 0 FROM provider WHERE provider_key = ?`,
+		 SELECT id, $1, 'not_yet_probed', NULL, 0 FROM provider WHERE provider_key = $2`,
 		string(vocab.StateUnavailable), "an-unimplemented-backend"); err != nil {
 		t.Fatalf("giving it an availability row: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 		{vocab.IdentityMAC, "the server that reported none"},
 	} {
 		if resolved := collecttest.ScalarCount(t, harness.Store,
-			"SELECT count(*) FROM client WHERE identity_kind = ?", level.kind); resolved != 1 {
+			"SELECT count(*) FROM client WHERE identity_kind = $1", level.kind); resolved != 1 {
 			t.Errorf("%s resolved %d clients at the %s level, want 1", level.label, resolved,
 				level.kind)
 		}

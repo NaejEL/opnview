@@ -169,7 +169,7 @@ func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
 
 	// 5. The firewall URL and the key and secret, typed into the settings surface.
 	apiKey, apiSecret := webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)
-	harness.Fake.Answer(http.StatusOK, webtest.MustJSON(t, map[string]any{"rows": []any{}, "total": 0}))
+	harness.Fake.AnswerAll(http.StatusOK, webtest.MustJSON(t, map[string]any{"rows": []any{}, "total": 0}))
 	answer := browser.Post(web.PathSettings, url.Values{
 		webtest.FieldSettingsCard: {webtest.SettingsCardFirewall},
 		"firewall_url":            {harness.Fake.BaseURL()},

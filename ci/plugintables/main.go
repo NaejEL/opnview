@@ -168,9 +168,9 @@ func olderThanHorizon(ctx context.Context, database *store.Store, table pluginde
 	if !bounded {
 		return 0, total, nil
 	}
-	bound := "?"
+	bound := "$1"
 	if column, found := columnOf(table, table.TimeColumn); found && column.Type == "instant" {
-		bound = "to_timestamp(?)"
+		bound = "to_timestamp($1)"
 	}
 	if err := database.SQL.QueryRowContext(ctx, "SELECT count(*) FROM "+table.Quoted()+" WHERE "+
 		plugindecl.QuoteIdentifier(table.TimeColumn)+" < "+bound, horizon).Scan(&older); err != nil {

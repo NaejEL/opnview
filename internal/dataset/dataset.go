@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // The roles a column plays.
@@ -72,12 +74,6 @@ var measureAggregations = []string{AggregationSum, AggregationMean, AggregationM
 
 // dimensionAggregations are the aggregations a dimension may admit.
 var dimensionAggregations = []string{AggregationCount, AggregationCountDistinct}
-
-// Aggregations is every aggregation a query may name.
-func Aggregations() []string {
-	return []string{AggregationSum, AggregationMean, AggregationMin, AggregationMax, AggregationLast,
-		AggregationCount, AggregationCountDistinct}
-}
 
 // Column is one column of a dataset.
 type Column struct {
@@ -299,8 +295,8 @@ func PluginDataset(plugin, table, sqlName, nature string, freshness Freshness, r
 		if instantTime {
 			// The window is applied to the timestamp itself, so a hypertable's chunks outside it are
 			// never read; the earliest row is read as epoch seconds like every instant served.
-			declaration.relation += " WHERE " + quote(retention.Column) + " >= to_timestamp(:from) AND " +
-				quote(retention.Column) + " < to_timestamp(:to)"
+			declaration.relation += " WHERE " + quote(retention.Column) + " >= to_timestamp($1) AND " +
+				quote(retention.Column) + " < to_timestamp($2)"
 			declaration.earliest = "SELECT CAST(floor(extract(epoch FROM min(" + quote(retention.Column) +
 				"))) AS BIGINT) FROM " + sqlName
 		}
@@ -336,6 +332,17 @@ const OriginOpnsense = "opnsense"
 // own SQL, every identifier in them quoted from the mirror's metadata; nothing in them comes from
 // a request.
 func Learned(declaration Declaration, relation, earliest string) (Declaration, error) {
-	declaration.relation, declaration.earliest = relation, earliest
+	translated, err := windowRelation(relation)
+	if err != nil {
+		return Declaration{}, err
+	}
+	declaration.relation, declaration.earliest = translated, earliest
 	return Normalise(declaration)
+}
+
+// windowRelation translates a relation's :from and :to, once, when the dataset is declared: :from is
+// $1 and :to is $2, the first two arguments of every statement composed around a timed relation
+// (compile.go). A relation may name no other parameter.
+func windowRelation(relation string) (string, error) {
+	return sqldb.TranslateFixed(relation, map[string]int{"from": 1, "to": 2})
 }

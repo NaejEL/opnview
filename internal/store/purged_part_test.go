@@ -96,11 +96,11 @@ func TestALeaseNamingAPurgedAddressMovesItsPurgedPart(t *testing.T) {
 			}
 		}
 		if got := storetest.QueryInt(t, network.DB, "SELECT coalesce(sum(bytes), 0) FROM client_volume_aggregate_"+
-			period.Name+" WHERE period_start_at = ? AND client_id = ?", period.SlotStart(hour), leased); got != 300 {
+			period.Name+" WHERE period_start_at = $1 AND client_id = $2", period.SlotStart(hour), leased); got != 300 {
 			t.Errorf("the %s client slot of the better identity holds %d bytes, not 300", period.Name, got)
 		}
 		if peers := storetest.QueryInt(t, network.DB, "SELECT coalesce(max(distinct_peers), 0) FROM client_volume_aggregate_"+
-			period.Name+" WHERE period_start_at = ?", period.SlotStart(hour)); peers != 2 {
+			period.Name+" WHERE period_start_at = $1", period.SlotStart(hour)); peers != 2 {
 			t.Errorf("the %s client slot counts %d distinct peers, not 2", period.Name, peers)
 		}
 	}

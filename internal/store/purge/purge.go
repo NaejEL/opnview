@@ -31,7 +31,7 @@ func (s *PurgeStore) PurgeDueAddresses(ctx context.Context, now int64) ([]string
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.SQL.QueryContext(ctx, text, sqldb.Named(text, map[string]any{"now": now})...)
+	rows, err := sqldb.Query(ctx, s.SQL, text, map[string]any{"now": now})
 	if err != nil {
 		return nil, fmt.Errorf("store: %s: %w", name, err)
 	}
@@ -101,7 +101,7 @@ func (s *PurgeStore) Purge(ctx context.Context, now int64) error {
 		if strings.HasPrefix(upper, "BEGIN") || strings.HasPrefix(upper, "COMMIT") {
 			continue
 		}
-		if _, err := transaction.ExecContext(ctx, statement, sql.Named("now", now)); err != nil {
+		if _, err := sqldb.Exec(ctx, transaction, statement, map[string]any{"now": now}); err != nil {
 			return fmt.Errorf("store: purging: %w\nstatement: %s", err, sqldb.FirstLine(statement))
 		}
 	}

@@ -20,8 +20,8 @@ WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.dst_interface_id IS NULL
   AND f.src_client_id IS NOT NULL
-  AND f.src_is_this_firewall = 0
-  AND f.dst_is_this_firewall = 0
+  AND NOT f.src_is_this_firewall
+  AND NOT f.dst_is_this_firewall
   AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
 GROUP BY a.site_name, f.src_client_id, f.src_interface_id, a.method, g.country_code, g.asn,
          g.operator;
@@ -57,8 +57,8 @@ WHERE f.observed_at >= :from
   AND a.flow_id IS NULL
   AND f.dst_interface_id IS NULL
   AND f.src_client_id IS NOT NULL
-  AND f.src_is_this_firewall = 0
-  AND f.dst_is_this_firewall = 0
+  AND NOT f.src_is_this_firewall
+  AND NOT f.dst_is_this_firewall
   AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
 GROUP BY f.dst_address, f.src_client_id, f.src_interface_id, g.lookup_state, g.country_code, g.asn,
          g.operator;
@@ -84,8 +84,8 @@ WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.dst_interface_id IS NULL
   AND f.src_client_id IS NOT NULL
-  AND f.src_is_this_firewall = 0
-  AND f.dst_is_this_firewall = 0
+  AND NOT f.src_is_this_firewall
+  AND NOT f.dst_is_this_firewall
   AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
 GROUP BY a.site_name, f.src_client_id, f.src_interface_id, a.method, g.country_code, g.asn,
          g.operator;
@@ -114,8 +114,8 @@ WHERE f.observed_at >= :from
   AND a.flow_id IS NULL
   AND f.dst_interface_id IS NULL
   AND f.src_client_id IS NOT NULL
-  AND f.src_is_this_firewall = 0
-  AND f.dst_is_this_firewall = 0
+  AND NOT f.src_is_this_firewall
+  AND NOT f.dst_is_this_firewall
   AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
 GROUP BY f.dst_address, f.src_client_id, f.src_interface_id, g.lookup_state, g.country_code, g.asn,
          g.operator;

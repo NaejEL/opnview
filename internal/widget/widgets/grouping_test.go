@@ -35,7 +35,7 @@ func TestGroupingAndTheResolverCeilingAreNamedStates(t *testing.T) {
 	provider, err := f.db.ProviderID(context.Background(), "dns_lookup", "unbound")
 	check(t, err)
 	f.exec(t, `INSERT INTO collection_gap (provider_id, interval_start_at, interval_end_at, reason, detected_at)
-		VALUES (?, ?, ?, 'resolver_window_not_honoured', ?)`, provider, f.now-7200, f.now-3600, f.now)
+		VALUES ($1, $2, $3, 'resolver_window_not_honoured', $4)`, provider, f.now-7200, f.now-3600, f.now)
 	for _, widgetType := range []string{"top_sites", "attribution_rate_per_client", "blocked_dns_lookups"} {
 		if bounded := f.respond(t, widgetType, nil).ResolverWindowBounded; bounded == nil || !*bounded {
 			t.Errorf("%s is not flagged as bounded by the resolver's ring buffer", widgetType)

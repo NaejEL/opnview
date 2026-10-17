@@ -114,7 +114,7 @@ func TestAnUnmatchedRecordIsCountedInNoFigure(t *testing.T) {
 	h := collecttest.NewNetflowHarness(t)
 	h.Capture(t, collecttest.CaptureStartAt, collecttest.Captured{Identifier: collecttest.InsideIdentifier})
 	if _, err := h.Store.DB().ExecContext(context.Background(),
-		"INSERT INTO retention_purge (id, purged_before, purged_at) VALUES (1, ?, ?)", at-100, at); err != nil {
+		"INSERT INTO retention_purge (id, purged_before, purged_at) VALUES (1, $1, $2)", at-100, at); err != nil {
 		t.Fatal(err)
 	}
 	h.At(collecttest.NetflowReadSecond)
@@ -145,7 +145,7 @@ func TestAnUnmatchedRecordIsCountedInNoFigure(t *testing.T) {
 	for _, period := range []string{"1h", "24h", "7d", "30d"} {
 		for octets, reason := range want {
 			if got := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(bytes), 0) FROM unmatched_record_aggregate_"+period+
-				" WHERE reason = ? AND ingress_interface = ? AND egress_interface = ?", reason,
+				" WHERE reason = $1 AND ingress_interface = $2 AND egress_interface = $3", reason,
 				collecttest.InsideIdentifier, collecttest.UpstreamIdentifier); got != int(octets) {
 				t.Errorf("at %s the unmatched family holds %d bytes for %s, want %d", period, got, reason, octets)
 			}

@@ -346,9 +346,9 @@ func (t PluginTable) Declaration() string {
 func (t PluginTable) UpsertStatement() string {
 	names := make([]string, 0, len(t.Columns))
 	marks := make([]string, 0, len(t.Columns))
-	for _, column := range t.Columns {
+	for index, column := range t.Columns {
 		names = append(names, QuoteIdentifier(column.Name))
-		marks = append(marks, column.placeholder())
+		marks = append(marks, column.placeholder(index+1))
 	}
 	statement := "INSERT INTO " + t.Quoted() + " (" + strings.Join(names, ", ") + ") VALUES (" +
 		strings.Join(marks, ", ") + ")"
@@ -373,12 +373,13 @@ func (t PluginTable) UpsertStatement() string {
 }
 
 // placeholder is the parameter of one column in an INSERT.
-func (c PluginColumn) placeholder() string {
+func (c PluginColumn) placeholder(number int) string {
+	mark := "$" + strconv.Itoa(number)
 	switch c.Type {
 	case "boolean", "ip", "mac", pluginTypeInstant:
-		return "CAST(? AS " + PluginColumnTypes[c.Type] + ")"
+		return "CAST(" + mark + " AS " + PluginColumnTypes[c.Type] + ")"
 	}
-	return "?"
+	return mark
 }
 
 // PluginArgument turns a row's value into the argument its column's placeholder takes: an int64,
@@ -469,7 +470,7 @@ func (t PluginTable) MultiRowInsert(rows []map[string]any) (string, []any, error
 				return "", nil, fmt.Errorf("store: a row of %s: %w", t.SQLName(), err)
 			}
 			arguments = append(arguments, argument)
-			marks = append(marks, column.placeholder())
+			marks = append(marks, column.placeholder(len(arguments)))
 		}
 		tuples = append(tuples, "("+strings.Join(marks, ", ")+")")
 	}

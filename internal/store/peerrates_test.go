@@ -67,8 +67,8 @@ func TestThePerPeerCurrentRateIsEachInsidePairReadingAndTheUpstreamReadingIsNotS
 	if _, present := rates.ByPeer[network.Upstream.Address]; present || len(rates.ByPeer) != 2 {
 		t.Errorf("the peers are %v; the upstream reading was summed again", rates.ByPeer)
 	}
-	firstID := storetest.QueryInt(t, network.DB, "SELECT id FROM client WHERE last_address = ?", first.Address)
-	secondID := storetest.QueryInt(t, network.DB, "SELECT id FROM client WHERE last_address = ?", second.Address)
+	firstID := storetest.QueryInt(t, network.DB, "SELECT id FROM client WHERE last_address = $1", first.Address)
+	secondID := storetest.QueryInt(t, network.DB, "SELECT id FROM client WHERE last_address = $1", second.Address)
 	if peers := rates.ByClientPeer[firstID]; len(peers) != 2 || peers[shared].InBitsPerSecond != 100 ||
 		peers[only].InBitsPerSecond != 30 || peers[shared].OutMeasured {
 		t.Errorf("the first client's peers are %+v", peers)

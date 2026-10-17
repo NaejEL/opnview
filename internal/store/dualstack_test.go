@@ -135,7 +135,7 @@ func storedResolution(t *testing.T, database *store.Store, c dualStackCase) (str
 		family              *int64
 	)
 	if err := database.DB().QueryRow(`SELECT client_resolution, client_address, client_family
-		FROM dns_resolution WHERE client_hostname = ?`, c.loggedHost()).Scan(&resolution, &address,
+		FROM dns_resolution WHERE client_hostname = $1`, c.loggedHost()).Scan(&resolution, &address,
 		&family); err != nil {
 		t.Fatalf("reading the lookup: %v", err)
 	}

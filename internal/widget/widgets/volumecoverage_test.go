@@ -112,12 +112,12 @@ func (f *fixture) measureBlockedFlow(t *testing.T) {
 	f.exec(t, `INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device,
 		interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, protocol,
 		ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope) VALUES
-		(?, 'measure-blocked', ?, ?, 'exdev_a', 'resolved', 1, 10, '192.0.2.10', '203.0.113.9', 'tcp', 4, 'block',
+		($1, 'measure-blocked', $2, $3, 'exdev_a', 'resolved', 1, 10, '192.0.2.10', '203.0.113.9', 'tcp', 4, 'block',
 		 'in', 100, 'pending', 'north_south')`, measureFlowBlocked, f.now-400, f.now-400)
 	f.exec(t, `INSERT INTO connection_measured_volume (connection_flow_id, direction, connection_start_at, state,
 		bytes, packets, records, counted_copy, final, due_at, computed_at) VALUES
-		(?, 'forward', ?, 'measured', 600, 2, 1, 0, 1, NULL, ?),
-		(?, 'reverse', ?, 'missing', 0, 0, 0, 0, 1, NULL, ?)`,
+		($1, 'forward', $2, 'measured', 600, 2, 1, false, true, NULL, $3),
+		($4, 'reverse', $5, 'missing', 0, 0, 0, false, true, NULL, $6)`,
 		measureFlowBlocked, f.now-400, f.now, measureFlowBlocked, f.now-400, f.now)
 }
 
@@ -268,7 +268,7 @@ func TestAStateDetailIsServedOnlyWithItsState(t *testing.T) {
 	}
 	inside := newMeasureWorld(t)
 	inside.configureNetflow(t, "example_if_a")
-	inside.exec(t, `UPDATE capture_configuration SET first_read_at = ?`, inside.now-1800)
+	inside.exec(t, `UPDATE capture_configuration SET first_read_at = $1`, inside.now-1800)
 	inside.measureEverything(t)
 	answer = inside.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"})
 	if !strings.Contains(string(encoded(t, answer)),

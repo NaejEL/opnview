@@ -49,8 +49,6 @@ const (
 	CounterConnectionsRefused = "connections_refused"
 	CounterInstantUnresolved  = "instant_unresolved"
 	CounterValueInvalid       = "push_value_invalid"
-	CounterSkipped            = "skipped"
-	CounterSuperseded         = "superseded"
 	// CounterInterfaceUnmapped counts a record carrying an interface index no interface of the
 	// firewall holds: its index is kept, its interface fields are absent (PS11).
 	CounterInterfaceUnmapped = "interface_index_unmapped"

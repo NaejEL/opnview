@@ -68,7 +68,7 @@ func readFlows(t *testing.T, database *store.Store) []storedFlow {
 	for index := range flows {
 		if client, ok := flows[index].localClient(); ok {
 			var owner sql.NullInt64
-			if err := database.DB().QueryRow("SELECT owner_id FROM client WHERE id = ?", client).Scan(&owner); err != nil {
+			if err := database.DB().QueryRow("SELECT owner_id FROM client WHERE id = $1", client).Scan(&owner); err != nil {
 				t.Fatalf("reading an owner: %v", err)
 			}
 			flows[index].owner = owner
@@ -512,7 +512,7 @@ func TestADistinctCountIsNeverSummedAcrossSlots(t *testing.T) {
 		t.Fatalf("classifying: %v", err)
 	}
 	if _, err := network.DB.DB().Exec(`UPDATE client SET owner_id = 1, owner_assigned_at = 0
-		WHERE last_address = ?`, owned.Address); err != nil {
+		WHERE last_address = $1`, owned.Address); err != nil {
 		t.Fatalf("assigning the owner: %v", err)
 	}
 	recomputeEverything(t, network)
@@ -522,7 +522,7 @@ func TestADistinctCountIsNeverSummedAcrossSlots(t *testing.T) {
 		t.Fatalf("reading the owner totals: %v", err)
 	}
 	summedCounts := storetest.QueryInt(t, network.DB, `SELECT sum(client_count) FROM owner_volume_aggregate_1h
-		WHERE period_start_at >= ? AND owner_id = 1`, dayStart)
+		WHERE period_start_at >= $1 AND owner_id = 1`, dayStart)
 	if summedCounts != 3 {
 		t.Fatalf("the owned client should sit in three hour slots, it sits in %d", summedCounts)
 	}
@@ -604,8 +604,8 @@ func TestThePairVolumeIsDerivedFromFlowOnTheRealDestinationPort(t *testing.T) {
 	var octets, packets float64
 	var rows int64
 	if err := network.DB.DB().QueryRow(`SELECT count(*), sum(octets), sum(packets)
-		FROM pair_volume_observation WHERE day_start_at = ? AND endpoint_low = ? AND endpoint_high = ?
-		  AND service_port = ? AND protocol = 'tcp'`, day, low, high, port).Scan(&rows, &octets, &packets); err != nil {
+		FROM pair_volume_observation WHERE day_start_at = $1 AND endpoint_low = $2 AND endpoint_high = $3
+		  AND service_port = $4 AND protocol = 'tcp'`, day, low, high, port).Scan(&rows, &octets, &packets); err != nil {
 		t.Fatalf("reading the pair: %v", err)
 	}
 	if rows != 1 || octets != 140 || packets != 2 {
@@ -645,7 +645,7 @@ func TestAMonthStraddlingTheHorizonKeepsWhatThePurgeRemoved(t *testing.T) {
 	monthBytes := func(table string) int64 {
 		t.Helper()
 		return storetest.QueryInt(t, network.DB, "SELECT coalesce(sum(bytes), 0) FROM "+table+
-			" WHERE period_start_at = ?", month)
+			" WHERE period_start_at = $1", month)
 	}
 	if got := monthBytes("volume_aggregate_30d"); got != 570 {
 		t.Fatalf("the month holds %d bytes before the purge, not 570", got)
@@ -662,7 +662,7 @@ func TestAMonthStraddlingTheHorizonKeepsWhatThePurgeRemoved(t *testing.T) {
 	if flows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM flow"); flows != 1 {
 		t.Fatalf("%d flows survived the purge, not the late one alone", flows)
 	}
-	if days := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM volume_aggregate_24h WHERE period_start_at = ?",
+	if days := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM volume_aggregate_24h WHERE period_start_at = $1",
 		vocab.PeriodDay.SlotStart(early)); days == 0 {
 		t.Fatal("the purge removed the early day, which the straddling month is composed from")
 	}
@@ -679,7 +679,7 @@ func TestAMonthStraddlingTheHorizonKeepsWhatThePurgeRemoved(t *testing.T) {
 		}
 	}
 	if clients := storetest.QueryInt(t, network.DB, `SELECT coalesce(max(client_count), 0) FROM owner_volume_aggregate_30d
-		WHERE period_start_at = ?`, month); clients != 1 {
+		WHERE period_start_at = $1`, month); clients != 1 {
 		t.Errorf("the composed month counts %d distinct clients, not the one", clients)
 	}
 

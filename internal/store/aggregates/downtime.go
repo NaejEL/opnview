@@ -95,7 +95,7 @@ func (s *AggregateStore) RecordCleanStop(ctx context.Context, now int64) error {
 func recordAbsence(ctx context.Context, q sqldb.Querier, now, thresholdSeconds int64) (*NotRunningInterval, error) {
 	var (
 		beatAt    int64
-		cleanStop int64
+		cleanStop bool
 	)
 	err := q.QueryRowContext(ctx,
 		"SELECT beat_at, clean_stop FROM opnview_heartbeat WHERE id = 1").Scan(&beatAt, &cleanStop)
@@ -108,10 +108,10 @@ func recordAbsence(ctx context.Context, q sqldb.Querier, now, thresholdSeconds i
 	if now-beatAt <= thresholdSeconds {
 		return nil, nil
 	}
-	interval := &NotRunningInterval{From: beatAt, To: now, CleanShutdown: cleanStop == 1, DetectedAt: now}
+	interval := &NotRunningInterval{From: beatAt, To: now, CleanShutdown: cleanStop, DetectedAt: now}
 	if _, err := q.ExecContext(ctx,
 		`INSERT INTO opnview_downtime (interval_start_at, interval_end_at, clean_stop, detected_at)
-		 VALUES (?, ?, ?, ?)`, interval.From, interval.To, cleanStop, now); err != nil {
+		 VALUES ($1, $2, $3, $4)`, interval.From, interval.To, cleanStop, now); err != nil {
 		return nil, fmt.Errorf("store: recording the interval opnview was not running: %w", err)
 	}
 	return interval, nil
@@ -119,14 +119,10 @@ func recordAbsence(ctx context.Context, q sqldb.Querier, now, thresholdSeconds i
 
 // writeBeat writes the one heartbeat row.
 func writeBeat(ctx context.Context, q sqldb.Querier, now int64, cleanStop bool) error {
-	clean := 0
-	if cleanStop {
-		clean = 1
-	}
 	if _, err := q.ExecContext(ctx,
-		`INSERT INTO opnview_heartbeat (id, beat_at, clean_stop) VALUES (1, ?, ?)
+		`INSERT INTO opnview_heartbeat (id, beat_at, clean_stop) VALUES (1, $1, $2)
 		 ON CONFLICT (id) DO UPDATE SET beat_at = excluded.beat_at, clean_stop = excluded.clean_stop`,
-		now, clean); err != nil {
+		now, cleanStop); err != nil {
 		return fmt.Errorf("store: writing the heartbeat: %w", err)
 	}
 	return nil
@@ -143,7 +139,7 @@ func (s *AggregateStore) ReadNotRunning(ctx context.Context, from, to int64) ([]
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return nil, fmt.Errorf("store: reading the intervals opnview was not running: %w", err)
 	}
@@ -152,12 +148,12 @@ func (s *AggregateStore) ReadNotRunning(ctx context.Context, from, to int64) ([]
 	for rows.Next() {
 		var (
 			interval NotRunningInterval
-			clean    int64
+			clean    bool
 		)
 		if err := rows.Scan(&interval.From, &interval.To, &clean, &interval.DetectedAt); err != nil {
 			return nil, fmt.Errorf("store: reading the intervals opnview was not running: %w", err)
 		}
-		interval.CleanShutdown = clean == 1
+		interval.CleanShutdown = clean
 		intervals = append(intervals, interval)
 	}
 	if err := rows.Err(); err != nil {

@@ -26,9 +26,9 @@ import (
 // extra condition on the flow (f).
 func (f *fixture) eligibleFlows(t *testing.T, window envelope.Interval, extra string, arguments ...any) int64 {
 	t.Helper()
-	return f.scalar(t, `SELECT count(*) FROM flow AS f WHERE f.observed_at >= ? AND f.observed_at < ?
-		AND f.dst_interface_id IS NULL AND f.src_client_id IS NOT NULL AND f.src_is_this_firewall = 0
-		AND f.dst_is_this_firewall = 0 AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg') `+extra,
+	return f.scalar(t, `SELECT count(*) FROM flow AS f WHERE f.observed_at >= $1 AND f.observed_at < $2
+		AND f.dst_interface_id IS NULL AND f.src_client_id IS NOT NULL AND NOT f.src_is_this_firewall
+		AND NOT f.dst_is_this_firewall AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg') `+extra,
 		append([]any{window.From, window.To}, arguments...)...)
 }
 
@@ -56,11 +56,11 @@ func TestUnnamedDestinationsAreAddressRowsThatMakeTheEligibleFlows(t *testing.T)
 	}{
 		{name: "whole", parameters: map[string]any{}},
 		{name: "one interface", parameters: map[string]any{"interfaces": []any{map[string]any{"kind": "interface",
-			"by": "device", "value": f.interfaces[0].device}}}, extra: "AND f.src_interface_id = ?",
+			"by": "device", "value": f.interfaces[0].device}}}, extra: "AND f.src_interface_id = $3",
 			arguments: []any{f.interfaces[0].id}},
 		{name: "one client", parameters: map[string]any{"clients": []any{map[string]any{"kind": "client",
 			"by": "mac", "value": "00:00:5e:00:53:00"}}},
-			extra: "AND f.src_client_id = (SELECT id FROM client WHERE mac = ?)", arguments: []any{"00:00:5e:00:53:00"}},
+			extra: "AND f.src_client_id = (SELECT id FROM client WHERE mac = $3)", arguments: []any{"00:00:5e:00:53:00"}},
 	}
 	addressRows, unplaced := 0, 0
 	for _, period := range []string{"1h", "24h", "7d", "30d"} {
@@ -270,9 +270,9 @@ func TestBeyondTheFlowHorizonUnnamedDestinationsAreANamedState(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, defaultSpec)
 	horizon := f.now - 86400
-	f.exec(t, "INSERT INTO retention_purge (id, purged_before, purged_at) VALUES (1, ?, ?) "+
+	f.exec(t, "INSERT INTO retention_purge (id, purged_before, purged_at) VALUES (1, $1, $2) "+
 		"ON CONFLICT (id) DO UPDATE SET purged_before = EXCLUDED.purged_before", horizon, f.now)
-	f.exec(t, "DELETE FROM flow WHERE observed_at < ?", horizon)
+	f.exec(t, "DELETE FROM flow WHERE observed_at < $1", horizon)
 	for _, widgetType := range []string{"top_sites", "sites_by_client"} {
 		response := f.respond(t, widgetType, map[string]any{"period": "7d"})
 		if !params.Contains(response.States, figures.StateUnnamedBeyondHorizon) {
@@ -292,8 +292,8 @@ func TestBeyondTheFlowHorizonUnnamedDestinationsAreANamedState(t *testing.T) {
 	}
 	addressFlows += sites.Remainder.Count.Value + sites.BelowMinFlows.Count.Value
 	kept := f.scalar(t, `SELECT count(*) FROM flow AS f LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
-		WHERE a.flow_id IS NULL AND f.observed_at >= ? AND f.dst_interface_id IS NULL AND f.src_client_id IS NOT NULL
-		AND f.src_is_this_firewall = 0 AND f.dst_is_this_firewall = 0
+		WHERE a.flow_id IS NULL AND f.observed_at >= $1 AND f.dst_interface_id IS NULL AND f.src_client_id IS NOT NULL
+		AND NOT f.src_is_this_firewall AND NOT f.dst_is_this_firewall
 		AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')`, f.now-7*86400)
 	if sites.Remainder.Count.Value+sites.BelowMinFlows.Count.Value == 0 && addressFlows != kept {
 		t.Errorf("the address rows hold %d flows, the kept unnamed flows %d: an estimate, or a loss", addressFlows, kept)
@@ -426,8 +426,8 @@ func TestEveryCatalogueBindingOfPortAndProtocolIsServed(t *testing.T) {
 	for index, protocol := range []string{"udp", "tcp"} {
 		f.exec(t, `INSERT INTO flow (log_digest, observed_at, ingested_at, interface_device, interface_lookup_state,
 			src_interface_id, src_client_id, src_address, dst_address, dst_port, protocol, ip_version, action, direction,
-			packet_bytes, rule_lookup_state, traffic_scope) VALUES (?, ?, ?, ?, 'resolved', ?,
-			(SELECT id FROM client WHERE mac = '00:00:5e:00:53:00'), ?, '198.51.100.250', 53, ?, 4, 'pass', 'in', 100,
+			packet_bytes, rule_lookup_state, traffic_scope) VALUES ($1, $2, $3, $4, 'resolved', $5,
+			(SELECT id FROM client WHERE mac = '00:00:5e:00:53:00'), $6, '198.51.100.250', 53, $7, 4, 'pass', 'in', 100,
 			'pending', 'north_south')`, fmt.Sprintf("example-dns-%d", index), at, at, client.iface.device,
 			client.iface.id, client.address, protocol)
 	}
@@ -446,7 +446,7 @@ func TestEveryCatalogueBindingOfPortAndProtocolIsServed(t *testing.T) {
 		}
 	}
 	if f.scalar(t, "SELECT count(*) FROM classified_flow WHERE dst_port IS NULL AND exit_leg_device IS NULL "+
-		"AND observed_at >= ?", f.now-3600) > 0 && !keys[traffic.ServicePortNotRecorded] {
+		"AND observed_at >= $1", f.now-3600) > 0 && !keys[traffic.ServicePortNotRecorded] {
 		t.Error("the records with no port are not the slice port:not_recorded")
 	}
 }
@@ -466,7 +466,7 @@ func TestTheDecisionsOfABlockingReasonCompositionAreTheBlockedDecisionViews(t *t
 	for _, kind := range []string{traffic.DecisionFirewallRule, traffic.DecisionFirewallNoRule,
 		traffic.DecisionFirewallReasonNotRecorded} {
 		want := f.scalar(t, `SELECT count(*) FROM blocked_decision AS d JOIN flow AS f ON d.source_table = 'flow'
-			AND f.id = d.source_id WHERE d.engine_kind = ? AND d.occurred_at >= ? AND d.occurred_at < ?
+			AND f.id = d.source_id WHERE d.engine_kind = $1 AND d.occurred_at >= $2 AND d.occurred_at < $3
 			AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')`, kind, window.From, window.To)
 		var got float64
 		for _, slice := range composition.Slices {

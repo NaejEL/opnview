@@ -58,7 +58,7 @@ func TestEnsureProviderLeavesAnExistingRowExactlyAsItIs(t *testing.T) {
 	}
 	var display string
 	if err := database.DB().QueryRowContext(ctx,
-		"SELECT display_name FROM provider WHERE id = ?", seeded).Scan(&display); err != nil {
+		"SELECT display_name FROM provider WHERE id = $1", seeded).Scan(&display); err != nil {
 		t.Fatal(err)
 	}
 	if display != "Kea DHCP" {

@@ -115,7 +115,7 @@ func (s *AccountStore) CreateAccount(ctx context.Context, login string, password
 		`INSERT INTO account (login, password_algorithm, password_memory_kib,
 		     password_iterations, password_parallelism, password_salt,
 		     password_digest, created_at, password_set_at)
-		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+		 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
 		 WHERE NOT EXISTS (SELECT 1 FROM account)
 		 RETURNING id`,
 		login, password.Algorithm, password.MemoryKiB, password.Iterations,
@@ -142,7 +142,7 @@ func (s *AccountStore) AccountByLogin(ctx context.Context, login string) (Accoun
 	return s.scanAccount(ctx,
 		`SELECT id, login, password_algorithm, password_memory_kib, password_iterations,
 		        password_parallelism, password_salt, password_digest, created_at, password_set_at
-		 FROM account WHERE login = ?`, login)
+		 FROM account WHERE login = $1`, login)
 }
 
 // AnyAccount returns the single account of an installation that has one. The
@@ -188,16 +188,16 @@ func (s *AccountStore) SetAccountPassword(ctx context.Context, accountID int64,
 
 	if _, err := transaction.ExecContext(ctx,
 		`UPDATE account
-		 SET password_algorithm = ?, password_memory_kib = ?, password_iterations = ?,
-		     password_parallelism = ?, password_salt = ?, password_digest = ?,
-		     password_set_at = ?
-		 WHERE id = ?`,
+		 SET password_algorithm = $1, password_memory_kib = $2, password_iterations = $3,
+		     password_parallelism = $4, password_salt = $5, password_digest = $6,
+		     password_set_at = $7
+		 WHERE id = $8`,
 		password.Algorithm, password.MemoryKiB, password.Iterations,
 		password.Parallelism, password.Salt, password.Digest, now, accountID); err != nil {
 		return fmt.Errorf("store: writing a password: %w", err)
 	}
 	if _, err := transaction.ExecContext(ctx,
-		"DELETE FROM session WHERE account_id = ?", accountID); err != nil {
+		"DELETE FROM session WHERE account_id = $1", accountID); err != nil {
 		return fmt.Errorf("store: revoking the sessions of an account: %w", err)
 	}
 	if err := transaction.Commit(); err != nil {
@@ -227,7 +227,7 @@ func (s *AccountStore) CreateSession(ctx context.Context, session Session) error
 	_, err := s.SQL.ExecContext(ctx,
 		`INSERT INTO session (token_digest, account_id, csrf_token, created_at,
 		     last_seen_at, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		session.TokenDigest, session.AccountID, session.CSRFToken,
 		session.CreatedAt, session.LastSeenAt, session.ExpiresAt)
 	if err != nil {
@@ -241,7 +241,7 @@ func (s *AccountStore) SessionByTokenDigest(ctx context.Context, digest string) 
 	var session Session
 	err := s.SQL.QueryRowContext(ctx,
 		`SELECT token_digest, account_id, csrf_token, created_at, last_seen_at, expires_at
-		 FROM session WHERE token_digest = ?`, digest).Scan(
+		 FROM session WHERE token_digest = $1`, digest).Scan(
 		&session.TokenDigest, &session.AccountID, &session.CSRFToken,
 		&session.CreatedAt, &session.LastSeenAt, &session.ExpiresAt)
 	switch {
@@ -258,7 +258,7 @@ func (s *AccountStore) SessionByTokenDigest(ctx context.Context, digest string) 
 // activity cannot extend it.
 func (s *AccountStore) TouchSession(ctx context.Context, digest string, now int64) error {
 	_, err := s.SQL.ExecContext(ctx,
-		"UPDATE session SET last_seen_at = ? WHERE token_digest = ?", now, digest)
+		"UPDATE session SET last_seen_at = $1 WHERE token_digest = $2", now, digest)
 	if err != nil {
 		return fmt.Errorf("store: touching a session: %w", err)
 	}
@@ -269,7 +269,7 @@ func (s *AccountStore) TouchSession(ctx context.Context, digest string, now int6
 // token afterwards finds no row.
 func (s *AccountStore) DeleteSession(ctx context.Context, digest string) error {
 	if _, err := s.SQL.ExecContext(ctx,
-		"DELETE FROM session WHERE token_digest = ?", digest); err != nil {
+		"DELETE FROM session WHERE token_digest = $1", digest); err != nil {
 		return fmt.Errorf("store: deleting a session: %w", err)
 	}
 	return nil
@@ -280,7 +280,7 @@ func (s *AccountStore) DeleteSession(ctx context.Context, digest string) error {
 // bounded; a session past either bound is refused whether or not this has run.
 func (s *AccountStore) DeleteExpiredSessions(ctx context.Context, now, idleCutoff int64) error {
 	if _, err := s.SQL.ExecContext(ctx,
-		"DELETE FROM session WHERE expires_at <= ? OR last_seen_at <= ?",
+		"DELETE FROM session WHERE expires_at <= $1 OR last_seen_at <= $2",
 		now, idleCutoff); err != nil {
 		return fmt.Errorf("store: collecting expired sessions: %w", err)
 	}
@@ -314,7 +314,7 @@ type EncryptedCredential struct {
 func (s *AccountStore) SetCredential(ctx context.Context, credential EncryptedCredential) error {
 	_, err := s.SQL.ExecContext(ctx,
 		`INSERT INTO encrypted_credential (name, algorithm, key_id, nonce, ciphertext, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (name) DO UPDATE SET
 		     algorithm = excluded.algorithm, key_id = excluded.key_id,
 		     nonce = excluded.nonce, ciphertext = excluded.ciphertext,
@@ -332,7 +332,7 @@ func (s *AccountStore) Credential(ctx context.Context, name string) (EncryptedCr
 	var credential EncryptedCredential
 	err := s.SQL.QueryRowContext(ctx,
 		`SELECT name, algorithm, key_id, nonce, ciphertext, updated_at
-		 FROM encrypted_credential WHERE name = ?`, name).Scan(
+		 FROM encrypted_credential WHERE name = $1`, name).Scan(
 		&credential.Name, &credential.Algorithm, &credential.KeyID,
 		&credential.Nonce, &credential.Ciphertext, &credential.UpdatedAt)
 	switch {
@@ -348,7 +348,7 @@ func (s *AccountStore) Credential(ctx context.Context, name string) (EncryptedCr
 // saying "not configured", and the interface reports one state.
 func (s *AccountStore) DeleteSetting(ctx context.Context, key string) error {
 	if _, err := s.SQL.ExecContext(ctx,
-		"DELETE FROM setting WHERE key = ?", key); err != nil {
+		"DELETE FROM setting WHERE key = $1", key); err != nil {
 		return fmt.Errorf("store: deleting setting %s: %w", key, err)
 	}
 	return nil
@@ -358,7 +358,7 @@ func (s *AccountStore) DeleteSetting(ctx context.Context, key string) error {
 // internal/config needs from storage.
 func (s *AccountStore) Setting(ctx context.Context, key string) (string, bool, error) {
 	var value string
-	err := s.SQL.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", key).Scan(&value)
+	err := s.SQL.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = $1", key).Scan(&value)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return "", false, nil
@@ -371,7 +371,7 @@ func (s *AccountStore) Setting(ctx context.Context, key string) (string, bool, e
 // SetSetting writes one setting row.
 func (s *AccountStore) SetSetting(ctx context.Context, key, value string, now int64) error {
 	_, err := s.SQL.ExecContext(ctx,
-		`INSERT INTO setting (key, value, updated_at) VALUES (?, ?, ?)
+		`INSERT INTO setting (key, value, updated_at) VALUES ($1, $2, $3)
 		 ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
 		key, value, now)
 	if err != nil {

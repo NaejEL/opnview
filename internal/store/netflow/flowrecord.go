@@ -131,7 +131,7 @@ func (s *NetflowStore) InsertFlowRecords(ctx context.Context, records []FlowReco
 		     protocol, src_address, dst_address, src_port, dst_port, tcp_flags, octets, packets, ingress_role,
 		     ingress_identifier, ingress_device, egress_role, egress_identifier, egress_device, loss_detectable,
 		     tuple_key, join_state)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'pending')
 		 ON CONFLICT (identity, start_at) DO NOTHING`)
 	if err != nil {
 		return 0, fmt.Errorf("store: preparing the flow-record insert: %w", err)
@@ -166,8 +166,8 @@ func (s *NetflowStore) PendingFlowRecordGroups(ctx context.Context, providerID, 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.SQL.QueryContext(ctx, text, sqldb.Named(text, map[string]any{"provider_id": providerID,
-		"before": before})...)
+	rows, err := sqldb.Query(ctx, s.SQL, text, map[string]any{"provider_id": providerID,
+		"before": before})
 	if err != nil {
 		return nil, fmt.Errorf("store: flow_record_pending_groups: %w", err)
 	}
@@ -220,8 +220,8 @@ func (s *NetflowStore) FlowRecordGroup(ctx context.Context, providerID int64, tu
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.SQL.QueryContext(ctx, text, sqldb.Named(text, map[string]any{"provider_id": providerID,
-		"tuple_key": tupleKey})...)
+	rows, err := sqldb.Query(ctx, s.SQL, text, map[string]any{"provider_id": providerID,
+		"tuple_key": tupleKey})
 	if err != nil {
 		return nil, fmt.Errorf("store: flow_record_group: %w", err)
 	}
@@ -290,9 +290,9 @@ func (s *NetflowStore) JoinLegs(ctx context.Context, devices []string, a, b stri
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.SQL.QueryContext(ctx, text, sqldb.Named(text, map[string]any{
+	rows, err := sqldb.Query(ctx, s.SQL, text, map[string]any{
 		"devices": strings.Join(devices, unitSeparator), "address_a": a, "address_b": b, "ip_version": addressFamily,
-		"latest": latest})...)
+		"latest": latest})
 	if err != nil {
 		return nil, fmt.Errorf("store: flow_record_join_legs: %w", err)
 	}
@@ -436,15 +436,15 @@ func accumulateUnmatched(ctx context.Context, transaction *sql.Tx, record GroupR
 		key := []any{start, record.Ingress.Name(), record.Egress.Name(), record.Protocol, record.IPVersion, reason}
 		if sign < 0 {
 			if _, err := transaction.ExecContext(ctx,
-				`UPDATE `+table+` SET bytes = bytes - ?, packets = packets - ?, records = records - 1, updated_at = ?
-				 WHERE period_start_at = ? AND ingress_interface = ? AND egress_interface = ? AND protocol = ?
-				   AND ip_version = ? AND reason = ?`,
+				`UPDATE `+table+` SET bytes = bytes - $1, packets = packets - $2, records = records - 1, updated_at = $3
+				 WHERE period_start_at = $4 AND ingress_interface = $5 AND egress_interface = $6 AND protocol = $7
+				   AND ip_version = $8 AND reason = $9`,
 				append([]any{record.Octets, record.Packets, now}, key...)...); err != nil {
 				return fmt.Errorf("store: taking a record out of the unmatched family: %w", err)
 			}
 			if _, err := transaction.ExecContext(ctx,
-				`DELETE FROM `+table+` WHERE period_start_at = ? AND ingress_interface = ? AND egress_interface = ?
-				   AND protocol = ? AND ip_version = ? AND reason = ? AND records = 0`, key...); err != nil {
+				`DELETE FROM `+table+` WHERE period_start_at = $1 AND ingress_interface = $2 AND egress_interface = $3
+				   AND protocol = $4 AND ip_version = $5 AND reason = $6 AND records = 0`, key...); err != nil {
 				return fmt.Errorf("store: emptying an unmatched slot: %w", err)
 			}
 			continue
@@ -452,7 +452,7 @@ func accumulateUnmatched(ctx context.Context, transaction *sql.Tx, record GroupR
 		if _, err := transaction.ExecContext(ctx,
 			`INSERT INTO `+table+` AS t (period_start_at, period_end_at, ingress_interface, egress_interface,
 			     protocol, ip_version, reason, bytes, packets, records, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			 ON CONFLICT (period_start_at, ingress_interface, egress_interface, protocol, ip_version, reason)
 			 DO UPDATE SET bytes = t.bytes + excluded.bytes, packets = t.packets + excluded.packets,
 			     records = t.records + excluded.records, updated_at = excluded.updated_at`,

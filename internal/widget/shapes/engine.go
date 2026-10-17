@@ -85,17 +85,13 @@ func ServeDeclarative(r *request.Request) (any, bool, error) {
 		return nil, false, err
 	}
 	err = r.Db.WidgetRows(r.Ctx, preset.Statement, vocab.Period{}, parameters, func(row reads.RowScanner) error {
-		cells := make([]any, len(e.columns))
-		pointers := make([]any, len(cells))
-		for index := range cells {
-			pointers[index] = &cells[index]
-		}
-		if err := row.Scan(pointers...); err != nil {
+		cells, err := reads.ScanCells(row, len(e.columns))
+		if err != nil {
 			return err
 		}
 		values := make(map[string]any, len(cells))
 		for index, name := range e.columns {
-			values[name] = normaliseCell(cells[index])
+			values[name] = cells[index]
 		}
 		e.rows = append(e.rows, engineRow{cells: values, order: len(e.rows)})
 		return nil
@@ -111,14 +107,6 @@ func ServeDeclarative(r *request.Request) (any, bool, error) {
 
 // defaultMeasure names the figures of a widget whose manifest names none.
 const defaultMeasure = "query"
-
-// normaliseCell turns a driver value into one JSON can carry as the query produced it.
-func normaliseCell(value any) any {
-	if raw, isBytes := value.([]byte); isBytes {
-		return string(raw)
-	}
-	return value
-}
 
 // bind builds the named parameters of the query from the request.
 func (e *engine) bind() (map[string]any, error) {

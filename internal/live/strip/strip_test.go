@@ -34,9 +34,9 @@ func newWorld(t *testing.T) *world {
 	t.Cleanup(func() { _ = database.Close() })
 	w := &world{database: database, ctx: ctx}
 	w.exec(t, `INSERT INTO interface (id, identifier, device, description, link_type, link_kind, first_seen_at,
-		last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'Inside', 'ethernet', 'vlan', ?, ?)`, at-3600, at-3600)
+		last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'Inside', 'ethernet', 'vlan', $1, $2)`, at-3600, at-3600)
 	w.exec(t, `INSERT INTO interface_network (interface_id, network_address, prefix_length, address_family, origin,
-		first_detected_at, last_detected_at, updated_at) VALUES (1, '192.0.2.0', 24, 4, 'detected', ?, ?, ?)`,
+		first_detected_at, last_detected_at, updated_at) VALUES (1, '192.0.2.0', 24, 4, 'detected', $1, $2, $3)`,
 		at-3600, at-3600, at-3600)
 	return w
 }
@@ -51,7 +51,7 @@ func (w *world) exec(t *testing.T, statement string, arguments ...any) {
 // healthy makes a kind's provider active, its last pass healthy at checkedAt.
 func (w *world) healthy(t *testing.T, kind, key string, checkedAt int64) {
 	t.Helper()
-	w.exec(t, "UPDATE provider SET is_active = 1 WHERE kind = ? AND provider_key = ?", kind, key)
+	w.exec(t, "UPDATE provider SET is_active = true WHERE kind = $1 AND provider_key = $2", kind, key)
 	id, err := w.database.ProviderID(w.ctx, kind, key)
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +67,8 @@ func (w *world) flow(t *testing.T, id, observedAt int64, action string, reason a
 	t.Helper()
 	w.exec(t, `INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, interface_lookup_state,
 		src_interface_id, src_address, dst_address, protocol, ip_version, action, direction, packet_bytes,
-		rule_lookup_state, traffic_scope, log_reason) VALUES (?, ?, ?, ?, 'vlan0.10', 'resolved', 1, '192.0.2.10',
-		'203.0.113.7', 'tcp', 4, ?, 'in', 100, 'pending', 'north_south', ?)`,
+		rule_lookup_state, traffic_scope, log_reason) VALUES ($1, $2, $3, $4, 'vlan0.10', 'resolved', 1, '192.0.2.10',
+		'203.0.113.7', 'tcp', 4, $5, 'in', 100, 'pending', 'north_south', $6)`,
 		id, "d"+time.Unix(id, 0).Format("150405"), observedAt, observedAt, action, reason)
 }
 
@@ -76,7 +76,7 @@ func (w *world) flow(t *testing.T, id, observedAt int64, action string, reason a
 func (w *world) refusal(t *testing.T, key string, lookedUpAt int64) {
 	t.Helper()
 	w.exec(t, `INSERT INTO dns_resolution (lookup_key, client_address, domain, resolver, action, looked_up_at,
-		ingested_at) VALUES (?, '192.0.2.10', 'example.org', 'unbound', 'block', ?, ?)`, key, lookedUpAt, lookedUpAt)
+		ingested_at) VALUES ($1, '192.0.2.10', 'example.org', 'unbound', 'block', $2, $3)`, key, lookedUpAt, lookedUpAt)
 }
 
 // sample stores one rate reading of one inside address with one outside peer.

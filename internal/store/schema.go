@@ -47,7 +47,7 @@ func (s *Store) applySchema(ctx context.Context) (bool, error) {
 	// schema, and telling the operator to rebuild for it would throw history away for nothing.
 	var existingTables int
 	if err := s.SQL.QueryRowContext(ctx,
-		"SELECT count(*) FROM pg_tables WHERE schemaname = ?", sqldb.CoreSchema).Scan(&existingTables); err != nil {
+		"SELECT count(*) FROM pg_tables WHERE schemaname = $1", sqldb.CoreSchema).Scan(&existingTables); err != nil {
 		return false, fmt.Errorf("store: reading the existing schema: %w", err)
 	}
 	tx, err := s.SQL.BeginTx(ctx, nil)
@@ -66,7 +66,7 @@ func (s *Store) applySchema(ctx context.Context) (bool, error) {
 	// The digest is recorded in the apply's own transaction: a start interrupted before the commit
 	// records nothing, and the next start applies again.
 	if _, err := tx.ExecContext(ctx, "INSERT INTO "+sqldb.CoreSchema+".applied_schema (singleton, digest, applied_at) "+
-		"VALUES (TRUE, ?, ?) ON CONFLICT (singleton) DO UPDATE SET digest = EXCLUDED.digest, "+
+		"VALUES (TRUE, $1, $2) ON CONFLICT (singleton) DO UPDATE SET digest = EXCLUDED.digest, "+
 		"applied_at = EXCLUDED.applied_at", digest, time.Now().Unix()); err != nil {
 		return false, fmt.Errorf("store: recording the applied schema: %w", err)
 	}
@@ -80,7 +80,7 @@ func (s *Store) applySchema(ctx context.Context) (bool, error) {
 // that records none: an empty one, or one an earlier build wrote.
 func (s *Store) appliedDigest(ctx context.Context) (string, error) {
 	var table *string
-	if err := s.SQL.QueryRowContext(ctx, "SELECT CAST(to_regclass(?) AS TEXT)",
+	if err := s.SQL.QueryRowContext(ctx, "SELECT CAST(to_regclass($1) AS TEXT)",
 		sqldb.CoreSchema+".applied_schema").Scan(&table); err != nil {
 		return "", fmt.Errorf("store: looking for the applied schema: %w", err)
 	}

@@ -12,7 +12,6 @@ import (
 	"github.com/NaejEL/opnview/internal/web/messages"
 
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/settingfields"
 	"github.com/NaejEL/opnview/internal/web/surfaces/collection"
 	"github.com/NaejEL/opnview/internal/web/webtest"
@@ -223,7 +222,6 @@ func TestEverySettingAcceptsExactlyWhatConfigLoadAccepts(t *testing.T) {
 			overInterval},
 		{key: config.KeyResolverLocalDataInterval, card: "resolver_local_data"}: {"0", "1", maxInterval,
 			overInterval},
-		{key: config.KeyPublicSuffixRefreshInterval, card: ""}: {"-1", "0", "1", maxInterval, overInterval},
 	}
 	for setting, values := range cases {
 		t.Run(setting.key, func(t *testing.T) {
@@ -236,9 +234,6 @@ func TestEverySettingAcceptsExactlyWhatConfigLoadAccepts(t *testing.T) {
 				}
 				var answer *http.Response
 				switch setting.card {
-				case "":
-					answer = h.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix},
-						setting.key: {value}})
 				case "resolver_cache", "resolver_local_data":
 					answer = h.Post(webtest.PathCollectionSettings, url.Values{webtest.FieldCard: {setting.card},
 						webtest.CardFieldName(setting.card, webtest.FieldInterval): {value}})

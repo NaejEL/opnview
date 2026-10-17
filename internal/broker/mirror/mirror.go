@@ -153,7 +153,7 @@ func (m *Mirror) EndpointID(ctx context.Context, endpoint Endpoint) (int64, erro
 		return id, nil
 	}
 	err := m.db.QueryRowContext(ctx, `INSERT INTO opnsense.mirror_endpoint (path, method, encoding, first_seen_at)
-		VALUES (?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (path, method) DO UPDATE SET encoding = excluded.encoding
 		RETURNING id`, endpoint.Path, endpoint.Method, endpoint.Encoding, m.now()).Scan(&id)
 	if err != nil {
@@ -204,7 +204,7 @@ func (m *Mirror) Datum(ctx context.Context, endpoint Endpoint, identity map[stri
 	encoded, _ := json.Marshal(identity)
 	var id int64
 	if err := m.db.QueryRowContext(ctx, `INSERT INTO opnsense.mirror_datum (endpoint_id, identity, identity_key, firewall)
-		VALUES (?, CAST(? AS jsonb), ?, ?)
+		VALUES ($1, CAST($2 AS jsonb), $3, $4)
 		ON CONFLICT (endpoint_id, identity_key, firewall) DO UPDATE SET identity = excluded.identity
 		RETURNING id`, endpointID, string(encoded), key, firewall).Scan(&id); err != nil {
 		return nil, fmt.Errorf("mirror: registering a datum of %s: %w", endpoint.Path, err)
@@ -233,7 +233,7 @@ func (m *Mirror) LoadDatum(ctx context.Context, id int64) (*Datum, error) {
 		d.cursor_descending, d.dedupe_on_content, d.generation, d.fetched_at, d.attempted_at, d.outcome,
 		d.status_code, d.detail, CAST(d.root_shape AS text), d.page_size, d.read_whole, d.body
 		FROM opnsense.mirror_datum AS d JOIN opnsense.mirror_endpoint AS e ON e.id = d.endpoint_id
-		WHERE d.id = ?`, id).Scan(&datum.EndpointID, &path, &method, &encoding, &identity, &datum.Firewall, &nature,
+		WHERE d.id = $1`, id).Scan(&datum.EndpointID, &path, &method, &encoding, &identity, &datum.Firewall, &nature,
 		&rowSet, &key, &cursor, &cursorType, &datum.CursorDescending, &datum.DedupeOnContent, &datum.Generation,
 		&fetchedAt, &attemptedAt, &outcome, &statusCode, &detail, &rootShape, &pageSize, &datum.ReadWhole, &body)
 	if err != nil {
@@ -297,7 +297,7 @@ func (m *Mirror) RecordReads(ctx context.Context, datumID int64, read Read) ([]s
 	write := func(path string, whole bool) error {
 		_, err := m.db.ExecContext(ctx, `INSERT INTO opnsense.mirror_read
 			(datum_id, reader, reader_version, path, whole, max_age_seconds, first_read_at, last_read_at)
-			VALUES (?, ?, ?, ?, CAST(? AS boolean), ?, ?, ?)
+			VALUES ($1, $2, $3, $4, CAST($5 AS boolean), $6, $7, $8)
 			ON CONFLICT (datum_id, reader, reader_version, path, whole) DO UPDATE
 			SET last_read_at = excluded.last_read_at, max_age_seconds = excluded.max_age_seconds`,
 			datumID, read.Reader, read.ReaderVersion, path, strconv.FormatBool(whole), read.MaxAgeSeconds, now, now)
@@ -325,7 +325,7 @@ func (m *Mirror) RecordReads(ctx context.Context, datumID int64, read Read) ([]s
 // readPaths returns the paths the loaded readers have read of a datum.
 func (m *Mirror) readPaths(ctx context.Context, datumID int64) (map[string]bool, map[string]bool, error) {
 	rows, err := m.db.QueryContext(ctx, `SELECT reader, reader_version, path, whole FROM opnsense.mirror_read
-		WHERE datum_id = ?`, datumID)
+		WHERE datum_id = $1`, datumID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("mirror: reading the reads: %w", err)
 	}
@@ -361,7 +361,7 @@ func keysOf(set map[string]bool) []string {
 // Attempt records a call that did not answer OK: it counts for freshness, and replaces no row.
 func (m *Mirror) Attempt(ctx context.Context, datum *Datum, at int64, outcome string, status int, detail string) error {
 	_, err := m.db.ExecContext(ctx, `UPDATE opnsense.mirror_datum
-		SET attempted_at = ?, outcome = ?, status_code = ?, detail = ? WHERE id = ?`,
+		SET attempted_at = $1, outcome = $2, status_code = $3, detail = $4 WHERE id = $5`,
 		at, outcome, int64(status), detail, datum.ID)
 	if err != nil {
 		return fmt.Errorf("mirror: recording an attempt: %w", err)
@@ -393,14 +393,14 @@ func (m *Mirror) RecordGap(ctx context.Context, datumID int64, gap Gap) error {
 		return nil
 	}
 	_, err := m.db.ExecContext(ctx, `INSERT INTO opnsense.mirror_gap (datum_id, from_at, to_at, reason, recorded_at)
-		VALUES (?, ?, ?, ?, ?)`, datumID, gap.From, gap.To, gap.Reason, m.now())
+		VALUES ($1, $2, $3, $4, $5)`, datumID, gap.From, gap.To, gap.Reason, m.now())
 	return err
 }
 
 // Gaps returns the gaps of a datum meeting an interval.
 func (m *Mirror) Gaps(ctx context.Context, datumID, from, to int64) ([]Gap, error) {
 	rows, err := m.db.QueryContext(ctx, `SELECT from_at, to_at, reason FROM opnsense.mirror_gap
-		WHERE datum_id = ? AND to_at >= ? AND from_at <= ? ORDER BY from_at`, datumID, from, to)
+		WHERE datum_id = $1 AND to_at >= $2 AND from_at <= $3 ORDER BY from_at`, datumID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +441,7 @@ func (m *Mirror) NewestCursor(ctx context.Context, datum *Datum) (float64, bool)
 	}
 	var newest *float64
 	if err := m.db.QueryRowContext(ctx, `SELECT max("#cursor") FROM `+qualified(TableName(datum.Endpoint,
-		datum.RowSet))+` WHERE "#datum" = ?`, datum.ID).Scan(&newest); err != nil || newest == nil {
+		datum.RowSet))+` WHERE "#datum" = $1`, datum.ID).Scan(&newest); err != nil || newest == nil {
 		return 0, false
 	}
 	return *newest, true
@@ -458,7 +458,7 @@ func (m *Mirror) SetParameter(ctx context.Context, endpointID int64, name, role,
 		held = strconv.FormatBool(*honoured)
 	}
 	_, err := m.db.ExecContext(ctx, `INSERT INTO opnsense.mirror_parameter (endpoint_id, name, role, corrected_by, honoured)
-		VALUES (?, ?, ?, ?, CAST(? AS boolean))
+		VALUES ($1, $2, $3, $4, CAST($5 AS boolean))
 		ON CONFLICT (endpoint_id, name) DO UPDATE SET role = excluded.role, corrected_by = excluded.corrected_by,
 		honoured = coalesce(excluded.honoured, opnsense.mirror_parameter.honoured)`,
 		endpointID, name, role, corrected, held)
@@ -468,7 +468,7 @@ func (m *Mirror) SetParameter(ctx context.Context, endpointID int64, name, role,
 // Honoured reads whether a window parameter is honoured: nil when it was never tried.
 func (m *Mirror) Honoured(ctx context.Context, endpointID int64, name string) *bool {
 	var honoured *bool
-	if err := m.db.QueryRowContext(ctx, `SELECT honoured FROM opnsense.mirror_parameter WHERE endpoint_id = ? AND name = ?`,
+	if err := m.db.QueryRowContext(ctx, `SELECT honoured FROM opnsense.mirror_parameter WHERE endpoint_id = $1 AND name = $2`,
 		endpointID, name).Scan(&honoured); err != nil {
 		return nil
 	}

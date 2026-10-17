@@ -66,7 +66,7 @@ func newRenderer(catalogue Catalogue, accepted []vetted) (*renderer, error) {
 	if err != nil {
 		return nil, err
 	}
-	stylesheet, err := files.ReadFile("asset/style.css")
+	stylesheet, err := Stylesheet()
 	if err != nil {
 		return nil, fmt.Errorf("web: reading the stylesheet: %w", err)
 	}

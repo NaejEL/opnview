@@ -7,18 +7,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/settingfields"
 
-	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/secret"
 )
 
 // The settings surface: where credentials enter the product.
@@ -94,10 +89,8 @@ func (s *surface) handleSettingsForm(writer http.ResponseWriter, request *http.R
 const (
 	fieldSettingsCard = "settings_card"
 
-	settingsCardFirewall     = "firewall"
-	settingsCardGeolocation  = "geolocation"
-	settingsCardPublicSuffix = "public_suffix"
-	settingsCardAppearance   = "appearance"
+	settingsCardFirewall   = "firewall"
+	settingsCardAppearance = "appearance"
 )
 
 // queryVerified carries, in the redirect after a firewall save, the outcome of the
@@ -106,8 +99,7 @@ const queryVerified = "verified"
 
 // settingsCards are the cards a submission may name.
 func settingsCards() []string {
-	return []string{settingsCardFirewall, settingsCardGeolocation, settingsCardPublicSuffix,
-		settingsCardAppearance}
+	return []string{settingsCardFirewall, settingsCardAppearance}
 }
 
 // settingsCardNamed is the card a value names, or the empty string for none.
@@ -168,8 +160,6 @@ type settingsOutcome struct {
 	refusal messageKey
 	// verification is the firewall verification's outcome.
 	verification messageKey
-	// suffixRefusal refuses the Public Suffix List's interval against its field.
-	suffixRefusal messageKey
 	// presented is the fingerprint the firewall presented, put in its field.
 	presented string
 }
@@ -200,8 +190,6 @@ func (s *surface) handleSettingsSubmit(writer http.ResponseWriter, request *http
 	apiKey := strings.TrimSpace(request.PostFormValue("api_key"))
 	apiSecret := request.PostFormValue("api_secret")
 	fingerprintTyped := request.PostFormValue("certificate_fingerprint")
-	licenceKey := strings.TrimSpace(request.PostFormValue("maxmind_licence_key"))
-	accountID := strings.TrimSpace(request.PostFormValue("maxmind_account_id"))
 
 	verification := msgVerifyNotAttempted
 	switch card {
@@ -230,53 +218,6 @@ func (s *surface) handleSettingsSubmit(writer http.ResponseWriter, request *http
 		if err != nil {
 			s.FailInternal(writer, request, err)
 			return
-		}
-
-	case settingsCardGeolocation:
-		// MaxMind account IDs are numbers; anything else would only be refused by
-		// MaxMind, after spending a request.
-		if accountID != "" {
-			if number, err := strconv.ParseInt(accountID, 10, 64); err != nil || number <= 0 {
-				refuse(msgMaxMindAccountIDBad)
-				return
-			}
-		}
-		previousAccountID, _, err := s.store.Setting(ctx, config.KeyMaxMindAccountID)
-		if err != nil {
-			s.FailInternal(writer, request, err)
-			return
-		}
-		if err := s.storeSecret(ctx, accounts.CredentialMaxMindLicenceKey, licenceKey, now); err != nil {
-			s.FailInternal(writer, request, err)
-			return
-		}
-		if err := s.writeSetting(ctx, config.KeyMaxMindAccountID, accountID, now); err != nil {
-			s.FailInternal(writer, request, err)
-			return
-		}
-		// A new licence key or a different account ID is fetched with now, not at the
-		// next daily check. The refresh runs in its own loop: nothing here waits for
-		// it, and this package makes no call to MaxMind.
-		if s.geoip != nil && (licenceKey != "" || accountID != previousAccountID) {
-			s.geoip.Wake()
-		}
-
-	case settingsCardPublicSuffix:
-		// Read and refused before anything is stored, against its own field.
-		seconds, changed, refusal := s.typedPublicSuffixInterval(request)
-		if refusal != "" {
-			s.renderSettingsOutcome(writer, request, http.StatusBadRequest,
-				settingsOutcome{card: card, suffixRefusal: refusal})
-			return
-		}
-		// The refresh interval reaches the running loop the way the collection
-		// surface's intervals do: the configuration is loaded again and handed to the
-		// live holder, which the loop asks before every wait.
-		if changed {
-			if err := s.savePublicSuffixInterval(ctx, seconds, now); err != nil {
-				s.FailInternal(writer, request, err)
-				return
-			}
 		}
 
 	case settingsCardAppearance:
@@ -374,9 +315,6 @@ func (s *surface) settingsView(writer http.ResponseWriter, request *http.Request
 	built.setCard(outcome.card)
 	built.Notice = outcome.notice
 	built.Error = outcome.refusal
-	if outcome.suffixRefusal != "" {
-		built.PublicSuffix.IntervalField.RefusalKey = outcome.suffixRefusal
-	}
 	if outcome.presented != "" {
 		built.CertificateFingerprint = outcome.presented
 	}
@@ -427,35 +365,6 @@ func (s *surface) applySettingsDraft(request *http.Request, built *view, except 
 			built.APISecretNotKept = true
 		}
 	}
-	if except != settingsCardGeolocation {
-		if typed, sent := posted("maxmind_account_id"); sent {
-			if strings.TrimSpace(typed) != built.MaxMindAccountID {
-				edited[settingsCardGeolocation] = true
-			}
-			built.MaxMindAccountID = typed
-		}
-		if typed, _ := posted("maxmind_licence_key"); strings.TrimSpace(typed) != "" {
-			edited[settingsCardGeolocation] = true
-			built.LicenceKeyNotKept = true
-		}
-	}
-	if except != settingsCardPublicSuffix {
-		if figure, sent := posted(fieldPublicSuffixInterval); sent {
-			unit, _ := posted(settingfields.UnitFieldName(fieldPublicSuffixInterval))
-			settings, err := s.Configuration(request.Context())
-			if err != nil {
-				return err
-			}
-			inForce := int64(settings.PublicSuffixRefreshInterval / time.Second)
-			field := settingfields.DurationField(fieldPublicSuffixInterval, built.PublicSuffix.IntervalField.ID,
-				msgFieldPublicSuffixInterval, inForce, map[string]string{
-					fieldPublicSuffixInterval: figure, settingfields.UnitFieldName(fieldPublicSuffixInterval): unit})
-			built.PublicSuffix.IntervalField = field
-			if settingfields.DurationDiffers(figure, unit, inForce) {
-				edited[settingsCardPublicSuffix] = true
-			}
-		}
-	}
 	if except != settingsCardAppearance {
 		if typed, sent := posted("theme"); sent {
 			if chosen, err := web.ParseTheme(typed); err == nil {
@@ -473,7 +382,7 @@ func (s *surface) applySettingsDraft(request *http.Request, built *view, except 
 	return nil
 }
 
-// fillSettings puts the current configuration and the three states into a view.
+// fillSettings puts the current configuration and the two firewall states into a view.
 //
 // IT READS NO SECRET INTO THE VIEW. What it reads is whether each one is there and
 // whether it can be opened, which are states, and it reports them as catalogue keys.
@@ -504,29 +413,6 @@ func (s *surface) fillSettings(request *http.Request, built *view,
 	built.CredentialState = credentialStateKey(state)
 	built.VerificationState = verification
 
-	licenceState, err := s.licenceKeyState(ctx)
-	if err != nil {
-		return err
-	}
-	built.LicenceKeyState = licenceState
-
-	accountID, _, err := s.store.Setting(ctx, config.KeyMaxMindAccountID)
-	if err != nil {
-		return err
-	}
-	built.MaxMindAccountID = accountID
-	if built.GeoIPState, err = s.geoIPState(ctx); err != nil {
-		return err
-	}
-	if s.geoip != nil {
-		if build, ready := s.geoip.Ready(); ready {
-			built.GeoIPBuild = settingfields.Instant(build)
-		}
-	}
-	if err := s.fillPublicSuffix(ctx, built); err != nil {
-		return err
-	}
-
 	current := s.ReadTheme(ctx)
 	for _, candidate := range web.ThemeChoices() {
 		built.Themes = append(built.Themes, themeOption{
@@ -555,32 +441,6 @@ func credentialStateKey(state config.CredentialState) messageKey {
 	default:
 		return msgCredentialAbsent
 	}
-}
-
-// licenceKeyState says whether the MaxMind licence key is there and openable.
-//
-// IT MAKES NO CALL TO MAXMIND. Nothing in this package does: whether MaxMind accepts
-// the key is what a download finds out, and geoIPState reports what it found.
-func (s *surface) licenceKeyState(ctx context.Context) (messageKey, error) {
-	sealed, stored, err := s.store.Credential(ctx, accounts.CredentialMaxMindLicenceKey)
-	if err != nil {
-		return "", err
-	}
-	if !stored {
-		return msgLicenceKeyAbsent, nil
-	}
-	if s.box == nil {
-		return msgLicenceKeyUndecryptable, nil
-	}
-	if _, err := s.box.Unseal(secret.Ciphertext{
-		Algorithm: sealed.Algorithm,
-		KeyID:     sealed.KeyID,
-		Nonce:     sealed.Nonce,
-		Bytes:     sealed.Ciphertext,
-	}); err != nil {
-		return msgLicenceKeyUndecryptable, nil
-	}
-	return msgLicenceKeyStored, nil
 }
 
 // unsealer hands config the box, or nil when there is none.
@@ -662,39 +522,4 @@ func validateFirewallURL(value string) error {
 		return errors.New("web: the firewall URL carries credentials in it")
 	}
 	return nil
-}
-
-// geoIPState says where the MaxMind databases stand, from the availability row the
-// refresh writes. It reads the row and contacts nothing.
-//
-// A probe it does not know reads as the failure state rather than as success.
-// "not_yet_probed" is what the schema writes on a fresh database, before any
-// refresh ran.
-func (s *surface) geoIPState(ctx context.Context) (messageKey, error) {
-	providerID, err := s.store.ProviderID(ctx, ipgeolocation.Kind, ipgeolocation.BuiltinKey)
-	if err != nil {
-		return "", err
-	}
-	_, probe, _, err := s.store.Availability(ctx, providerID)
-	if err != nil {
-		return "", err
-	}
-	switch probe {
-	case ipgeolocation.ProbeCurrent:
-		return msgGeoIPCurrent, nil
-	case ipgeolocation.ProbeNoLicenceKey:
-		return msgGeoIPNoLicenceKey, nil
-	case ipgeolocation.ProbeLicenceKeyUndecryptable:
-		return msgGeoIPKeyUnreadable, nil
-	case ipgeolocation.ProbeNoAccountID:
-		return msgGeoIPNoAccountID, nil
-	case ipgeolocation.ProbeRefused:
-		return msgGeoIPRefused, nil
-	case ipgeolocation.ProbeLimited:
-		return msgGeoIPLimited, nil
-	case "not_yet_probed":
-		return msgGeoIPNotDownloaded, nil
-	default:
-		return msgGeoIPFailed, nil
-	}
 }

@@ -1,7 +1,6 @@
 package identity
 
 import (
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/store/flows"
 )
 
@@ -55,15 +54,6 @@ const AddressIdleWindow = flows.AddressIdleWindow
 func AddressIdentityKey(interfaceID *int64, address string, now int64) string {
 	return flows.AddressIdentityKey(interfaceID, address, now)
 }
-
-// normaliseMAC lower-cases a hardware address and reports whether the result is the
-// seventeen-character form the schema constrains. The rule is the dhcplease kind's
-// (dhcplease.NormaliseMAC), because the lease decoders apply it; the neighbour tables apply it
-// here.
-func normaliseMAC(raw string) (string, bool) { return dhcplease.NormaliseMAC(raw) }
-
-// macPointer returns a normalised MAC as a nullable column value.
-func macPointer(raw string) *string { return dhcplease.MACPointer(raw) }
 
 // DayStart truncates an instant to the start of its UTC day.
 //

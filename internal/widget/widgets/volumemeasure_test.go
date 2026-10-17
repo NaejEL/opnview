@@ -42,10 +42,10 @@ func newMeasureWorld(t *testing.T) *fixture {
 	at := f.now - 7200
 	f.exec(t, `INSERT INTO interface (id, identifier, device, description, user_label, link_type, link_kind,
 		first_seen_at, last_seen_at) VALUES
-		(1, 'example_if_a', 'exdev_a', 'Example A', NULL, 'example-link', 'vlan', ?, ?),
-		(2, 'example_if_b', 'exdev_b', 'Example B', NULL, 'example-link', 'vlan', ?, ?)`, at, at, at, at)
+		(1, 'example_if_a', 'exdev_a', 'Example A', NULL, 'example-link', 'vlan', $1, $2),
+		(2, 'example_if_b', 'exdev_b', 'Example B', NULL, 'example-link', 'vlan', $3, $4)`, at, at, at, at)
 	f.exec(t, `INSERT INTO client (id, identity_kind, identity_key, interface_id, mac, last_address,
-		first_seen_at, last_seen_at) VALUES (10, 'mac', ?, 1, ?, '192.0.2.10', ?, ?)`,
+		first_seen_at, last_seen_at) VALUES (10, 'mac', $1, 1, $2, '192.0.2.10', $3, $4)`,
 		measureClientMAC, measureClientMAC, at, at)
 	for _, flow := range []struct {
 		id          int64
@@ -55,7 +55,7 @@ func newMeasureWorld(t *testing.T) *fixture {
 		f.exec(t, `INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device,
 			interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, protocol,
 			ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope) VALUES
-			(?, ?, ?, ?, 'exdev_a', 'resolved', 1, 10, '192.0.2.10', ?, 'tcp', 4, 'pass', 'in', ?, 'pending',
+			($1, $2, $3, $4, 'exdev_a', 'resolved', 1, 10, '192.0.2.10', $5, 'tcp', 4, 'pass', 'in', $6, 'pending',
 			 'north_south')`, flow.id, "measure-"+flow.destination, f.now-700+flow.id*100, f.now-700+flow.id*100,
 			flow.destination, flow.bytes)
 	}
@@ -70,13 +70,13 @@ func newMeasureWorld(t *testing.T) *fixture {
 func (f *fixture) configureNetflow(t *testing.T, interfaces ...string) {
 	t.Helper()
 	f.exec(t, `INSERT INTO provider (id, kind, provider_key, display_name, is_active, registered_at)
-		VALUES (900, 'flow_record', 'example_exporter', 'Example exporter', 1, 0)`)
+		VALUES (900, 'flow_record', 'example_exporter', 'Example exporter', true, 0)`)
 	f.exec(t, `INSERT INTO capture_configuration (id, provider_id, first_read_at, last_read_at, fingerprint,
 		outcome, detail, enabled, export_version, active_timeout_seconds, inactive_timeout_seconds)
-		VALUES (1, 900, ?, ?, 'example', NULL, NULL, 1, '9', 60, 15)`, f.now-7200, f.now)
+		VALUES (1, 900, $1, $2, 'example', NULL, NULL, true, '9', 60, 15)`, f.now-7200, f.now)
 	for _, identifier := range interfaces {
 		f.exec(t, `INSERT INTO capture_interface (capture_configuration_id, identifier, ingress, egress, exported)
-			VALUES (1, ?, 1, 1, 'yes')`, identifier)
+			VALUES (1, $1, true, true, 'yes')`, identifier)
 	}
 }
 
@@ -97,7 +97,7 @@ func (f *fixture) measuredCopy(t *testing.T, flowID int64, direction, state stri
 	}
 	f.exec(t, `INSERT INTO connection_measured_volume (connection_flow_id, direction, connection_start_at, state,
 		bytes, packets, records, counted_copy, final, due_at, computed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, NULL, $9)`,
 		flowID, direction, f.now-700+flowID*100, state, bytes, packets, records, counted, f.now)
 }
 
@@ -634,11 +634,11 @@ func TestTheWindowStateNamesWhyNetflowCannotAnswer(t *testing.T) {
 		}, request.StateCaptureConfigurationUnknown},
 		"disabled": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
-			f.exec(t, `UPDATE capture_configuration SET enabled = 0`)
+			f.exec(t, `UPDATE capture_configuration SET enabled = false`)
 		}, request.StateNetflowNotConfigured},
 		"read_inside_the_window": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
-			f.exec(t, `UPDATE capture_configuration SET first_read_at = ?`, f.now-1800)
+			f.exec(t, `UPDATE capture_configuration SET first_read_at = $1`, f.now-1800)
 		}, request.StateNetflowNotCoveringWindow},
 	} {
 		f := newMeasureWorld(t)

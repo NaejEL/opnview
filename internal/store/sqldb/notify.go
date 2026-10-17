@@ -2,7 +2,6 @@ package sqldb
 
 import (
 	"context"
-	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,7 +47,7 @@ func Notify(ctx context.Context, q Querier, channel string, payload any) error {
 	if err != nil {
 		return err
 	}
-	if _, err := q.ExecContext(ctx, "SELECT pg_notify(?, ?)", channel, string(encoded)); err != nil {
+	if _, err := q.ExecContext(ctx, "SELECT pg_notify($1, $2)", channel, string(encoded)); err != nil {
 		return fmt.Errorf("store: notifying %s: %w", channel, err)
 	}
 	return nil
@@ -81,15 +80,7 @@ func (s *Handle) listenOnce(ctx context.Context, channels []string, handle func(
 	}
 	defer func() { _ = connection.Close() }()
 	return connection.Raw(func(raw any) error {
-		conn, ok := raw.(driver.Conn)
-		if !ok {
-			return errors.New("store: the connection is not a driver connection")
-		}
-		rewriting, ok := conn.(*rewritingConn)
-		if !ok {
-			return errors.New("store: the connection is not opnview's")
-		}
-		inner, ok := rewriting.inner.(*stdlib.Conn)
+		inner, ok := raw.(*stdlib.Conn)
 		if !ok {
 			return errors.New("store: the connection is not a pgx connection")
 		}

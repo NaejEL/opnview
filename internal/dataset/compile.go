@@ -1,8 +1,8 @@
 package dataset
 
 import (
-	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -68,8 +68,8 @@ func (c *compiler) column(name string) string { return "d." + quote(name) }
 
 // bind adds an argument and returns its parameter.
 func (c *compiler) bind(name string, value any) string {
-	c.args = append(c.args, sql.Named(name, value))
-	return ":" + name
+	c.args = append(c.args, value)
+	return "$" + strconv.Itoa(len(c.args))
 }
 
 // aggregate is one measure's expression over the rows of a group.
@@ -104,7 +104,7 @@ func (c *compiler) aggregate(measure Measure) string {
 func (c *compiler) where(window Window) string {
 	var conditions []string
 	if timeColumn, timed := c.declaration.TimeColumn(); timed {
-		conditions = append(conditions, c.column(timeColumn.Name)+" >= :from", c.column(timeColumn.Name)+" < :to")
+		conditions = append(conditions, c.column(timeColumn.Name)+" >= $1", c.column(timeColumn.Name)+" < $2")
 	}
 	for index, filter := range c.query.Filters {
 		column := c.column(filter.Column)
@@ -171,7 +171,7 @@ func (c *compiler) ranking(value, direction string) string {
 func (c *compiler) compile(window Window) Statement {
 	relation := "(" + c.declaration.relation + ") AS d"
 	if _, timed := c.declaration.TimeColumn(); timed {
-		c.args = append(c.args, sql.Named("from", window.From), sql.Named("to", window.To))
+		c.args = append(c.args, window.From, window.To)
 	}
 	where := c.where(window)
 	measures := make([]string, 0, len(c.query.Y))

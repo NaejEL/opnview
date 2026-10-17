@@ -255,7 +255,7 @@ func (b *Broker) Catalogue(ctx context.Context) (Catalogue, error) {
 func (b *Broker) catalogueParameters(ctx context.Context, endpointID int64, path string) ([]CatalogueParameter, error) {
 	parameters := []CatalogueParameter{}
 	rows, err := b.mirror.Query(ctx, `SELECT name, role, coalesce(corrected_by, ''), honoured
-		FROM opnsense.mirror_parameter WHERE endpoint_id = ? ORDER BY name`, endpointID)
+		FROM opnsense.mirror_parameter WHERE endpoint_id = $1 ORDER BY name`, endpointID)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +290,7 @@ func (b *Broker) catalogueData(ctx context.Context, endpointID int64) ([]Catalog
 	data := []CatalogueDatum{}
 	rows, err := b.mirror.Query(ctx, `SELECT id, CAST(identity AS text), coalesce(nature, ''), coalesce(row_set, ''),
 		CAST(coalesce(key, '[]') AS text), CAST(coalesce(cursor, '[]') AS text), coalesce(cursor_type, ''), generation,
-		changes, fetched_at, read_whole FROM opnsense.mirror_datum WHERE endpoint_id = ? AND firewall = ? ORDER BY id`,
+		changes, fetched_at, read_whole FROM opnsense.mirror_datum WHERE endpoint_id = $1 AND firewall = $2 ORDER BY id`,
 		endpointID, b.firewallIdentity())
 	if err != nil {
 		return nil, err
@@ -341,7 +341,7 @@ func (b *Broker) catalogueTables(ctx context.Context, endpointID int64) ([]Catal
 	tables := []CatalogueTable{}
 	rows, err := b.mirror.Query(ctx, `SELECT t.name, t.row_set, c.path, c.column_name, c.type, c.carries_domain
 		FROM opnsense.mirror_table AS t LEFT JOIN opnsense.mirror_column AS c ON c.table_name = t.name
-		WHERE t.endpoint_id = ? ORDER BY t.name, c.path`, endpointID)
+		WHERE t.endpoint_id = $1 ORDER BY t.name, c.path`, endpointID)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +376,7 @@ func (b *Broker) catalogueReaders(ctx context.Context, datumID int64) ([]Catalog
 	rows, err := b.mirror.Query(ctx, `SELECT reader, reader_version, max(max_age_seconds),
 		coalesce(string_agg(path, chr(30) ORDER BY path) FILTER (WHERE NOT whole), ''),
 		coalesce(string_agg(path, chr(30) ORDER BY path) FILTER (WHERE whole), '')
-		FROM opnsense.mirror_read WHERE datum_id = ? GROUP BY reader, reader_version ORDER BY reader, reader_version`,
+		FROM opnsense.mirror_read WHERE datum_id = $1 GROUP BY reader, reader_version ORDER BY reader, reader_version`,
 		datumID)
 	if err != nil {
 		return nil, err
@@ -411,7 +411,7 @@ func (b *Broker) catalogueReaders(ctx context.Context, datumID int64) ([]Catalog
 func (b *Broker) catalogueVersions(ctx context.Context, endpointID int64) ([]SchemaVersion, error) {
 	versions := []SchemaVersion{}
 	rows, err := b.mirror.Query(ctx, `SELECT version, changed_at, cause, coalesce(firewall_version, '')
-		FROM opnsense.mirror_schema_version WHERE endpoint_id = ? ORDER BY version`, endpointID)
+		FROM opnsense.mirror_schema_version WHERE endpoint_id = $1 ORDER BY version`, endpointID)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +429,7 @@ func (b *Broker) catalogueVersions(ctx context.Context, endpointID int64) ([]Sch
 func (b *Broker) catalogueCorrections(ctx context.Context, endpointID int64) ([]AppliedCorrection, error) {
 	corrections := []AppliedCorrection{}
 	rows, err := b.mirror.Query(ctx, `SELECT reader, CAST(corrections AS text), applied FROM opnsense.mirror_correction
-		WHERE endpoint_id = ? ORDER BY reader`, endpointID)
+		WHERE endpoint_id = $1 ORDER BY reader`, endpointID)
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +468,7 @@ func (b *Broker) recordCorrections(ctx context.Context) {
 	b.mutex.Unlock()
 	for _, entry := range pending {
 		_, _ = b.mirror.Exec(ctx, `INSERT INTO opnsense.mirror_correction (endpoint_id, reader, corrections, applied,
-			recorded_at) SELECT id, ?, CAST(? AS jsonb), CAST(? AS boolean), ? FROM opnsense.mirror_endpoint WHERE path = ?
+			recorded_at) SELECT id, $1, CAST($2 AS jsonb), CAST($3 AS boolean), $4 FROM opnsense.mirror_endpoint WHERE path = $5
 			ON CONFLICT (endpoint_id, reader) DO UPDATE SET corrections = excluded.corrections, applied = excluded.applied`,
 			entry.reader, string(entry.corrections), fmt.Sprint(entry.applied), b.now(), entry.path)
 	}

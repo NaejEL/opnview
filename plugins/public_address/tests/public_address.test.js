@@ -13,7 +13,7 @@ function seed(t) {
   t.clock(AT);
   var day = 86400;
   t.sql("INSERT INTO interface (id, identifier, device, description, link_type, link_kind, is_upstream, " +
-    "first_seen_at, last_seen_at) VALUES (1, 'wan', 'igc0', 'Uplink', 'ethernet', 'physical', 1, :at, :at)",
+    "first_seen_at, last_seen_at) VALUES (1, 'wan', 'igc0', 'Uplink', 'ethernet', 'physical', true, :at, :at)",
     { at: AT - 10 * day });
   var held = function (id, field, address, prefix, family, first, last) {
     t.sql("INSERT INTO interface_address (id, interface_id, source_field, address, prefix_length, " +

@@ -8,20 +8,24 @@ import (
 
 // StripCSSComments removes /* … */ from a stylesheet, so what is scanned is the rules
 // rather than the prose explaining them.
-func StripCSSComments(source string) string {
+func StripCSSComments(source string) string { return StripDelimited(source, "/*", "*/") }
+
+// StripDelimited removes everything from each opening to the next closing, both included; an
+// opening with no closing removes the rest.
+func StripDelimited(source, opening, closing string) string {
 	var builder strings.Builder
 	for {
-		start := strings.Index(source, "/*")
+		start := strings.Index(source, opening)
 		if start < 0 {
 			builder.WriteString(source)
 			return builder.String()
 		}
 		builder.WriteString(source[:start])
-		end := strings.Index(source[start:], "*/")
+		end := strings.Index(source[start:], closing)
 		if end < 0 {
 			return builder.String()
 		}
-		source = source[start+end+2:]
+		source = source[start+end+len(closing):]
 	}
 }
 

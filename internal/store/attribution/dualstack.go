@@ -2,7 +2,6 @@ package attribution
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/netip"
@@ -52,7 +51,7 @@ func (s *AttributionStore) localDataCandidates(ctx context.Context, hostname str
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.SQL.QueryContext(ctx, text, sql.Named("label", HostnameLabel(hostname)), sql.Named("at", at))
+	rows, err := sqldb.Query(ctx, s.SQL, text, map[string]any{"label": HostnameLabel(hostname), "at": at})
 	if err != nil {
 		return nil, fmt.Errorf("store: %s: %w", name, err)
 	}

@@ -49,7 +49,7 @@ func TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot(t *testing.T) {
 		t.Fatalf("the next refresh: %v", err)
 	}
 	if bytes := collecttest.ScalarCount(t, harness.Store, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h
-		WHERE period_start_at = ?`, closedHour); bytes != 60 {
+		WHERE period_start_at = $1`, closedHour); bytes != 60 {
 		t.Errorf("the closed hour holds %d bytes after the next refresh, not the 60 of the flow "+
 			"committed during the concurrent refresh", bytes)
 	}

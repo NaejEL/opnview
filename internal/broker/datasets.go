@@ -99,7 +99,7 @@ func (b *Broker) Datasets(ctx context.Context) []dataset.Declaration {
 // tableDataset is one mirror table's dataset.
 func (b *Broker) tableDataset(ctx context.Context, table, nature, cursorType string) (dataset.Declaration, error) {
 	rows, err := b.mirror.Query(ctx, `SELECT path, column_name, type, carries_domain FROM opnsense.mirror_column
-		WHERE table_name = ? ORDER BY path`, table)
+		WHERE table_name = $1 ORDER BY path`, table)
 	if err != nil {
 		return dataset.Declaration{}, err
 	}

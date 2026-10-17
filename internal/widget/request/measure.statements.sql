@@ -12,7 +12,7 @@
 
 -- The active providers of the flow_record kind: none means NetFlow is not configured.
 -- statement: widget_flow_record_providers
-SELECT id FROM provider WHERE kind = 'flow_record' AND is_active = 1 ORDER BY id;
+SELECT id FROM provider WHERE kind = 'flow_record' AND is_active ORDER BY id;
 
 
 -- A provider's capture configurations, oldest first, with how many interfaces each captures on in
@@ -20,7 +20,7 @@ SELECT id FROM provider WHERE kind = 'flow_record' AND is_active = 1 ORDER BY id
 -- NetFlow join with every interface captured".
 -- statement: widget_capture_configurations
 SELECT c.id, c.first_read_at, c.last_read_at, c.fingerprint IS NOT NULL AS readable,
-       coalesce(c.enabled, 0) AS enabled
+       coalesce(c.enabled, false) AS enabled
 FROM capture_configuration AS c
 WHERE c.provider_id = :provider_id
 ORDER BY c.first_read_at;

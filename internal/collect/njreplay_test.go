@@ -32,6 +32,8 @@ import (
 //	OPNVIEW_NJ_REPLAY_MAPPING  the index map and capture: {"loopback_index": n, "interfaces": [{identifier,
 //	                           device, index, network, ether, vlan_parent, egress_only, gateway}]}
 //	OPNVIEW_NJ_REPLAY_REPORT   where the outcome table is written
+//	OPNVIEW_NJ_REPLAY_OUTCOMES where the per-record outcome file is written, when set: PA10's recording
+//	                           of every stored decision and figure, as njdump_test.go writes it
 //
 // go test -tags njreplay -run TestReplayACapture -timeout 590s ./internal/collect/
 func TestReplayACapture(t *testing.T) {
@@ -239,6 +241,9 @@ func TestReplayACapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Log("\n" + report)
+	if outcomes := os.Getenv("OPNVIEW_NJ_REPLAY_OUTCOMES"); outcomes != "" {
+		dumpJoin(t, h, outcomes, "", nil)
+	}
 }
 
 type replayFrame struct {

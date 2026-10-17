@@ -171,11 +171,11 @@ func TestALateLookupAttributesAFlowWithNoFurtherFlowPass(t *testing.T) {
 	source, destination := "198.51.100.10", "203.0.113.20"
 	var flowID, observedAt int64
 	if err := harness.Store.DB().QueryRow(`SELECT id, observed_at FROM flow
-		WHERE src_address = ? AND dst_address = ?`, source, destination).Scan(&flowID, &observedAt); err != nil {
+		WHERE src_address = $1 AND dst_address = $2`, source, destination).Scan(&flowID, &observedAt); err != nil {
 		t.Fatalf("reading the flow: %v", err)
 	}
 	attributed := func() int {
-		return collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM domain_attribution WHERE flow_id = ?", flowID)
+		return collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM domain_attribution WHERE flow_id = $1", flowID)
 	}
 	if attributed() != 0 {
 		t.Fatal("the flow is attributed before any lookup was stored")
@@ -245,7 +245,7 @@ func TestAnUnresolvedLookupStoredBeforeARestartIsResolvedByTheFirstLeasePassAfte
 		t.Fatalf("collecting: %v", err)
 	}
 	if unknown := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM dns_resolution
-		WHERE client_hostname = ? AND client_resolution = 'unknown_hostname'`, logged); unknown != 1 {
+		WHERE client_hostname = $1 AND client_resolution = 'unknown_hostname'`, logged); unknown != 1 {
 		t.Fatalf("the lookup was not stored as an unknown host name (%d)", unknown)
 	}
 
@@ -270,7 +270,7 @@ func TestAnUnresolvedLookupStoredBeforeARestartIsResolvedByTheFirstLeasePassAfte
 		t.Fatalf("deriving the lease pass: %v", err)
 	}
 	if resolved := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM dns_resolution
-		WHERE client_hostname = ? AND client_resolution = 'lease_hostname'
+		WHERE client_hostname = $1 AND client_resolution = 'lease_hostname'
 		  AND client_address = '198.51.100.30'`, logged); resolved != 1 {
 		t.Error("the lookup stored before the restart was not resolved by the first lease pass after it")
 	}
@@ -315,7 +315,7 @@ func TestTheFilterLogStoresTheTwoPairingFieldsAndPairsTheTwoLegs(t *testing.T) {
 	}
 	if paired := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM flow AS f JOIN flow AS p
 		ON p.id = f.paired_flow_id AND p.paired_flow_id = f.id
-		WHERE f.pair_outcome = 'second_leg' AND f.src_is_this_firewall = 1 AND p.pair_outcome = 'first_leg'`); paired != 1 {
+		WHERE f.pair_outcome = 'second_leg' AND f.src_is_this_firewall AND p.pair_outcome = 'first_leg'`); paired != 1 {
 		t.Error("the two legs of the NATed connection were not paired by the collector's derivation")
 	}
 }
@@ -373,12 +373,12 @@ func TestAReacquiredAddressIsANewHoldingWhateverTheOrderInterfacesAreListed(t *t
 				}
 			}
 			if holdings := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM interface_address
-				WHERE address = ? AND source_field = 'addr4'`, held); holdings != 2 {
+				WHERE address = $1 AND source_field = 'addr4'`, held); holdings != 2 {
 				t.Errorf("the address released and re-acquired is %d rows, not two holdings", holdings)
 			}
 			gap := collecttest.ReferenceEpoch() + int64((12*time.Minute + 30*time.Second).Seconds())
 			if spanned := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM this_firewall_address
-				WHERE address = ? AND first_seen_at - 300 <= ? AND (is_current = 1 OR last_seen_at + 300 >= ?)`,
+				WHERE address = $1 AND first_seen_at - 300 <= $2 AND (is_current = 1 OR last_seen_at + 300 >= $3)`,
 				held, gap, gap); spanned != 0 {
 				t.Error("a holding of the address spans the gap between its two holdings")
 			}

@@ -58,14 +58,14 @@ func (s *ReadStore) Interfaces(ctx context.Context) ([]InterfaceRow, error) {
 	for rows.Next() {
 		var (
 			row                 InterfaceRow
-			upstream, linkLocal int64
+			upstream, linkLocal bool
 		)
 		if err := rows.Scan(&row.ID, &row.Identifier, &row.Device, &row.Description,
 			&upstream, &linkLocal); err != nil {
 			return nil, fmt.Errorf("store: listing the interfaces: %w", err)
 		}
-		row.IsUpstream = upstream == 1
-		row.LinkLocalEvidence = linkLocal == 1
+		row.IsUpstream = upstream
+		row.LinkLocalEvidence = linkLocal
 		interfaces = append(interfaces, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -135,7 +135,7 @@ func (s *ReadStore) SourceAvailability(ctx context.Context) ([]SourceRow, error)
 			state   string
 			outcome string
 			detail  sql.NullString
-			active  int64
+			active  bool
 		)
 		if err := rows.Scan(&row.Kind, &row.ProviderKey, &row.DisplayName, &row.HasAvailability,
 			&state, &outcome, &row.Probe, &detail, &row.CheckedAt, &active); err != nil {
@@ -144,7 +144,7 @@ func (s *ReadStore) SourceAvailability(ctx context.Context) ([]SourceRow, error)
 		row.State = vocab.AvailabilityState(state)
 		row.Outcome = vocab.AvailabilityOutcome(outcome)
 		row.Detail, row.HasDetail = detail.String, detail.Valid
-		row.IsActive = active == 1
+		row.IsActive = active
 		sources = append(sources, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -185,7 +185,7 @@ const recentGapsStatement = `SELECT p.kind, p.provider_key, collection_gap.reaso
         collection_gap.detected_at, collection_gap.detail
  FROM collection_gap
  JOIN provider AS p ON p.id = collection_gap.provider_id
- WHERE collection_gap.detected_at >= ?
+ WHERE collection_gap.detected_at >= $1
  ORDER BY collection_gap.detected_at DESC, collection_gap.id DESC`
 
 // RecentCollectionGaps returns every gap detected at or after since, newest first.

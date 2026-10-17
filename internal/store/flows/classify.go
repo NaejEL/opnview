@@ -241,7 +241,7 @@ func walkDistinct(ctx context.Context, q sqldb.Querier, name string, visit func(
 	after := ""
 	for {
 		var next sql.NullString
-		if err := q.QueryRowContext(ctx, text, sql.Named("address", after)).Scan(&next); err != nil {
+		if err := sqldb.QueryRow(ctx, q, text, map[string]any{"address": after}).Scan(&next); err != nil {
 			return fmt.Errorf("store: %s: %w", name, err)
 		}
 		if !next.Valid {
@@ -335,7 +335,7 @@ func classifyAddress(ctx context.Context, q sqldb.Querier, address string, prefi
 	if err != nil {
 		return result, err
 	}
-	err = q.QueryRowContext(ctx, text, sql.Named("address", address)).Scan(&recorded)
+	err = sqldb.QueryRow(ctx, q, text, map[string]any{"address": address}).Scan(&recorded)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return result, fmt.Errorf("store: classification_evidence: %w", err)
 	}
@@ -517,7 +517,7 @@ func placeAddress(ctx context.Context, q sqldb.Querier, address string, prefixes
 			return placement{}, err
 		}
 		var id, seenAt int64
-		err = q.QueryRowContext(ctx, text, sqldb.Named(text, parameters)...).Scan(&id, &seenAt)
+		err = sqldb.QueryRow(ctx, q, text, parameters).Scan(&id, &seenAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

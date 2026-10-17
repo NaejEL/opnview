@@ -13,7 +13,7 @@ SELECT f.rule_id AS rule_id,
        f.rid AS rid,
        r.description AS description,
        r.pf_label AS pf_label,
-       r.is_automatic AS is_automatic,
+       CAST(r.is_automatic AS INTEGER) AS is_automatic,
        f.interface_device AS interface_device,
        m.description AS map_description,
        m.interface_id AS map_interface_id,
@@ -27,8 +27,8 @@ LEFT JOIN interface_map AS m ON m.device = f.interface_device
 WHERE f.action IN ('block', 'reject')
   AND f.observed_at >= :from
   AND f.observed_at < :to
-  AND (:client_ids IS NULL OR f.src_client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
-  AND (:interface_ids IS NULL
+  AND (CAST(:client_ids AS jsonb) IS NULL OR f.src_client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.src_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 GROUP BY f.rule_id, f.rid, r.description, r.pf_label, r.is_automatic, f.interface_device,
          m.description, m.interface_id, f.src_interface_id, f.src_client_id;
@@ -44,7 +44,7 @@ FROM flow AS f
 WHERE f.action IN ('block', 'reject')
   AND f.observed_at >= :from
   AND f.observed_at < :to
-  AND (:client_ids IS NULL OR f.src_client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
-  AND (:interface_ids IS NULL
+  AND (CAST(:client_ids AS jsonb) IS NULL OR f.src_client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.src_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
 GROUP BY f.rule_id, f.rid, f.observed_at - f.observed_at % :width;

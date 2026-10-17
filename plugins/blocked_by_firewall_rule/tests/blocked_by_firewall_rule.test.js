@@ -21,8 +21,8 @@ function seed(t) {
     "first_seen_at, last_seen_at) VALUES (10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', " +
     "'192.0.2.10', :at, :at)", { at: at });
   t.sql("INSERT INTO rule (id, pf_label, description, action, is_automatic, discovered_at) VALUES " +
-    "(5, 'label-five', 'Block the guests', 'block', 0, :at), " +
-    "(6, 'label-six', 'Default deny', 'block', 1, :at)", { at: at });
+    "(5, 'label-five', 'Block the guests', 'block', false, :at), " +
+    "(6, 'label-six', 'Default deny', 'block', true, :at)", { at: at });
   var flow = function (id, action, rid, rule) {
     t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
       "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, protocol, " +

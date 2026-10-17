@@ -99,7 +99,7 @@ func TestALabelAndAPurposeAreSetAndClearedOverJSON(t *testing.T) {
 		{"/api/interfaces/999/label", `{"user_label": "a"}`, owners.RefusalUnknownInterface, http.StatusNotFound},
 		{"/api/interfaces/x/label", `{"user_label": "a"}`, owners.RefusalUnknownInterface, http.StatusNotFound},
 	} {
-		refusal := decode[labels.Refusal](t, harness.PostJSON(refused.path, refused.body, token, ""), refused.status)
+		refusal := decode[web.JSONCondition](t, harness.PostJSON(refused.path, refused.body, token, ""), refused.status)
 		if refusal.Condition != refused.condition {
 			t.Errorf("%s %s answered %s, want %s", refused.path, refused.body, refusal.Condition, refused.condition)
 		}
@@ -130,7 +130,7 @@ func TestEveryLabelWriteRefusesAMissingOrForeignProofAndChangesNothing(t *testin
 	before := rows(t, harness)
 	anonymous := webtest.FreshClient(t, harness)
 	for path, body := range writes {
-		if refusal := decode[labels.Refusal](t, anonymous.PostJSON(path, body, token, ""), http.StatusUnauthorized); refusal.Condition != "no_session" {
+		if refusal := decode[web.JSONCondition](t, anonymous.PostJSON(path, body, token, ""), http.StatusUnauthorized); refusal.Condition != "no_session" {
 			t.Errorf("%s without a session answered %s", path, refusal.Condition)
 		}
 		for name, attempt := range map[string]func() *http.Response{
@@ -138,7 +138,7 @@ func TestEveryLabelWriteRefusesAMissingOrForeignProofAndChangesNothing(t *testin
 			"a wrong one":    func() *http.Response { return harness.PostJSON(path, body, token+"0", "") },
 			"another origin": func() *http.Response { return harness.PostJSON(path, body, token, "https://elsewhere.example") },
 		} {
-			if refusal := decode[labels.Refusal](t, attempt(), http.StatusForbidden); refusal.Condition != web.ConditionCSRFRefused {
+			if refusal := decode[web.JSONCondition](t, attempt(), http.StatusForbidden); refusal.Condition != web.ConditionCSRFRefused {
 				t.Errorf("%s with %s answered %s", path, name, refusal.Condition)
 			}
 		}

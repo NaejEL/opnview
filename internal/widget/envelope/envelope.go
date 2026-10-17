@@ -299,12 +299,6 @@ type Count struct {
 	Value      int64  `json:"value"`
 }
 
-// CountPointer is a logged count, by address.
-func CountPointer(value int64) *Count {
-	count := LoggedCount(value)
-	return &count
-}
-
 // LoggedCount is a count of logged records.
 func LoggedCount(value int64) Count {
 	return Count{Measure: MeasureLogged, LowerBound: true, Value: value}

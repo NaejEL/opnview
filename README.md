@@ -389,4 +389,4 @@ The Public Suffix List is published by the Public Suffix List project at
 <https://publicsuffix.org/list/> under the [Mozilla Public License
 2.0](https://mozilla.org/MPL/2.0/). It is downloaded at run time and is never part
 of the binary; the repository holds only an excerpt for the tests, in
-`internal/publicsuffix/testdata`, with the licence header it carries.
+`internal/suffixlist/testdata`, with the licence header it carries.

@@ -645,7 +645,7 @@ below, so adding a backend is one file plus one row here.
 | `resolver_cache` | `dnsmasq` | none: no cache read through the API, reported as that named state | same section |
 | `resolver_local_data` | `unbound` | `/api/unbound/diagnostics/listlocaldata` | same section |
 | `resolver_local_data` | `dnsmasq` | none: no local-data read through the API, reported as that named state | same section |
-| `public_suffix` | `public_suffix_list` | <https://publicsuffix.org/list/public_suffix_list.dat>, conditional GET | the third of the three outbound calls, added by step 5A; MPL 2.0 (`internal/publicsuffix`) |
+| `public_suffix` | `public_suffix_list` | <https://publicsuffix.org/list/public_suffix_list.dat>, conditional GET | the third of the three outbound calls, added by step 5A; MPL 2.0 (`plugins/publicsuffix`, read with `internal/suffixlist`) |
 
 **Two kinds have no implementation, each for its own recorded reason, and
 neither absence is an oversight.**
@@ -1947,8 +1947,8 @@ move it. **Bounded**, never purged.
 
 **Source:** the active provider of the `geo_asn` kind — today the MaxMind
 GeoLite2 City and ASN databases, the second of the three outbound calls the
-project allows, acquired and read by `internal/maxmind` (step 4C; see
-`specs/SPEC-maxmind-geolite2.md`). The databases are downloaded with the
+project allows, acquired and read by the `maxmind` plugin (`plugins/maxmind`, through
+the plugin host's fetch facility; step 4C, `specs/SPEC-maxmind-geolite2.md`). The databases are downloaded with the
 account ID and the licence key, checked once a day and replaced only by a newer
 build that opens, and kept in `geoip/` in the data directory. A lookup reads
 them and contacts nothing. Every public address the stored flows carry, as
@@ -2731,10 +2731,8 @@ one above what the firewall serves is stored and reported as such on the
 collection surface rather than refused. The collection surface writes both rows
 of a pair together, and the running service reads them again without a restart.
 
-**`maxmind_account_id` is the MaxMind account ID**, which MaxMind requires beside
-the licence key to download a database. It is a setting row rather than an
-`encrypted_credential` because it grants nothing without the key, like the
-firewall URL beside the API secret; it is a positive whole number.
+**`maxmind_account_id` is the maxmind plugin's `account_id` setting**, stored under its
+plugin's namespace (docs/plugins.md, *Settings*); the licence key is its secret setting.
 `refresh_interval_geoip_seconds` (default 86 400) is how often the databases are
 checked for a newer build, and `poll_interval_geo_lookup_seconds` (default 300)
 how often stored addresses are looked up in them.

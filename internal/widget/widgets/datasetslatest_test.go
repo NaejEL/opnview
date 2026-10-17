@@ -74,7 +74,7 @@ func insertPfStates(t *testing.T, f *fixture, rows ...pfStateRow) {
 	for _, row := range rows {
 		f.exec(t, "INSERT INTO "+plugindecl.PluginTableSQLName("pf_states", "rate")+" (sampled_at, span_seconds, "+
 			"interface_device, direction, protocol, port, forward_bits_per_second, reverse_bits_per_second, "+
-			"bits_per_second, states) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", row.at, row.span, row.device,
+			"bits_per_second, states) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)", row.at, row.span, row.device,
 			row.direction, row.protocol, row.port, row.forward, row.reverse, row.total, row.states)
 	}
 }
@@ -223,7 +223,7 @@ func TestTrafficCompositionKeepsTheNamedAbsenceWithoutPfStatesRows(t *testing.T)
 
 	// Beyond the dataset's own retention (pf_states.rate keeps a week), nothing is the latest.
 	insertPfStates(t, f, pfStateRow{f.now - 8*86400, 60, "example0", "in", "udp", 53, 1, 1, 2, 1})
-	f.exec(t, "DELETE FROM "+plugindecl.PluginTableSQLName("pf_states", "rate")+" WHERE sampled_at = ?", f.now-1000)
+	f.exec(t, "DELETE FROM "+plugindecl.PluginTableSQLName("pf_states", "rate")+" WHERE sampled_at = $1", f.now-1000)
 	horizon := currentRatesOf(t, answerOf(t, service, "traffic_composition", map[string]any{"group_by": "protocol"}))
 	if source, _ := horizon["by_member_source"].(map[string]any); source["state"] != datasets.LatestNoRows {
 		t.Errorf("a row past the retention horizon was read: %v", horizon)
@@ -302,7 +302,7 @@ func TestAThirdPartyWidgetReadsAThirdPartyPluginsDatasetByName(t *testing.T) {
 	f, service := latestWorld(t, dataDir)
 	table := plugindecl.PluginTableSQLName("example_meter", "reading")
 	insert := func(at int64, meter, site string, watts float64) {
-		f.exec(t, "INSERT INTO "+table+" (read_at, meter, site, watts) VALUES (?, ?, ?, ?)", at, meter, site, watts)
+		f.exec(t, "INSERT INTO "+table+" (read_at, meter, site, watts) VALUES ($1, $2, $3, $4)", at, meter, site, watts)
 	}
 	insert(f.now-600, "a", "example.org", 10)
 	insert(f.now-300, "a", "example.org", 20)

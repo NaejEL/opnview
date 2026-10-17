@@ -50,19 +50,15 @@ type surface struct {
 }
 
 func (s *surface) routes() []web.Route {
-	route := func(method, pattern string, handler http.HandlerFunc) web.Route {
-		return web.Route{Method: method, Pattern: pattern, Access: web.AccessAuthenticated, JSON: true,
-			Handler: handler}
-	}
 	return []web.Route{
-		route(http.MethodGet, PathOwners, s.handleOwners),
-		route(http.MethodPost, PathOwners, s.handleCreate),
-		route(http.MethodPost, PathOwnerRenamePattern, s.handleRename),
-		route(http.MethodPost, PathOwnerDeletePattern, s.handleDelete),
-		route(http.MethodPost, PathOwnerRestore, s.handleRestore),
-		route(http.MethodPost, PathOwnerAssignPattern, s.handleAssign),
-		route(http.MethodGet, PathClients, s.handleClients),
-		route(http.MethodPost, PathClientsUnassign, s.handleUnassign),
+		web.JSONRoute(http.MethodGet, PathOwners, s.handleOwners),
+		web.JSONRoute(http.MethodPost, PathOwners, s.handleCreate),
+		web.JSONRoute(http.MethodPost, PathOwnerRenamePattern, s.handleRename),
+		web.JSONRoute(http.MethodPost, PathOwnerDeletePattern, s.handleDelete),
+		web.JSONRoute(http.MethodPost, PathOwnerRestore, s.handleRestore),
+		web.JSONRoute(http.MethodPost, PathOwnerAssignPattern, s.handleAssign),
+		web.JSONRoute(http.MethodGet, PathClients, s.handleClients),
+		web.JSONRoute(http.MethodPost, PathClientsUnassign, s.handleUnassign),
 	}
 }
 

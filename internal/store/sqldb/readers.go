@@ -99,7 +99,7 @@ func (s *Handle) grantReadRole(ctx context.Context, role, password string) error
 	}
 	defer func() { _ = tx.Rollback() }()
 	var exists bool
-	if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ?)", role).
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)", role).
 		Scan(&exists); err != nil {
 		return fmt.Errorf("store: looking up the read role: %w", err)
 	}

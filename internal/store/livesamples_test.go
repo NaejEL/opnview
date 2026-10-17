@@ -26,7 +26,7 @@ func liveSample(providerID int64, at int64, cadence *int64) vocab.MeasurementSam
 func fineCadences(t *testing.T, database *store.Store) map[int64]int64 {
 	t.Helper()
 	rows, err := database.DB().QueryContext(context.Background(),
-		`SELECT sampled_at, coalesce(live_cadence_seconds, -1) FROM measurement_sample WHERE subject_key = ?`,
+		`SELECT sampled_at, coalesce(live_cadence_seconds, -1) FROM measurement_sample WHERE subject_key = $1`,
 		vocab.InterfaceEndpointKey("exdev0", "192.0.2.10"))
 	if err != nil {
 		t.Fatalf("reading the samples: %v", err)

@@ -48,7 +48,7 @@ func (s *ReadStore) WidgetRows(ctx context.Context, name string, period vocab.Pe
 	if err != nil {
 		return err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sqldb.Named(text, parameters)...)
+	rows, err := sqldb.Query(ctx, s.Reader, text, parameters)
 	if err != nil {
 		return fmt.Errorf("store: %s: %w", name, err)
 	}
@@ -71,8 +71,9 @@ func (s *ReadStore) WidgetRows(ctx context.Context, name string, period vocab.Pe
 func (s *ReadStore) WidgetQuery(ctx context.Context, name string, period vocab.Period, parameters map[string]any) (
 	[]string, [][]any, error) {
 	var (
-		columns []string
-		result  [][]any
+		columns   []string
+		result    [][]any
+		converter cellConverter
 	)
 	err := s.WidgetRows(ctx, name, period, parameters, func(scanned RowScanner) error {
 		rows, isRows := scanned.(*sql.Rows)
@@ -85,6 +86,9 @@ func (s *ReadStore) WidgetQuery(ctx context.Context, name string, period vocab.P
 				return err
 			}
 			columns = names
+			if converter, err = newCellConverter(rows); err != nil {
+				return err
+			}
 		}
 		cells := make([]any, len(columns))
 		pointers := make([]any, len(columns))
@@ -94,11 +98,7 @@ func (s *ReadStore) WidgetQuery(ctx context.Context, name string, period vocab.P
 		if err := rows.Scan(pointers...); err != nil {
 			return err
 		}
-		for index, cell := range cells {
-			if raw, isBytes := cell.([]byte); isBytes {
-				cells[index] = string(raw)
-			}
-		}
+		converter.convert(cells)
 		result = append(result, cells)
 		return nil
 	})
@@ -121,8 +121,8 @@ func (s *ReadStore) WidgetRow(ctx context.Context, name string, parameters map[s
 }
 
 // ReadStatementCount reports how many distinct statement texts the read connections have run since
-// the store opened. A text is rewritten to PostgreSQL's numbering once and nothing is prepared on
-// the server (internal/store/sqldb/driver.go), so a second call of a read function adds nothing to
+// the store opened. A text is translated to PostgreSQL's numbering once and nothing is prepared on
+// the server (internal/store/sqldb, translate.go and driver.go), so a second call of a read function adds nothing to
 // it; a test observes that (AC31 of 5B, restated by P-AC13).
 func (s *ReadStore) ReadStatementCount() int {
 	if s.Reader == nil {
@@ -151,6 +151,7 @@ func (s *ReadStore) ReadStatementsOutsideTheFiles() ([]string, error) {
 			return nil, err
 		}
 		planned[text] = true
+		planned[translated(text)] = true
 		if sqldb.IsPeriodTemplate(name) {
 			for _, period := range vocab.Periods() {
 				expanded, err := sqldb.PeriodStatement(name, period)
@@ -158,6 +159,7 @@ func (s *ReadStore) ReadStatementsOutsideTheFiles() ([]string, error) {
 					return nil, err
 				}
 				planned[expanded] = true
+				planned[translated(expanded)] = true
 			}
 		}
 	}
@@ -177,3 +179,13 @@ type (
 	NullString  = sql.NullString
 	NullFloat64 = sql.NullFloat64
 )
+
+// translated is the text a :name statement runs as, which the read connections record; a text that
+// does not translate is returned as it is.
+func translated(text string) string {
+	translation, err := sqldb.Translate(text)
+	if err != nil {
+		return text
+	}
+	return translation.Text
+}

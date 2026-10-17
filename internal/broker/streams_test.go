@@ -39,17 +39,13 @@ func (w *world) stream(path string) (opnsense.Endpoint, chan string) {
 // replaceStream gives a stream path a fresh event channel, for its next connection.
 func (w *world) replaceStream(ep opnsense.Endpoint) chan string {
 	events := make(chan string, 16)
-	w.fake.mutex.Lock()
-	w.fake.streams[ep.Path] = events
-	w.fake.mutex.Unlock()
+	w.fake.Feed(ep.Path, events)
 	return events
 }
 
 // openConnections is how many connections the fake holds open to a stream path.
 func (w *world) openConnections(path string) int {
-	w.fake.mutex.Lock()
-	defer w.fake.mutex.Unlock()
-	return w.fake.open[path]
+	return w.fake.OpenFeeds(path)
 }
 
 // run runs the broker's loops for the test.
@@ -89,7 +85,7 @@ func TestOneSubscriptionIsSharedByEveryReader(t *testing.T) {
 			return len(got) == 3
 		})
 	}
-	if count := w.fake.count(ep.Path); count != 1 || w.openConnections(ep.Path) != 1 {
+	if count := w.fake.CountTo(ep.Path); count != 1 || w.openConnections(ep.Path) != 1 {
 		t.Errorf("three readers opened %d connections (%d open)", count, w.openConnections(ep.Path))
 	}
 	for _, reader := range readers {
@@ -169,21 +165,19 @@ func TestAStreamCutIsAGapNeverAZero(t *testing.T) {
 	}
 	w.detailRows(ep, 7)
 	// The fake closes the stream after 60 s and refuses the first reconnection.
-	w.fake.mutex.Lock()
-	w.fake.refuse[ep.Path] = 1
-	w.fake.mutex.Unlock()
+	w.fake.RefuseFeed(ep.Path, 1)
 	next := w.replaceStream(ep)
 	close(events)
 	waitFor(t, "the cut to be seen", func() bool { return !w.connected(ep) && w.openConnections(ep.Path) == 0 })
 	w.clock.advance(3 * time.Second)
 	w.broker.EventsAfter(requester, ep, opnsense.RequestOptions{}, 0)
-	waitFor(t, "the refused reconnection", func() bool { return w.fake.count(ep.Path) == 2 })
+	waitFor(t, "the refused reconnection", func() bool { return w.fake.CountTo(ep.Path) == 2 })
 	if w.connected(ep) {
 		t.Fatal("a refused reconnection is connected")
 	}
 	w.broker.EventsAfter(requester, ep, opnsense.RequestOptions{}, 0)
 	time.Sleep(50 * time.Millisecond)
-	if w.fake.count(ep.Path) != 2 {
+	if w.fake.CountTo(ep.Path) != 2 {
 		t.Error("the subscription reconnected inside its back-off")
 	}
 	w.clock.advance(5 * time.Minute)
@@ -200,7 +194,7 @@ func TestAStreamCutIsAGapNeverAZero(t *testing.T) {
 	}
 	table := streamTableOf(ep)
 	var inside, discarded int
-	_ = w.store.DB().QueryRow(`SELECT count(*) FILTER (WHERE "#received_at" > ? AND "#received_at" < ?),
+	_ = w.store.DB().QueryRow(`SELECT count(*) FILTER (WHERE "#received_at" > $1 AND "#received_at" < $2),
 		count(*) FILTER (WHERE v IN (999, 998)) FROM "opnsense".`+table, start+60, resumed).Scan(&inside, &discarded)
 	if inside != 0 || discarded != 0 {
 		t.Errorf("the silence holds %d rows and the discarded events %d", inside, discarded)
@@ -208,8 +202,8 @@ func TestAStreamCutIsAGapNeverAZero(t *testing.T) {
 	for _, suffix := range []string{"#minute", "#hour"} {
 		var zeros int
 		aggregate := `"opnsense"."` + table[1:len(table)-1] + suffix + `"`
-		_ = w.store.DB().QueryRow(`SELECT count(*) FROM `+aggregate+` WHERE "#count" = 0 OR ("#bucket" > ? AND "#bucket" + 60 <= ?
-			AND ? = '#minute')`, start+60, resumed-resumed%60, suffix).Scan(&zeros)
+		_ = w.store.DB().QueryRow(`SELECT count(*) FROM `+aggregate+` WHERE "#count" = 0 OR ("#bucket" > $1 AND "#bucket" + 60 <= $2
+			AND $3 = '#minute')`, start+60, resumed-resumed%60, suffix).Scan(&zeros)
 		if zeros != 0 {
 			t.Errorf("the %s aggregate holds %d rows for the silence", suffix, zeros)
 		}
@@ -252,7 +246,7 @@ func TestAStreamIsRecordedAggregatedAndPurgedOnItsOwnClock(t *testing.T) {
 		aggregate := `"opnsense"."` + table[1:len(table)-1] + period.suffix + `"`
 		var mismatches int
 		err := w.store.DB().QueryRow(`WITH independent AS (
-				SELECT "#received_at" - "#received_at" % CAST(? AS bigint) AS bucket, min(v) AS low, max(v) AS high,
+				SELECT "#received_at" - "#received_at" % CAST($1 AS bigint) AS bucket, min(v) AS low, max(v) AS high,
 					sum(v) AS total, count(*) AS events
 				FROM "opnsense".`+table+` GROUP BY 1)
 			SELECT count(*) FROM independent AS i FULL JOIN `+aggregate+` AS a ON a."#bucket" = i.bucket
@@ -286,7 +280,7 @@ func TestADeclaredStreamReplacesPollingWhileItRuns(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	polled := endpoint(t, http.MethodGet, "/api/example/polled/get", opnsense.NoBody)
-	w.fake.answer(jsonAnswer(rowsBody))
+	w.fake.AnswerWith(jsonAnswer(rowsBody))
 	ep, events := w.stream("/api/example/replacing/stream")
 	w.broker.Declare("example_streamer", false, ep, broker.EndpointDeclaration{Replaces: polled.Path})
 	streamer := broker.Requester{Name: "example_streamer", Version: "1"}
@@ -294,12 +288,12 @@ func TestADeclaredStreamReplacesPollingWhileItRuns(t *testing.T) {
 	waitFor(t, "the stream to connect", func() bool { return w.connected(ep) })
 
 	served, _ := w.call(streamer.Name, polled, opnsense.RequestOptions{}, time.Second)
-	if served.ServedFrom != broker.ServedFromStream || served.ReplacedBy != ep.Path || w.fake.count(polled.Path) != 0 {
+	if served.ServedFrom != broker.ServedFromStream || served.ReplacedBy != ep.Path || w.fake.CountTo(polled.Path) != 0 {
 		t.Errorf("while its stream runs the plugin was served %s and caused %d calls", served.ServedFrom,
-			w.fake.count(polled.Path))
+			w.fake.CountTo(polled.Path))
 	}
 	other, _ := w.call("example_other", polled, opnsense.RequestOptions{}, time.Second)
-	if other.ServedFrom != broker.ServedFromFirewall || w.fake.count(polled.Path) != 1 {
+	if other.ServedFrom != broker.ServedFromFirewall || w.fake.CountTo(polled.Path) != 1 {
 		t.Errorf("a plugin that declares nothing was served %s", other.ServedFrom)
 	}
 
@@ -307,7 +301,7 @@ func TestADeclaredStreamReplacesPollingWhileItRuns(t *testing.T) {
 	waitFor(t, "the stream to drop", func() bool { return !w.connected(ep) })
 	w.clock.advance(2 * time.Second)
 	resumed, _ := w.call(streamer.Name, polled, opnsense.RequestOptions{}, time.Second)
-	if resumed.ServedFrom != broker.ServedFromFirewall || resumed.ReplacedBy != "" || w.fake.count(polled.Path) != 2 {
+	if resumed.ServedFrom != broker.ServedFromFirewall || resumed.ReplacedBy != "" || w.fake.CountTo(polled.Path) != 2 {
 		t.Errorf("after the stream dropped the plugin was served %s (replaced by %q)", resumed.ServedFrom,
 			resumed.ReplacedBy)
 	}

@@ -76,7 +76,7 @@ func TestTheCoreWithholdsAThirdPartyScriptsDomainNamesUnderNoDomains(t *testing.
 	now := harness.Clock.Now().Unix()
 	if _, err := harness.Store.DB().ExecContext(ctx,
 		"INSERT INTO dns_resolution (id, lookup_key, client_address, domain, resolver, action, looked_up_at, ingested_at) "+
-			"VALUES (1, 'k1', ?, 'example.org', 'unbound', 'pass', ?, ?)", documentationAddress, now-60, now-60); err != nil {
+			"VALUES (1, 'k1', $1, 'example.org', 'unbound', 'pass', $2, $3)", documentationAddress, now-60, now-60); err != nil {
 		t.Fatal(err)
 	}
 

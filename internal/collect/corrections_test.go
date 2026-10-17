@@ -19,7 +19,7 @@ import (
 func interfaceIDOf(t *testing.T, database *store.Store, identifier string) int64 {
 	t.Helper()
 	var id int64
-	if err := database.DB().QueryRow("SELECT id FROM interface WHERE identifier = ?", identifier).Scan(&id); err != nil {
+	if err := database.DB().QueryRow("SELECT id FROM interface WHERE identifier = $1", identifier).Scan(&id); err != nil {
 		t.Fatalf("reading interface %s: %v", identifier, err)
 	}
 	return id
@@ -114,13 +114,13 @@ func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing
 		{vocab.SourceFieldIPv6, "fe80::1", 64},
 	} {
 		if rows := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM interface_address
-			WHERE interface_id = ? AND source_field = ? AND address = ? AND prefix_length = ?`,
+			WHERE interface_id = $1 AND source_field = $2 AND address = $3 AND prefix_length = $4`,
 			inside, want.field, want.address, want.bits); rows != 1 {
 			t.Errorf("%s %s/%d is stored %d times under its own field", want.field, want.address, want.bits, rows)
 		}
 	}
 	if rows := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM interface_address
-		WHERE interface_id = ? AND source_field IN ('ipv4', 'ipv6')`, inside); rows != 4 {
+		WHERE interface_id = $1 AND source_field IN ('ipv4', 'ipv6')`, inside); rows != 4 {
 		t.Errorf("%d secondary-field rows are stored, not the four entries that parse", rows)
 	}
 	networks, err := harness.Store.InterfaceNetworks(ctx)
@@ -160,10 +160,10 @@ func TestAnOperatorNetworkChangesClassificationAtTheNextDerivation(t *testing.T)
 	}
 	target := "203.0.113.20"
 	if placed := collecttest.ScalarCount(t, harness.Store,
-		"SELECT count(*) FROM flow WHERE dst_address = ? AND dst_interface_id IS NOT NULL", target); placed != 0 {
+		"SELECT count(*) FROM flow WHERE dst_address = $1 AND dst_interface_id IS NOT NULL", target); placed != 0 {
 		t.Fatalf("the destination %s is placed before any edit", target)
 	}
-	flowsToTarget := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM flow WHERE dst_address = ?", target)
+	flowsToTarget := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM flow WHERE dst_address = $1", target)
 	if flowsToTarget == 0 {
 		t.Fatalf("no flow names %s", target)
 	}
@@ -176,7 +176,7 @@ func TestAnOperatorNetworkChangesClassificationAtTheNextDerivation(t *testing.T)
 		t.Fatalf("deriving: %v", err)
 	}
 	if placed := collecttest.ScalarCount(t, harness.Store,
-		"SELECT count(*) FROM flow WHERE dst_address = ? AND dst_interface_id = ?", target, second); placed != flowsToTarget {
+		"SELECT count(*) FROM flow WHERE dst_address = $1 AND dst_interface_id = $2", target, second); placed != flowsToTarget {
 		t.Errorf("%d of the %d flows to %s are placed on the operator's network", placed, flowsToTarget, target)
 	}
 	mismatches := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM (

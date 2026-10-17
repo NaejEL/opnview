@@ -153,9 +153,9 @@ func (m *Mirror) keepUnchanged(ctx context.Context, datum *Datum, table *tableIn
 	// constant the planner can hash, and a thousand keys tested row by row cost a thousand times a
 	// thousand comparisons.
 	rows, err := m.db.QueryContext(ctx, `SELECT r."#id", r."#parent", r."#key", r."#digest", r."#held"
-		FROM unnest(CAST(? AS text[])) AS k (key)
+		FROM unnest(CAST($1 AS text[])) AS k (key)
 		JOIN `+qualified(table.name)+` AS r ON r."#key" = k.key
-		WHERE r."#datum" = ? AND r."#parent" = ANY(CAST(? AS bigint[]))`,
+		WHERE r."#datum" = $2 AND r."#parent" = ANY(CAST($3 AS bigint[]))`,
 		arrayLiteral(keys), datum.ID, int64ArrayLiteral(ids(parents)))
 	if err != nil {
 		return fmt.Errorf("mirror: reading the digests of %s: %w", table.name, err)
@@ -218,13 +218,13 @@ func (m *Mirror) releaseVanished(ctx context.Context, datum *Datum, d *decomposi
 				keys = append(keys, &key)
 			}
 		}
-		statement = `UPDATE ` + qualified(name) + ` AS r SET "#held" = false WHERE r."#datum" = ? AND r."#held"
-			AND r."#parent" = ? AND NOT EXISTS (SELECT 1 FROM unnest(CAST(? AS text[])) AS k (key) WHERE k.key = r."#key")
+		statement = `UPDATE ` + qualified(name) + ` AS r SET "#held" = false WHERE r."#datum" = $1 AND r."#held"
+			AND r."#parent" = $2 AND NOT EXISTS (SELECT 1 FROM unnest(CAST($3 AS text[])) AS k (key) WHERE k.key = r."#key")
 			RETURNING r."#id"`
 		arguments = []any{datum.ID, parent, arrayLiteral(keys)}
 	} else {
-		statement = `UPDATE ` + qualified(name) + ` SET "#held" = false WHERE "#datum" = ? AND "#held"
-			AND "#generation" < ? RETURNING "#id"`
+		statement = `UPDATE ` + qualified(name) + ` SET "#held" = false WHERE "#datum" = $1 AND "#held"
+			AND "#generation" < $2 RETURNING "#id"`
 		arguments = []any{datum.ID, generation}
 	}
 	gone, err := m.returnedIDs(ctx, statement, arguments...)
@@ -247,8 +247,8 @@ func (m *Mirror) releaseChildren(ctx context.Context, datum *Datum, table string
 		if err := m.bringUpToDate(ctx, child); err != nil {
 			return err
 		}
-		gone, err := m.returnedIDs(ctx, `UPDATE `+qualified(child)+` SET "#held" = false WHERE "#datum" = ?
-			AND "#held" AND "#parent" = ANY(CAST(? AS bigint[])) RETURNING "#id"`, datum.ID, int64ArrayLiteral(parents))
+		gone, err := m.returnedIDs(ctx, `UPDATE `+qualified(child)+` SET "#held" = false WHERE "#datum" = $1
+			AND "#held" AND "#parent" = ANY(CAST($2 AS bigint[])) RETURNING "#id"`, datum.ID, int64ArrayLiteral(parents))
 		if err != nil {
 			return fmt.Errorf("mirror: releasing the rows of %s: %w", child, err)
 		}

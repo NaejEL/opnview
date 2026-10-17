@@ -30,13 +30,13 @@ LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
-  AND (:interface_ids IS NULL
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.local_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
-  AND (:client_id IS NULL OR f.local_client_id = :client_id)
-  AND (:rule_id IS NULL OR f.rule_id = :rule_id)
-  AND (:country IS NULL OR g.country_code = :country)
-  AND (:asn IS NULL OR g.asn = :asn)
-  AND (:site IS NULL OR a.site_name = :site)
+  AND (CAST(:client_id AS BIGINT) IS NULL OR f.local_client_id = :client_id)
+  AND (CAST(:rule_id AS BIGINT) IS NULL OR f.rule_id = :rule_id)
+  AND (CAST(:country AS TEXT) IS NULL OR g.country_code = :country)
+  AND (CAST(:asn AS BIGINT) IS NULL OR g.asn = :asn)
+  AND (CAST(:site AS TEXT) IS NULL OR a.site_name = :site)
 GROUP BY 1, 2;
 
 
@@ -77,13 +77,13 @@ LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
-  AND (:interface_ids IS NULL
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.local_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
-  AND (:client_id IS NULL OR f.local_client_id = :client_id)
-  AND (:rule_id IS NULL OR f.rule_id = :rule_id)
-  AND (:country IS NULL OR g.country_code = :country)
-  AND (:asn IS NULL OR g.asn = :asn)
-  AND (:site IS NULL OR a.site_name = :site)
+  AND (CAST(:client_id AS BIGINT) IS NULL OR f.local_client_id = :client_id)
+  AND (CAST(:rule_id AS BIGINT) IS NULL OR f.rule_id = :rule_id)
+  AND (CAST(:country AS TEXT) IS NULL OR g.country_code = :country)
+  AND (CAST(:asn AS BIGINT) IS NULL OR g.asn = :asn)
+  AND (CAST(:site AS TEXT) IS NULL OR a.site_name = :site)
 GROUP BY 1, 2;
 
 

@@ -14,7 +14,7 @@ func TestTextOrdersAsBytesAndFoldsAsciiAlone(t *testing.T) {
 	database, _ := openTestStore(t)
 	names := []string{"beta", "Beta", "BETA", "école", "École", "zeta", "Zeta", "_under", "alpha-2",
 		"alpha10", "alpha2", "über", "Uber", "日本"}
-	rows, err := database.DB().Query("SELECT name FROM (SELECT unnest(CAST(? AS text[])) AS name) AS n ORDER BY name",
+	rows, err := database.DB().Query("SELECT name FROM (SELECT unnest(CAST($1 AS text[])) AS name) AS n ORDER BY name",
 		"{"+joinQuoted(names)+"}")
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestTextOrdersAsBytesAndFoldsAsciiAlone(t *testing.T) {
 		t.Errorf("the database orders %q, byte order is %q", ordered, expected)
 	}
 	var folded string
-	if err := database.DB().QueryRow("SELECT lower(?)", "ÉCOLE.Example.ÜBER").Scan(&folded); err != nil {
+	if err := database.DB().QueryRow("SELECT lower($1)", "ÉCOLE.Example.ÜBER").Scan(&folded); err != nil {
 		t.Fatal(err)
 	}
 	if folded != "École.example.Über" {

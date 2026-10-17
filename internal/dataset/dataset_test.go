@@ -1,10 +1,10 @@
 package dataset
 
 import (
-	"database/sql"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -39,9 +39,6 @@ func TestTheCoreDeclaresTheFiveCustomChartSources(t *testing.T) {
 		if _, timed := declaration.TimeColumn(); !timed {
 			t.Errorf("%s has no time column", source)
 		}
-	}
-	if keys := LabelKeys(); len(keys) != len(core) {
-		t.Errorf("%d label keys for %d datasets", len(keys), len(core))
 	}
 }
 
@@ -110,17 +107,19 @@ func TestACompiledStatementNamesOnlyDeclaredIdentifiersAndBindsEveryValue(t *tes
 	if strings.Contains(statement.Text, "DROP") || strings.Contains(statement.Text, "flow") {
 		t.Errorf("a value reached the text: %s", statement.Text)
 	}
-	values := map[string]any{}
-	for _, argument := range statement.Args {
-		named, ok := argument.(sql.NamedArg)
-		if !ok {
-			t.Fatalf("an argument is not named: %#v", argument)
-		}
-		values[named.Name] = named.Value
+	// Every value is bound, in the numbering of the text: the window first ($1, $2), then each value
+	// in the order the statement names it.
+	want := []any{int64(100), int64(200), "a'); DROP TABLE flow; --", "b", int64(7)}
+	if !reflect.DeepEqual(statement.Args, want) {
+		t.Errorf("the arguments are %#v, want %#v", statement.Args, want)
 	}
-	if values["filter_0_0"] != "a'); DROP TABLE flow; --" || values["filter_0_1"] != "b" ||
-		values["row_limit"] != int64(7) || values["from"] != int64(100) || values["to"] != int64(200) {
-		t.Errorf("the arguments are %v", values)
+	for _, parameter := range []string{"$1", "$2", "$3", "$4", "$5"} {
+		if !strings.Contains(statement.Text, parameter) {
+			t.Errorf("the text does not bind %s: %s", parameter, statement.Text)
+		}
+	}
+	if strings.Contains(statement.Text, "$6") {
+		t.Errorf("the text binds more parameters than it was handed arguments: %s", statement.Text)
 	}
 	for _, identifier := range []string{`d."meter"`, `d."value"`, `d."sampled_at"`, `"plugin_example"."readings"`} {
 		if !strings.Contains(statement.Text, identifier) {

@@ -208,11 +208,10 @@ func TestServingEveryServedTypeMakesNoOutboundRequest(t *testing.T) {
 		loaded, collector := pluginCollector(t, options.Client, options.Store, options.Box, outbound)
 		options.Plugins = loaded
 		options.GeoIP = collector
-		options.PublicSuffix = collector
 		options.SuffixLists = collector
 	})
 	harness.CompleteSetup()
-	before := len(harness.Fake.Received())
+	before := len(harness.Fake.Requests())
 	paths := []string{widgetPath(t, "top_sites", map[string]any{"group_by_registrable_domain": true})}
 	for _, widgetType := range harness.Server.Widgets().Types() {
 		paths = append(paths, widget.PathPrefix+widgetType)
@@ -229,7 +228,7 @@ func TestServingEveryServedTypeMakesNoOutboundRequest(t *testing.T) {
 			}
 		}
 	}
-	if after := len(harness.Fake.Received()); after != before {
+	if after := len(harness.Fake.Requests()); after != before {
 		t.Errorf("serving the widgets made %d requests to the firewall", after-before)
 	}
 	if hosts := outbound.Received(); len(hosts) != 0 {

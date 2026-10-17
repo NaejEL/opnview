@@ -147,7 +147,7 @@ func (s *FlowStore) DetectNetworks(ctx context.Context, interfaceID int64, prefi
 			`INSERT INTO interface_network (interface_id, network_address, prefix_length,
 			                               address_family, origin, first_detected_at,
 			                               last_detected_at, updated_at)
-			 VALUES (?, ?, ?, ?, 'detected', ?, ?, ?)
+			 VALUES ($1, $2, $3, $4, 'detected', $5, $6, $7)
 			 ON CONFLICT (interface_id, network_address, prefix_length) DO UPDATE SET
 			     first_detected_at = coalesce(interface_network.first_detected_at,
 			                                  excluded.first_detected_at),
@@ -176,7 +176,7 @@ func (s *FlowStore) AddInterfaceNetwork(ctx context.Context, interfaceID int64, 
 	if _, err := s.SQL.ExecContext(ctx,
 		`INSERT INTO interface_network (interface_id, network_address, prefix_length,
 		                               address_family, origin, updated_at)
-		 VALUES (?, ?, ?, ?, 'operator', ?)
+		 VALUES ($1, $2, $3, $4, 'operator', $5)
 		 ON CONFLICT (interface_id, network_address, prefix_length) DO UPDATE SET
 		     origin = 'operator', removed_at = NULL, updated_at = excluded.updated_at`,
 		interfaceID, prefix.Addr().String(), prefix.Bits(), familyOfPrefix(prefix), now); err != nil {
@@ -190,8 +190,8 @@ func (s *FlowStore) AddInterfaceNetwork(ctx context.Context, interfaceID int64, 
 func (s *FlowStore) ConfirmInterfaceNetwork(ctx context.Context, interfaceID int64, text string, now int64) (
 	NetworkEdit, error) {
 	return s.editStoredNetwork(ctx, interfaceID, text,
-		`UPDATE interface_network SET origin = 'operator', removed_at = NULL, updated_at = ?
-		 WHERE interface_id = ? AND network_address = ? AND prefix_length = ?`, now)
+		`UPDATE interface_network SET origin = 'operator', removed_at = NULL, updated_at = $1
+		 WHERE interface_id = $2 AND network_address = $3 AND prefix_length = $4`, now)
 }
 
 // RemoveInterfaceNetwork removes a network the interface carries: it no longer
@@ -199,8 +199,8 @@ func (s *FlowStore) ConfirmInterfaceNetwork(ctx context.Context, interfaceID int
 func (s *FlowStore) RemoveInterfaceNetwork(ctx context.Context, interfaceID int64, text string, now int64) (
 	NetworkEdit, error) {
 	return s.editStoredNetwork(ctx, interfaceID, text,
-		`UPDATE interface_network SET removed_at = ?, updated_at = ?
-		 WHERE interface_id = ? AND network_address = ? AND prefix_length = ?`, now, now)
+		`UPDATE interface_network SET removed_at = $1, updated_at = $2
+		 WHERE interface_id = $3 AND network_address = $4 AND prefix_length = $5`, now, now)
 }
 
 // editStoredNetwork runs one edit of a network that must already be stored. The
@@ -236,7 +236,7 @@ func (s *FlowStore) editStoredNetwork(ctx context.Context, interfaceID int64, te
 // link-local address seen on it is evidence that the address belongs to it.
 func (s *FlowStore) SetLinkLocalEvidence(ctx context.Context, interfaceID int64, evidence bool) error {
 	result, err := s.SQL.ExecContext(ctx,
-		"UPDATE interface SET link_local_evidence = ? WHERE id = ?", boolToInt(evidence), interfaceID)
+		"UPDATE interface SET link_local_evidence = $1 WHERE id = $2", evidence, interfaceID)
 	if err != nil {
 		return fmt.Errorf("store: setting the link-local rule of interface %d: %w", interfaceID, err)
 	}
@@ -250,15 +250,15 @@ func (s *FlowStore) SetLinkLocalEvidence(ctx context.Context, interfaceID int64,
 
 // requireInsideInterface refuses an interface that does not exist or is upstream.
 func (s *FlowStore) requireInsideInterface(ctx context.Context, interfaceID int64) error {
-	var upstream int64
-	err := s.SQL.QueryRowContext(ctx, "SELECT is_upstream FROM interface WHERE id = ?",
+	var upstream bool
+	err := s.SQL.QueryRowContext(ctx, "SELECT is_upstream FROM interface WHERE id = $1",
 		interfaceID).Scan(&upstream)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("%w: %d", ErrUnknownInterface, interfaceID)
 	case err != nil:
 		return fmt.Errorf("store: reading interface %d: %w", interfaceID, err)
-	case upstream == 1:
+	case upstream:
 		return fmt.Errorf("%w: %d", ErrUpstreamInterface, interfaceID)
 	}
 	return nil
@@ -341,12 +341,13 @@ func (s *FlowStore) OnLinkFingerprint(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("store: reading the interfaces: %w", err)
 	}
 	for rows.Next() {
-		var id, upstream, linkLocal int64
+		var id int64
+		var upstream, linkLocal bool
 		if err := rows.Scan(&id, &upstream, &linkLocal); err != nil {
 			_ = rows.Close()
 			return "", fmt.Errorf("store: reading the interfaces: %w", err)
 		}
-		parts = append(parts, fmt.Sprintf("interface:%d:%d:%d", id, upstream, linkLocal))
+		parts = append(parts, fmt.Sprintf("interface:%d:%t:%t", id, upstream, linkLocal))
 	}
 	err = rows.Err()
 	_ = rows.Close()

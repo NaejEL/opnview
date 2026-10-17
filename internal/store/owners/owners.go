@@ -255,7 +255,7 @@ func lockOwner(ctx context.Context, tx *sql.Tx, id int64) (Owner, error) {
 		return Owner{}, err
 	}
 	var owner Owner
-	err = tx.QueryRowContext(ctx, text, sqldb.Named(text, map[string]any{"id": id})...).Scan(&owner.ID,
+	err = sqldb.QueryRow(ctx, tx, text, map[string]any{"id": id}).Scan(&owner.ID,
 		&owner.DisplayName, &owner.CreatedAt, &owner.UpdatedAt)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -355,7 +355,7 @@ func ownerAssignments(ctx context.Context, tx *sql.Tx, id int64) ([]Assignment, 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, text, sqldb.Named(text, map[string]any{"id": id})...)
+	rows, err := sqldb.Query(ctx, tx, text, map[string]any{"id": id})
 	if err != nil {
 		return nil, fmt.Errorf("store: owner_assignments: %w", err)
 	}
@@ -445,7 +445,7 @@ func lockClients(ctx context.Context, tx *sql.Tx, ids []int64) (map[int64]client
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, text, sqldb.Named(text, map[string]any{"ids": jsonIDs(ids)})...)
+	rows, err := sqldb.Query(ctx, tx, text, map[string]any{"ids": jsonIDs(ids)})
 	if err != nil {
 		return nil, fmt.Errorf("store: clients_lock: %w", err)
 	}
@@ -656,7 +656,7 @@ func (s *OwnerStore) SetInterfaceUserLabel(ctx context.Context, id int64, label 
 			return err
 		}
 		var userLabel sql.NullString
-		if err := tx.QueryRowContext(ctx, text, sqldb.Named(text, map[string]any{"id": id})...).Scan(&labelled.ID,
+		if err := sqldb.QueryRow(ctx, tx, text, map[string]any{"id": id}).Scan(&labelled.ID,
 			&labelled.Identifier, &labelled.Description, &userLabel); err != nil {
 			return fmt.Errorf("store: interface_label_read: %w", err)
 		}
@@ -734,7 +734,7 @@ func (s *OwnerStore) SetBlocklistPurpose(ctx context.Context, id int64, purpose 
 		if err != nil {
 			return err
 		}
-		list, err = scanBlocklist(tx.QueryRowContext(ctx, text, sqldb.Named(text, map[string]any{"id": id})...))
+		list, err = scanBlocklist(sqldb.QueryRow(ctx, tx, text, map[string]any{"id": id}))
 		return err
 	})
 	return list, err

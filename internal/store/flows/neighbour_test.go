@@ -98,7 +98,7 @@ func TestTheClientsMintedAtThisFirewallsAddressesArePurgedAtTheNextFullPlacement
 				t.Fatalf("writing an owner: %v", err)
 			}
 			if _, err := network.DB.DB().Exec(`UPDATE client SET owner_id = 1, owner_assigned_at = 0
-				WHERE id = ?`, minted[0]); err != nil {
+				WHERE id = $1`, minted[0]); err != nil {
 				t.Fatalf("assigning the owner: %v", err)
 			}
 			named := minted[1]
@@ -106,7 +106,7 @@ func TestTheClientsMintedAtThisFirewallsAddressesArePurgedAtTheNextFullPlacement
 			network.Insert(t, []storetest.Flow{{ObservedAt: network.Now - 30, Device: network.Inside[0].Device,
 				Direction: "in", Src: network.Clients[0].Address, Dst: "198.51.100.9", DstPort: &port,
 				Protocol: "udp", Action: "pass", Bytes: 64}})
-			if _, err := network.DB.DB().Exec(`UPDATE flow SET src_client_id = ?`, named); err != nil {
+			if _, err := network.DB.DB().Exec(`UPDATE flow SET src_client_id = $1`, named); err != nil {
 				t.Fatalf("naming the client from a flow: %v", err)
 			}
 			// A MAC-level client nothing names, at an address the firewall never held.
@@ -117,12 +117,12 @@ func TestTheClientsMintedAtThisFirewallsAddressesArePurgedAtTheNextFullPlacement
 				t.Fatalf("reclassifying everything: %v", err)
 			}
 			for _, id := range minted[2:] {
-				if left := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE id = ?", id); left != 0 {
+				if left := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE id = $1", id); left != 0 {
 					t.Errorf("the client %d minted at a firewall address survived", id)
 				}
 			}
 			for _, kept := range []int64{minted[0], named, elsewhere} {
-				if left := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE id = ?", kept); left != 1 {
+				if left := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE id = $1", kept); left != 1 {
 					t.Errorf("the client %d, which the purge must keep, is gone", kept)
 				}
 			}

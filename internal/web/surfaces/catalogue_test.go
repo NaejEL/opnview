@@ -167,19 +167,13 @@ func TestNoUserVisibleStringIsALiteral(t *testing.T) {
 		}
 
 		// The entries that carry the same words ON PURPOSE: a page's title and its
-		// heading are one sentence, the action that leads to a page is the words of the
-		// page, and a key file that does not match is one sentence whichever credential
-		// it cannot open. Every group is a decision written here; a new entry joining one,
+		// heading are one sentence, and the action that leads to a page is the words of the
+		// page. Every group is a decision written here; a new entry joining one,
 		// or a new pair nobody decided on, fails until somebody says which it is.
 		declaredSameWording := [][]string{
 			{"setup.title", "setup.heading"},
 			{"action.sign_in", "sign_in.title", "sign_in.heading"},
 			{"action.reset_password", "recover.title", "recover.heading"},
-			{"state.credential.undecryptable", "state.licence_key.undecryptable"},
-			// The settings page mirrors the maxmind plugin's declared settings until the step-7
-			// application draws them from the plugin listing: one setting, one wording.
-			{"field.maxmind_account_id", "plugin.maxmind.setting.account_id"},
-			{"field.maxmind_licence_key", "plugin.maxmind.setting.licence_key"},
 			// The resolver's lookups are one thing, whether named as the kind collected or as the
 			// dataset of the data catalogue that serves them: one thing, one wording.
 			{"collection.kind.dns_lookup", "dataset.dns"},
@@ -617,19 +611,13 @@ func renderEveryPage(t *testing.T) []webtest.RenderedPage {
 		"firewall_url":            {configured.Fake.BaseURL()},
 		"api_key":                 {apiKey},
 		"api_secret":              {webtest.RandomHex(t, 16)},
-		"maxmind_licence_key":     {webtest.RandomHex(t, 16)},
-		"theme":                   {string(web.ThemeSystem)},
+		"theme":                   {string(web.ThemeDark)},
 	}))
 	add("the settings surface with an API secret typed elsewhere", configured.Post(web.PathSettings, url.Values{
 		webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
 		"api_secret":              {webtest.RandomHex(t, 16)},
 		"theme":                   {string(web.ThemeSystem)},
 	}))
-	addFollowed("the settings surface after the licence key is saved", configured,
-		configured.Post(web.PathSettings, url.Values{
-			webtest.FieldSettingsCard: {webtest.SettingsCardGeolocation},
-			"maxmind_licence_key":     {webtest.RandomHex(t, 16)},
-		}))
 	add("a settings submission naming no card", configured.Post(web.PathSettings, url.Values{
 		"theme": {string(web.ThemeSystem)},
 	}))
@@ -664,7 +652,7 @@ func renderEveryPage(t *testing.T) []webtest.RenderedPage {
 		{"the settings surface after an absent endpoint", http.StatusNotFound},
 		{"the settings surface after an answer it cannot use", http.StatusInternalServerError},
 	} {
-		configured.Fake.Answer(outcome.status, []byte(`{}`))
+		configured.Fake.AnswerAll(outcome.status, []byte(`{}`))
 		addFollowed(outcome.name, configured, settingstest.StoreCredentials(configured, apiKey, webtest.RandomHex(t, 16)))
 	}
 	configured.Fake.GoDown()
@@ -745,7 +733,6 @@ func renderEveryPage(t *testing.T) []webtest.RenderedPage {
 	}))
 
 	pages = append(pages, collectiontest.CollectionPages(t)...)
-	pages = append(pages, settingstest.GeoIPPages(t)...)
 	pages = append(pages, bundlePages(t)...)
 
 	if len(pages) == 0 {
@@ -830,19 +817,4 @@ func TestOnlyTheThreeFigureFormsThePagesProducePassTheFigureException(t *testing
 func stripTags(source string) string { return webtest.VisibleText(source) }
 
 // stripActions removes everything between {{ and }}, comments included.
-func stripActions(source string) string {
-	var builder strings.Builder
-	for {
-		start := strings.Index(source, "{{")
-		if start < 0 {
-			builder.WriteString(source)
-			return builder.String()
-		}
-		builder.WriteString(source[:start])
-		end := strings.Index(source[start:], "}}")
-		if end < 0 {
-			return builder.String()
-		}
-		source = source[start+end+2:]
-	}
-}
+func stripActions(source string) string { return webtest.StripDelimited(source, "{{", "}}") }

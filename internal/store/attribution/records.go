@@ -261,7 +261,7 @@ func currentObservation(ctx context.Context, q sqldb.Querier, parameters map[str
 		return 0, 0, false, err
 	}
 	var id, until int64
-	err = q.QueryRowContext(ctx, text, sqldb.Named(text, parameters)...).Scan(&id, &until)
+	err = sqldb.QueryRow(ctx, q, text, parameters).Scan(&id, &until)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return 0, 0, false, nil
@@ -317,7 +317,7 @@ func scanHeldRecords(ctx context.Context, q sqldb.Querier, name string, paramete
 	if err != nil {
 		return nil, err
 	}
-	rows, err := q.QueryContext(ctx, text, sqldb.Named(text, parameters)...)
+	rows, err := sqldb.Query(ctx, q, text, parameters)
 	if err != nil {
 		return nil, fmt.Errorf("store: %s: %w", name, err)
 	}

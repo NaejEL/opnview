@@ -229,13 +229,6 @@ func Register(protocol Protocol) {
 	registry[protocol.Name()] = protocol
 }
 
-// Duplicates are the protocol names registered more than once.
-func Duplicates() []string {
-	registryMutex.RLock()
-	defer registryMutex.RUnlock()
-	return append([]string(nil), duplicates...)
-}
-
 // Lookup returns a registered protocol.
 func Lookup(name string) (Protocol, bool) {
 	registryMutex.RLock()

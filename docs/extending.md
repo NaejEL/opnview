@@ -7,7 +7,7 @@ written to be followed by somebody who has never read the source.
 
 | You add | You create | You edit |
 |---|---|---|
-| a provider (a lease source, a lookup source, a log source...) | one directory under its kind | nothing |
+| a provider (a lease source, a lookup source, a log source...) | one plugin directory | nothing |
 | a widget | one directory holding `manifest.json` and a query | nothing |
 | a web surface | one directory holding a handler, a template and its catalogue keys | nothing |
 
@@ -17,179 +17,16 @@ file is stale.
 
 ## Adding a provider
 
-A **provider** is an implementation of a *kind*: a source of one sort of material the product
-reads from the firewall. The kinds are `firewall_log`, `security_event`, `dhcp_lease`, `dns_lookup`,
-`resolver_cache`, `resolver_local_data` and `measurement_sample`; their implementations today are
-pf, Suricata, Kea, Dnsmasq, ISC dhcpd, Unbound and the NetFlow/Insight sampler. (`geo_asn` and
-`public_suffix` are acquisitions, not firewall sources; see *What is not directory-only*.)
+A **provider** is an implementation of a *kind*: a source of one sort of material the product reads
+-- the filter log, the leases, the resolver's lookups, a geolocation database. Every provider is a
+**plugin**: a directory holding a `plugin.json` manifest, a JavaScript script, its fixtures and its
+tests, with no Go and no build. The built-in ones (`plugins/pf`, `plugins/kea`, `plugins/maxmind`...)
+are written exactly as a third party writes one.
 
-### The layout
-
-```
-internal/collect/
-  provider/                 the contract every kind shares: the session port, the probe Result,
-                            the Manifest and the Registry primitive (read doc.go first)
-  dhcplease/                one KIND: doc.go says what it produces; dhcplease.go holds its
-                            Observation record, its Source interface and its registry
-    kea/                    one IMPLEMENTATION of that kind:
-      provider.json           its identity: kind, key, display name
-      kea.go                  its code (package kea; never imports package collect)
-      testdata/*.json         the fixtures that imitate its firewall answers
-      kea_test.go             its tests
-    dnsmasq/  isc/  ...
-  firewalllog/pf/  securityevent/suricata/  dnslookup/{unbound,dnsmasq}/
-  resolvercache/{unbound,dnsmasq}/  resolverlocaldata/{unbound,dnsmasq}/  measurement/insight/
-  providers_gen.go          GENERATED: one blank import per implementation directory
-  providertest/             the fake firewall and fixture loader every provider test uses
-```
-
-Each kind's contract is its package documentation (`go doc ./internal/collect/dhcplease`): the
-record the implementation returns, the `Source` interface it satisfies, what it must never do. The
-session port it is handed (`provider.Session`) is deliberately narrow: one outbound call, a bounded
-stream read, the timestamp normaliser and the clock. An implementation **reports**; it never writes
-a row, never reads the store, never says whether it is the active one.
-
-### What adding a provider requires
-
-1. Create `internal/collect/<kind>/<product>/` containing:
-   - `provider.json` with `kind` (one of the seven above), `key` (unique within the kind; also the
-     directory name) and `display_name`;
-   - a Go package that embeds it and registers a `Source` from `init()`;
-   - optionally `testdata/` fixtures, tests, and `*.statements.sql` files (see below).
-2. Run `go generate ./...` so `internal/collect/providers_gen.go` links the new package into the
-   binary. If you forget, `TestTheGeneratedProviderImportsAreCurrent` fails and names this command.
-
-That is all. **No schema edit** (the collector registers the registry row and its availability row at
-the first probe round, `Store.EnsureProvider`), **no edit to any list, switch or registry file**, no
-edit to the kind. The firewall's own configuration decides whether the new implementation becomes the
-active one; nothing in the code prefers it or any other.
-
-A malformed `provider.json`, a manifest whose kind is not the kind it registered into, and a key
-registered twice are each refused with a named reason (`provider.Failures()`, reported by the next
-probe round); the service keeps running and the other implementations load.
-
-### A complete worked example
-
-A `dhcp_lease` implementation, `examplefake`. Two files in
-`internal/collect/dhcplease/examplefake/` are the whole implementation. (They are the very files
-`internal/collect/testdata/examplefake/` holds: `TestAFakeProviderAddedByFilesAloneIsRegisteredAndProbed`
-adds exactly these to the build, runs the probe round and checks the new provider was registered and
-probed; `TestTheWorkedExampleOfTheDocumentationIsTheTestedOne` fails if this page and those files
-differ.)
-
-`provider.json`:
-
-```json
-{
-  "kind": "dhcp_lease",
-  "key": "examplefake",
-  "display_name": "Example DHCP source"
-}
-```
-
-`examplefake.go`:
-
-```go
-// Package examplefake is a complete dhcp_lease implementation: the smallest one that is real. It
-// probes the Kea service status endpoint to say whether a DHCP server answers, and returns one
-// lease from a table it makes up. A real implementation reads the firewall instead of inventing
-// a lease; everything else here is what every implementation has.
-package examplefake
-
-import (
-	"context"
-	_ "embed"
-
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
-	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/opnsense"
-)
-
-// The manifest is embedded and handed to the kind: this is the whole of how an implementation
-// announces itself.
-//
-//go:embed provider.json
-var manifest []byte
-
-func init() { _ = dhcplease.Register(manifest, source{}) }
-
-type source struct{}
-
-// Probe says what the firewall answers about this implementation. ServiceState is the port's
-// shared question about an OPNsense service; Separable stays false because this example is never
-// the server the firewall's own configuration marks as serving clients.
-func (source) Probe(ctx context.Context, host provider.Session) (provider.Result, error) {
-	result := provider.Result{Probe: opnsense.KeaStatus}
-	_, state, outcome, detail, err := host.ServiceState(ctx, opnsense.KeaStatus)
-	if err != nil {
-		return result, err
-	}
-	result.State, result.Outcome, result.Detail = state, outcome, detail
-	return result, nil
-}
-
-// Leases returns the table. A source that can never be read returns provider.ErrUnsupportedRead
-// here instead, with the reason.
-func (source) Leases(_ context.Context, _ provider.Session, _ int) (
-	[]dhcplease.Observation, provider.Result, error) {
-	expires := int64(1_900_000_000)
-	return []dhcplease.Observation{{
-		Address:    "example-address",
-		LeaseState: "active",
-		ExpiresAt:  &expires,
-	}}, provider.Result{Probe: opnsense.KeaStatus}, nil
-}
-```
-
-Then `go generate ./...`, and `docker compose run --rm checks`. The probe round now probes
-`dhcp_lease/examplefake`, records its availability, and lists it with the other providers.
-
-### Tests and fixtures
-
-An implementation's tests live in its directory and run against the fake firewall of
-`internal/collect/providertest`:
-
-```go
-fake := providertest.NewFirewall(t)
-fake.AnswerFixture(opnsense.KeaStatus, "kea_status_running.json")
-result, err := keaLeases{}.Probe(ctx, providertest.NewSession(t, fake, reference))
-```
-
-Every endpoint the fake answers must be in the registry of `internal/opnsense`; one it does not
-answer is a `404`, which is the honest default (a component that is not installed). A fixture is a
-JSON file in the `testdata/` of the implementation that imitates it, found **by file name**
-(`providertest.FixtureBody`), so a coordinator test and the implementation's own test share one
-copy; a name that exists twice is refused. Each fixture says in its own `__provenance__` that it was
-synthesised from the survey and is not a capture, and a test refuses one that does not.
-
-Tests of a whole pass (they need the store, discovery, the identity cascade) belong to the kind's
-coordinator and stay in package `collect`.
-
-### SQL an implementation owns
-
-An implementation reads and returns records; the store writes them, so none ships SQL of its own
-today. One that needs a statement puts it in `<dir>/*.statements.sql`, embeds the directory and
-registers it from its `init()` with `store.RegisterStatements`; `sql/schema-checks.sh` finds it by
-walking the tree for the `-- statement: <name>` marker and plans it at both seed sizes.
-
-### What is not directory-only, and why
-
-- **`go generate ./...`** after adding or removing a directory. Go links packages, not directories;
-  the generated file is the one place that says which are linked, and a test keeps it honest.
-- **A new kind** (not a new implementation) edits `internal/store/schema.sql`: the `CHECK` on
-  `provider.kind`, and, if it admits several active providers, `internal/store/kinds.go`; and it adds
-  its own kind package with a coordinator in `internal/collect`.
-- **An endpoint the firewall registry lacks.** Every endpoint the product calls is in
-  `internal/opnsense/endpoints.go`, with the survey section that justifies it; an implementation
-  that needs a new one adds it there, with its citation. That registry is the product's read-only
-  guarantee and is deliberately not discoverable.
-- **`geo_asn` (MaxMind) and `public_suffix` (the Public Suffix List)** are acquisitions: downloads
-  that `internal/maxmind` and `internal/publicsuffix` read, outside the session port, whose only
-  outbound capability is the firewall. They keep their own packages, and their rows are the schema's
-  seed.
-- **The interface strings.** The name an operator reads for the new provider comes from the string
-  catalogue (`provider.<kind>.<key>`); adding that key is part of adding the web surface's catalogue
-  entry, not of the provider.
+To add one, create `<data-dir>/plugins/<name>/` and restart the service. `docs/plugins.md` is the
+whole procedure: the manifest and its providers (*The manifest*, *Providers*), the script and what
+the host hands it (*The script*), its settings, its tests (`opnview plugin test`), and each kind's
+contract (*Kinds*). Nothing that ships with the product is edited.
 
 ## Adding a widget
 

@@ -1,0 +1,74 @@
+{
+  "__provenance__": {
+    "statement": "SYNTHESISED, NOT A CAPTURE. Maps each column the Go join's recording holds (fixtures.json, f16_interleaved_counters.json, f17_upstream_ingress_captured.json in this directory) to where the same value lives once the join is the netflow plugin's (PA5 and PA9 of specs/SPEC-backend-completion-plugins.md, amendment of 17 October 2026). The generic measure output's and parts' column names are PA5's; the change that creates those tables owns their final spelling and updates this file with it.",
+    "recorded_by": "TestRecordTheGoJoinOverTheFixtures, build tag njrecord, internal/collect/njrecord_test.go"
+  },
+  "conventions": {
+    "flow ids": "Every flow id the Go join stores (flow_record.joined_flow_id, flow_record.copy_flow_id, connection_measured_volume.connection_flow_id) is recorded as the log_digest of the flow row it names, under the key joined_leg, copy_leg or connection_leg, so that an implementation storing the same legs under other ids compares value for value.",
+    "booleans": "loss_detectable, counted_copy and final are recorded as 0 and 1, the Go join's BIGINT columns; after PA15 they are BOOLEAN, and 1 compares equal to true.",
+    "omitted": "flow_record.provider_id, collection_gap.id and collection_gap.provider_id, and every aggregate's computed_at, are not recorded: they name the installation's rows or the computation's instant, not a decision."
+  },
+  "relations": {
+    "flow_record": {
+      "becomes": "netflow.flow_record (the netflow plugin's own table, decided question 2)",
+      "columns": {
+        "identity": "identity", "start_at": "start_at", "start_millisecond": "start_millisecond",
+        "end_at": "end_at", "end_millisecond": "end_millisecond", "received_at": "received_at",
+        "exporter_address": "exporter_address", "observation_domain": "observation_domain",
+        "ingress_interface": "ingress_interface", "egress_interface": "egress_interface",
+        "ip_version": "ip_version", "protocol": "protocol", "src_address": "src_address",
+        "dst_address": "dst_address", "src_port": "src_port", "dst_port": "dst_port", "tcp_flags": "tcp_flags",
+        "octets": "octets", "packets": "packets", "ingress_role": "ingress_role",
+        "ingress_identifier": "ingress_identifier", "ingress_device": "ingress_device",
+        "egress_role": "egress_role", "egress_identifier": "egress_identifier", "egress_device": "egress_device",
+        "loss_detectable": "loss_detectable", "tuple_key": "tuple_key", "join_state": "join_state",
+        "joined_leg": "joined_flow_id, as the digest of the flow it names", "copy_kind": "copy_kind",
+        "copy_leg": "copy_flow_id, as the digest of the flow it names", "orientation": "orientation",
+        "counted_copy": "counted_copy", "unmatched_reason": "unmatched_reason", "decided_at": "decided_at"
+      }
+    },
+    "connection_measured_volume": {
+      "becomes": "the generic per-connection measure output (PA5), rows whose measure is netflow",
+      "columns": {
+        "connection_leg": "connection, as the digest of the flow it names",
+        "direction": "direction",
+        "bytes": "bytes",
+        "packets": "packets",
+        "state": "state",
+        "counted_copy": "the marker counted_copy",
+        "connection_start_at": "the netflow plugin's own bookkeeping, beside the output",
+        "records": "the netflow plugin's own bookkeeping, beside the output",
+        "final": "the netflow plugin's own bookkeeping, beside the output",
+        "due_at": "the netflow plugin's own bookkeeping, beside the output",
+        "computed_at": "the netflow plugin's own bookkeeping, beside the output"
+      }
+    },
+    "unmatched_record_aggregate_<period>": {
+      "becomes": "the netflow plugin's unmatched counter table (PA4, PA9), one per period, columns unchanged",
+      "columns": {
+        "period_start_at": "period_start_at", "period_end_at": "period_end_at",
+        "ingress_interface": "ingress_interface", "egress_interface": "egress_interface",
+        "protocol": "protocol", "ip_version": "ip_version", "reason": "reason", "bytes": "bytes",
+        "packets": "packets", "records": "records", "updated_at": "updated_at"
+      }
+    },
+    "<family>_aggregate_<period>": {
+      "becomes": "the same family and period; the netflow columns become the parts of the measure named netflow (PA5)",
+      "columns": {
+        "netflow_bytes": "the netflow measure's bytes",
+        "netflow_allowed_bytes": "the netflow measure's allowed_bytes",
+        "netflow_blocked_bytes": "the netflow measure's blocked_bytes",
+        "netflow_unknown_bytes": "the netflow measure's unknown_bytes",
+        "netflow_parts.<field>": "the netflow measure's <field>, each field of the netflow_parts type under its own name",
+        "every other column": "unchanged: the family's key and its logged figures"
+      }
+    },
+    "collection_gap": {
+      "becomes": "collection_gap, unchanged (the core's)",
+      "columns": {
+        "interval_start_at": "interval_start_at", "interval_end_at": "interval_end_at", "reason": "reason",
+        "detail": "detail", "detected_at": "detected_at"
+      }
+    }
+  }
+}

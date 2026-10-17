@@ -511,13 +511,6 @@ func declaredEndpoints(manifest contract.Manifest) (map[string]opnsense.Endpoint
 		if refusal := checkBrokerKeys(manifest, declaration); refusal != nil {
 			return nil, nil, refusal
 		}
-		// An endpoint opnview's own registry already holds is that entry, citation and note
-		// included: one path is one endpoint, whoever reads it.
-		for _, known := range opnsense.Registry() {
-			if known.Path == endpoint.Path {
-				endpoint = known
-			}
-		}
 		endpoints[declaration.Name] = endpoint
 		declared, refusal := declaredRoutes(manifest, declaration, endpoint)
 		if refusal != nil {

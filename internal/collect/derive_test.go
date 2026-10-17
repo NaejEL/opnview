@@ -79,7 +79,7 @@ func TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway(t *testing.T) {
 	}
 	original := interfacesBody(t)
 	check(original, "the fixture")
-	if count := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM interface WHERE is_upstream = 1"); count != 1 {
+	if count := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM interface WHERE is_upstream"); count != 1 {
 		t.Fatalf("%d interfaces are upstream from a fixture with one gateway", count)
 	}
 
@@ -244,7 +244,7 @@ func TestNonLoggingRulesPerInterfaceEqualADirectCountOverTheFixture(t *testing.T
 	}
 	ids := map[string]int64{}
 	for identifier := range upstreamByIdentifier(t, harness.Store) {
-		ids[identifier] = int64(collecttest.ScalarCount(t, harness.Store, "SELECT id FROM interface WHERE identifier = ?", identifier))
+		ids[identifier] = int64(collecttest.ScalarCount(t, harness.Store, "SELECT id FROM interface WHERE identifier = $1", identifier))
 	}
 	if len(direct) == 0 {
 		t.Fatal("the fixture holds no model rule that does not log")
@@ -302,7 +302,7 @@ func TestTelemetryIsSampledFromVerifiedFieldsAndAMissingFieldIsNoSample(t *testi
 	reading := func(kind, key, measure string) []float64 {
 		var values []float64
 		rows, err := harness.Store.DB().Query(`SELECT value FROM measurement_sample
-			WHERE subject_kind = ? AND subject_key = ? AND measure = ?`, kind, key, measure)
+			WHERE subject_kind = $1 AND subject_key = $2 AND measure = $3`, kind, key, measure)
 		if err != nil {
 			t.Fatalf("reading %s: %v", measure, err)
 		}
@@ -442,7 +442,7 @@ func TestTheRefreshRunsAfterEachFilterLogPass(t *testing.T) {
 	now := harness.Clock.Now().UTC().Unix()
 	for _, period := range vocab.Periods() {
 		table := "volume_aggregate_" + period.Name
-		if rows := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM "+table+" WHERE computed_at = ?", now); rows == 0 {
+		if rows := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM "+table+" WHERE computed_at = $1", now); rows == 0 {
 			t.Errorf("%s holds no slot computed by the pass", table)
 		}
 	}
@@ -458,7 +458,7 @@ func TestTheRefreshRunsAfterEachFilterLogPass(t *testing.T) {
 	later := harness.Clock.Now().UTC().Unix()
 	current := vocab.PeriodMonth.SlotStart(later)
 	if rows := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM volume_aggregate_30d
-		WHERE period_start_at = ? AND computed_at = ?`, current, later); rows == 0 {
+		WHERE period_start_at = $1 AND computed_at = $2`, current, later); rows == 0 {
 		t.Error("an empty pass did not rewrite the current month")
 	}
 }
@@ -501,7 +501,7 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 		t.Fatalf("the concurrent refresh: %v", err)
 	}
 	if bytes := collecttest.ScalarCount(t, harness.Store, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h
-		WHERE period_start_at = ?`, closedHour); bytes != 60 {
+		WHERE period_start_at = $1`, closedHour); bytes != 60 {
 		t.Fatalf("the concurrent refresh left %d bytes in the slot, not the first row's 60, so the "+
 			"slot did not hold rows when it ran", bytes)
 	}
@@ -513,12 +513,12 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 		t.Fatalf("the next refresh: %v", err)
 	}
 	flowBytes := collecttest.ScalarCount(t, harness.Store, `SELECT sum(packet_bytes) FROM flow
-		WHERE observed_at >= ? AND observed_at < ?`, closedHour, closedHour+3600)
+		WHERE observed_at >= $1 AND observed_at < $2`, closedHour, closedHour+3600)
 	if flowBytes != 120 {
 		t.Fatalf("the closed hour's flows hold %d bytes, not the two rows' 120", flowBytes)
 	}
 	if bytes := collecttest.ScalarCount(t, harness.Store, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h
-		WHERE period_start_at = ?`, closedHour); bytes != flowBytes {
+		WHERE period_start_at = $1`, closedHour); bytes != flowBytes {
 		t.Errorf("the closed hour holds %d bytes while its flows hold %d", bytes, flowBytes)
 	}
 	// And a refresh with nothing in flight stamps the slot later than its rows, so it rests.
@@ -527,7 +527,7 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 		t.Fatalf("a quiet refresh: %v", err)
 	}
 	if computed := collecttest.ScalarCount(t, harness.Store, `SELECT max(computed_at) FROM volume_aggregate_1h
-		WHERE period_start_at = ?`, closedHour); int64(computed) <= stamped {
+		WHERE period_start_at = $1`, closedHour); int64(computed) <= stamped {
 		t.Errorf("the slot is stamped %d, not later than its rows' %d, so it would never rest", computed, stamped)
 	}
 }

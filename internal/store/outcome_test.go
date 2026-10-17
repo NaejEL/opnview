@@ -55,7 +55,7 @@ func TestTheOutcomeCheckHoldsExactlyTheClosedSet(t *testing.T) {
 		t.Error("SetAvailability accepted a code outside the set")
 	}
 	if _, err := database.DB().ExecContext(ctx,
-		"UPDATE source_availability SET outcome = 'invented_code' WHERE provider_id = ?", providerID); !sqldb.IsConstraintViolation(err) {
+		"UPDATE source_availability SET outcome = 'invented_code' WHERE provider_id = $1", providerID); !sqldb.IsConstraintViolation(err) {
 		t.Errorf("the schema accepted a code outside the set: %v", err)
 	}
 	for _, outcome := range vocab.AvailabilityOutcomes {

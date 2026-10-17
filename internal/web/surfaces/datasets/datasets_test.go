@@ -334,7 +334,7 @@ func TestAPluginDatasetIsQueriedWithNothingButItsDirectory(t *testing.T) {
 			"last": "(array_agg(value ORDER BY sampled_at DESC))[1]"}[aggregation]
 		expected := map[int64]float64{}
 		rows, err := db.Query("SELECT sampled_at - sampled_at % 3600, "+sqlAggregate+
-			" FROM plugin_example_meter.readings WHERE sampled_at >= ? AND sampled_at < ? GROUP BY 1", from, now)
+			" FROM plugin_example_meter.readings WHERE sampled_at >= $1 AND sampled_at < $2 GROUP BY 1", from, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -375,9 +375,9 @@ func TestAPluginDatasetIsQueriedWithNothingButItsDirectory(t *testing.T) {
 	type cell struct{ meter, phase string }
 	expected := map[cell]float64{}
 	rows, err := db.Query(`SELECT meter, CASE WHEN phase = (SELECT phase FROM plugin_example_meter.readings
-		WHERE sampled_at >= ? AND sampled_at < ? AND meter IN ('a', 'c') GROUP BY phase ORDER BY sum(value) DESC,
+		WHERE sampled_at >= $1 AND sampled_at < $2 AND meter IN ('a', 'c') GROUP BY phase ORDER BY sum(value) DESC,
 		phase LIMIT 1) THEN phase ELSE '' END, sum(value)
-		FROM plugin_example_meter.readings WHERE sampled_at >= ? AND sampled_at < ? AND meter IN ('a', 'c')
+		FROM plugin_example_meter.readings WHERE sampled_at >= $3 AND sampled_at < $4 AND meter IN ('a', 'c')
 		GROUP BY 1, 2`, from, now, from, now)
 	if err != nil {
 		t.Fatal(err)
@@ -522,7 +522,7 @@ func TestARefusedQueryNamesItsCodeAndReachesNoDatabase(t *testing.T) {
 		}
 		covered[code] = true
 	}
-	for _, code := range dataset.RefusalCodes() {
+	for _, code := range documentedRefusalCodes(t) {
 		if !covered[code] {
 			t.Errorf("the refusal code %s has no case", code)
 		}
@@ -685,4 +685,36 @@ func TestACustomChartSeriesReadsAPluginDataset(t *testing.T) {
 			t.Errorf("bucket %d is %+v, the catalogue's %+v", index, bucket, want)
 		}
 	}
+}
+
+// documentedRefusalCodes are the codes of the refusal table of docs/widget-api.md, "Data catalogue",
+// which internal/dataset's TestTheDocumentedRefusalsAreTheRefusals holds equal to the codes the
+// compiler refuses with.
+func documentedRefusalCodes(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "docs", "widget-api.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	start := strings.Index(text, "\n## Data catalogue\n")
+	if start < 0 {
+		t.Fatal("docs/widget-api.md has no Data catalogue section")
+	}
+	section := text[start+1:]
+	header := strings.Index(section, "| Condition | When |")
+	if header < 0 {
+		t.Fatal("the Data catalogue section has no refusal table")
+	}
+	var codes []string
+	for _, line := range strings.Split(section[header:], "\n")[2:] {
+		if !strings.HasPrefix(line, "| `") {
+			break
+		}
+		codes = append(codes, strings.Trim(strings.Split(line, "|")[1], " `"))
+	}
+	if len(codes) == 0 {
+		t.Fatal("the refusal table lists no code")
+	}
+	return codes
 }

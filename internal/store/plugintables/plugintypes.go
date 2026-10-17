@@ -67,7 +67,7 @@ func timeColumnIsInstant(ctx context.Context, q sqldb.Querier, qualified, column
 	var typeName string
 	if err := q.QueryRowContext(ctx,
 		`SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute AS a
-		 WHERE a.attrelid = CAST(? AS regclass) AND a.attname = ? AND NOT a.attisdropped`,
+		 WHERE a.attrelid = CAST($1 AS regclass) AND a.attname = $2 AND NOT a.attisdropped`,
 		qualified, column).Scan(&typeName); err != nil {
 		return false, fmt.Errorf("store: reading the type of %s.%s: %w", qualified, column, err)
 	}
@@ -129,7 +129,7 @@ func (s *PluginTableStore) EnsurePluginTable(ctx context.Context, table pluginde
 	now := time.Now().UTC().Unix()
 	declaration := table.Declaration()
 	var recorded string
-	err := s.SQL.QueryRowContext(ctx, "SELECT declaration FROM plugin_table WHERE plugin = ? AND table_name = ?",
+	err := s.SQL.QueryRowContext(ctx, "SELECT declaration FROM plugin_table WHERE plugin = $1 AND table_name = $2",
 		table.Plugin, table.Table).Scan(&recorded)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("store: reading the declaration of %s: %w", table.SQLName(), err)
@@ -157,7 +157,7 @@ func (s *PluginTableStore) EnsurePluginTable(ctx context.Context, table pluginde
 	}
 	if _, err := transaction.ExecContext(ctx,
 		`INSERT INTO plugin_table (plugin, table_name, declaration, time_column, retention_seconds, declared_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (plugin, table_name) DO UPDATE SET declaration = excluded.declaration,
 		     time_column = excluded.time_column, retention_seconds = excluded.retention_seconds,
 		     declared_at = CASE WHEN plugin_table.declaration = excluded.declaration
@@ -184,7 +184,7 @@ func (s *PluginTableStore) EnsurePluginTable(ctx context.Context, table pluginde
 func (s *PluginTableStore) relationExists(ctx context.Context, schema, table string) (bool, error) {
 	var exists bool
 	err := s.SQL.QueryRowContext(ctx,
-		"SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = ? AND tablename = ?)", schema, table).
+		"SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = $1 AND tablename = $2)", schema, table).
 		Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("store: looking for %s.%s: %w", schema, table, err)
@@ -206,7 +206,7 @@ func (s *PluginTableStore) setAside(ctx context.Context, transaction *sql.Tx, ta
 		`SELECT quote_ident(i.relname)
 		 FROM pg_index AS x
 		 JOIN pg_class AS i ON i.oid = x.indexrelid
-		 WHERE x.indrelid = CAST(? AS regclass) AND NOT x.indisprimary
+		 WHERE x.indrelid = CAST($1 AS regclass) AND NOT x.indisprimary
 		   AND NOT EXISTS (SELECT 1 FROM pg_constraint AS c WHERE c.conindid = x.indexrelid)`, table.Quoted())
 	if err != nil {
 		return nil, fmt.Errorf("store: listing the indexes of %s: %w", table.SQLName(), err)
@@ -229,7 +229,7 @@ func (s *PluginTableStore) setAside(ctx context.Context, transaction *sql.Tx, ta
 	}
 	constraints, err := transaction.QueryContext(ctx,
 		`SELECT quote_ident(conname) FROM pg_constraint
-		 WHERE conrelid = CAST(? AS regclass) AND contype IN ('p', 'u')`, table.Quoted())
+		 WHERE conrelid = CAST($1 AS regclass) AND contype IN ('p', 'u')`, table.Quoted())
 	if err != nil {
 		return nil, fmt.Errorf("store: listing the keys of %s: %w", table.SQLName(), err)
 	}
@@ -261,17 +261,17 @@ func (s *PluginTableStore) setAside(ctx context.Context, transaction *sql.Tx, ta
 	var timeColumn sql.NullString
 	var retention int64
 	if err := transaction.QueryRowContext(ctx,
-		"SELECT time_column, retention_seconds FROM plugin_table WHERE plugin = ? AND table_name = ?",
+		"SELECT time_column, retention_seconds FROM plugin_table WHERE plugin = $1 AND table_name = $2",
 		table.Plugin, table.Table).Scan(&timeColumn, &retention); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("store: reading the retention of %s: %w", table.SQLName(), err)
 	}
 	if _, err := transaction.ExecContext(ctx,
 		`INSERT INTO plugin_aside_table (name, plugin, table_name, time_column, retention_seconds, set_aside_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		aside, table.Plugin, table.Table, timeColumn, retention, now); err != nil {
 		return nil, fmt.Errorf("store: recording %s: %w", aside, err)
 	}
-	if _, err := transaction.ExecContext(ctx, "DELETE FROM plugin_state WHERE plugin = ?", table.Plugin); err != nil {
+	if _, err := transaction.ExecContext(ctx, "DELETE FROM plugin_state WHERE plugin = $1", table.Plugin); err != nil {
 		return nil, fmt.Errorf("store: resetting the state of the plugin %s: %w", table.Plugin, err)
 	}
 	return &PluginTableEvent{Code: PluginTableRebuilt, Table: table.SQLName(), Aside: plugindecl.AsideSchema + "." + aside,
@@ -290,7 +290,7 @@ type AsideTable struct {
 // AsideTables returns the tables of one plugin that are set aside, with their row counts.
 func (s *PluginTableStore) AsideTables(ctx context.Context, plugin string) ([]AsideTable, error) {
 	rows, err := s.SQL.QueryContext(ctx,
-		"SELECT name, table_name, set_aside_at FROM plugin_aside_table WHERE plugin = ? ORDER BY name", plugin)
+		"SELECT name, table_name, set_aside_at FROM plugin_aside_table WHERE plugin = $1 ORDER BY name", plugin)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing the aside tables of %s: %w", plugin, err)
 	}
@@ -419,7 +419,7 @@ func (s *PluginTableStore) WritePluginPass(ctx context.Context, plugin, provider
 	sort.Strings(keys)
 	for _, key := range keys {
 		if _, err := transaction.ExecContext(ctx,
-			`INSERT INTO plugin_state (plugin, key, value, updated_at) VALUES (?, ?, ?, ?)
+			`INSERT INTO plugin_state (plugin, key, value, updated_at) VALUES ($1, $2, $3, $4)
 			 ON CONFLICT (plugin, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
 			plugin, key, state[key], now); err != nil {
 			return fmt.Errorf("store: writing the state %q of the plugin %s: %w", key, plugin, err)
@@ -437,7 +437,7 @@ func (s *PluginTableStore) WritePluginPass(ctx context.Context, plugin, provider
 
 // PluginState returns every durable value a plugin stored, by key.
 func (s *PluginTableStore) PluginState(ctx context.Context, plugin string) (map[string]string, error) {
-	rows, err := s.SQL.QueryContext(ctx, "SELECT key, value FROM plugin_state WHERE plugin = ?", plugin)
+	rows, err := s.SQL.QueryContext(ctx, "SELECT key, value FROM plugin_state WHERE plugin = $1", plugin)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading the state of the plugin %s: %w", plugin, err)
 	}
@@ -473,7 +473,7 @@ func PurgeTimeTable(ctx context.Context, transaction *sql.Tx, qualified, column 
 	if err := transaction.QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM timescaledb_information.hypertables
 		                WHERE CAST(format('%I.%I', hypertable_schema, hypertable_name) AS regclass)
-		                    = CAST(? AS regclass))`,
+		                    = CAST($1 AS regclass))`,
 		qualified).Scan(&hypertable); err != nil {
 		return fmt.Errorf("store: looking up %s: %w", qualified, err)
 	}
@@ -482,17 +482,19 @@ func PurgeTimeTable(ctx context.Context, transaction *sql.Tx, qualified, column 
 		return err
 	}
 	// An instant column is compared with the horizon as an instant, an integer one as an epoch.
-	bound := "?"
-	if instant {
-		bound = "to_timestamp(?)"
+	bound := func(number string) string {
+		if instant {
+			return "to_timestamp(CAST(" + number + " AS bigint))"
+		}
+		return "CAST(" + number + " AS bigint)"
 	}
 	if hypertable {
-		if _, err := transaction.ExecContext(ctx, "SELECT drop_chunks(CAST(? AS regclass), older_than => "+bound+")",
+		if _, err := transaction.ExecContext(ctx, "SELECT drop_chunks(CAST($1 AS regclass), older_than => "+bound("$2")+")",
 			qualified, horizon); err != nil {
 			return fmt.Errorf("store: dropping the chunks of %s: %w", qualified, err)
 		}
 	}
-	if _, err := transaction.ExecContext(ctx, "DELETE FROM "+qualified+" WHERE "+plugindecl.QuoteIdentifier(column)+" < "+bound,
+	if _, err := transaction.ExecContext(ctx, "DELETE FROM "+qualified+" WHERE "+plugindecl.QuoteIdentifier(column)+" < "+bound("$1"),
 		horizon); err != nil {
 		return fmt.Errorf("store: purging %s: %w", qualified, err)
 	}
@@ -562,7 +564,7 @@ func (s *PluginTableStore) purgeAsideTables(ctx context.Context, transaction *sq
 			if _, err := transaction.ExecContext(ctx, "DROP TABLE "+qualified); err != nil {
 				return fmt.Errorf("store: dropping %s: %w", table.name, err)
 			}
-			if _, err := transaction.ExecContext(ctx, "DELETE FROM plugin_aside_table WHERE name = ?",
+			if _, err := transaction.ExecContext(ctx, "DELETE FROM plugin_aside_table WHERE name = $1",
 				table.name); err != nil {
 				return err
 			}

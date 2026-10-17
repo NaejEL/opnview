@@ -96,7 +96,7 @@ type observation struct {
 func observationsOf(t *testing.T, database *store.Store, owner string) []observation {
 	t.Helper()
 	rows, err := database.DB().Query(`SELECT owner_name, rrtype, value, first_seen_at, last_seen_at,
-		covered_from_at, covered_until_at FROM resource_record_observation WHERE owner_name = ?
+		covered_from_at, covered_until_at FROM resource_record_observation WHERE owner_name = $1
 		ORDER BY first_seen_at, rrtype, value`, owner)
 	if err != nil {
 		t.Fatalf("reading the observations of %s: %v", owner, err)
@@ -528,7 +528,7 @@ func TestIneligibleLookupsAndFlowsGetNoRowUnderEitherMethod(t *testing.T) {
 	pollCache(t, network.DB, firewall.flowAt-30, addressRecord("firewall.example.com", network.Inside[0].Address, 300))
 	firewall.attribute(t)
 	if named := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM domain_attribution AS a
-		JOIN flow AS f ON f.id = a.flow_id WHERE f.dst_is_this_firewall = 1`); named != 0 {
+		JOIN flow AS f ON f.id = a.flow_id WHERE f.dst_is_this_firewall`); named != 0 {
 		t.Errorf("%d flows to this firewall were named", named)
 	}
 }
@@ -702,10 +702,7 @@ func TestTheContradictionDoesNotFollowACNAMEIntoLocalData(t *testing.T) {
 func (s *cacheScenario) otherFamilyDiagnostic(t *testing.T) int64 {
 	t.Helper()
 	var counted int64
-	if err := s.network.DB.DB().QueryRow(
-		diagnosticText(t, "live_timing_fallback_other_family_cached"),
-		sql.Named("window_start", s.flowAt-600), sql.Named("window_end", s.flowAt+1),
-	).Scan(&counted); err != nil {
+	if err := diagnosticRow(t, s.network.DB.DB(), "live_timing_fallback_other_family_cached", sql.Named("window_start", s.flowAt-600), sql.Named("window_end", s.flowAt+1)).Scan(&counted); err != nil {
 		t.Fatalf("running the diagnostic: %v", err)
 	}
 	return counted
@@ -1016,8 +1013,8 @@ func diagnosticText(t *testing.T, name string) string {
 // perMethodFromDiagnostic sums the per-client diagnostic's per-method columns.
 func perMethodFromDiagnostic(t *testing.T, database *store.Store, from, to int64) (int64, int64, int64, int64) {
 	t.Helper()
-	rows, err := database.DB().Query(diagnosticText(t, "Attribution rate per client"),
-		sql.Named("window_start", from), sql.Named("window_end", to))
+	text, arguments := storetest.Bound(t, diagnosticText(t, "Attribution rate per client"), sql.Named("window_start", from), sql.Named("window_end", to))
+	rows, err := database.DB().Query(text, arguments...)
 	if err != nil {
 		t.Fatalf("running the diagnostic: %v", err)
 	}
@@ -1099,10 +1096,7 @@ func TestTheOtherFamilyTimingFallbackDiagnosticCountsAPlantedCase(t *testing.T) 
 				t.Fatalf("IPv6 %t, %s: the attribution is %v, want one by lookup_timing", v6, testCase.name, got)
 			}
 			var counted int64
-			if err := scenario.network.DB.DB().QueryRow(
-				diagnosticText(t, "live_timing_fallback_other_family_cached"),
-				sql.Named("window_start", scenario.flowAt-600), sql.Named("window_end", scenario.flowAt+1),
-			).Scan(&counted); err != nil {
+			if err := diagnosticRow(t, scenario.network.DB.DB(), "live_timing_fallback_other_family_cached", sql.Named("window_start", scenario.flowAt-600), sql.Named("window_end", scenario.flowAt+1)).Scan(&counted); err != nil {
 				t.Fatalf("running the diagnostic: %v", err)
 			}
 			if counted != testCase.want {
@@ -1227,7 +1221,7 @@ func TestThePurgeRemovesEndedObservationsAndKeepsReferencedOnes(t *testing.T) {
 	// aged here so the purge's guard is what keeps it -- without the guard the foreign key
 	// would refuse the purge outright.
 	if _, err := database.DB().Exec(`UPDATE resource_record_observation
-		SET covered_from_at = ?, first_seen_at = ?, last_seen_at = ?, covered_until_at = ?
+		SET covered_from_at = $1, first_seen_at = $2, last_seen_at = $3, covered_until_at = $4
 		WHERE owner_name = 'kept.example.com'`, scenario.flowAt-1000, scenario.flowAt-1000,
 		scenario.flowAt-1000, scenario.flowAt-900); err != nil {
 		t.Fatalf("ageing the referenced observation: %v", err)
@@ -1323,4 +1317,11 @@ func TestTheNewStatementsSearchAnIndex(t *testing.T) {
 			}
 		}
 	}
+}
+
+// diagnosticRow runs one diagnostic of sql/queries/diagnostics.sql with its named arguments.
+func diagnosticRow(t *testing.T, db *sql.DB, name string, arguments ...any) *sql.Row {
+	t.Helper()
+	text, ordered := storetest.Bound(t, diagnosticText(t, name), arguments...)
+	return db.QueryRow(text, ordered...)
 }

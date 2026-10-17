@@ -136,23 +136,23 @@ func TestAnOutsideAddressSeenOnBothKindsOfInterfaceGetsNoClientAndNoInterface(t 
 				})
 				network.ClassifyAndRefresh(t, addresses)
 
-				if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE last_address = ?",
+				if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE last_address = $1",
 					remote); rows != 0 {
 					t.Errorf("the outside address %s has %d client rows", remote, rows)
 				}
 				if eastWest := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow
-					WHERE (src_address = ? OR dst_address = ?) AND traffic_scope <> 'north_south'`,
+					WHERE (src_address = $1 OR dst_address = $2) AND traffic_scope <> 'north_south'`,
 					remote, remote); eastWest != 0 {
 					t.Errorf("%d flows touching %s are not north-south", eastWest, remote)
 				}
 				if placed := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow
-					WHERE (src_address = ? AND (src_interface_id IS NOT NULL OR src_client_id IS NOT NULL))
-					   OR (dst_address = ? AND (dst_interface_id IS NOT NULL OR dst_client_id IS NOT NULL))`,
+					WHERE (src_address = $1 AND (src_interface_id IS NOT NULL OR src_client_id IS NOT NULL))
+					   OR (dst_address = $2 AND (dst_interface_id IS NOT NULL OR dst_client_id IS NOT NULL))`,
 					remote, remote); placed != 0 {
 					t.Errorf("%d flows carry an interface or a client on the end of %s", placed, remote)
 				}
 				if inside := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow
-					WHERE src_address = ? AND src_interface_id = ?`, client.Address, client.InterfaceID); inside == 0 {
+					WHERE src_address = $1 AND src_interface_id = $2`, client.Address, client.InterfaceID); inside == 0 {
 					t.Errorf("the inside end %s lost its interface", client.Address)
 				}
 			}
@@ -221,7 +221,7 @@ func TestDirectionComesFromMembershipAndPartitionsEveryFlow(t *testing.T) {
 	}
 	var direction string
 	if err := network.DB.DB().QueryRow(`SELECT traffic_direction FROM classified_flow
-		WHERE dst_address = ? AND direction = 'in'`, storetest.Outside(200, client.V6)).Scan(&direction); err != nil {
+		WHERE dst_address = $1 AND direction = 'in'`, storetest.Outside(200, client.V6)).Scan(&direction); err != nil {
 		t.Fatalf("reading the direction: %v", err)
 	}
 	if direction != "outbound" {
@@ -257,14 +257,14 @@ func TestALookupIsPlacedFromTheSameEvidenceAsAFlow(t *testing.T) {
 		interfaceID *int64
 	)
 	if err := network.DB.DB().QueryRow(`SELECT interface_lookup_state, interface_id FROM dns_resolution
-		WHERE client_address = ?`, client.Address).Scan(&state, &interfaceID); err != nil {
+		WHERE client_address = $1`, client.Address).Scan(&state, &interfaceID); err != nil {
 		t.Fatalf("reading the lookup: %v", err)
 	}
 	if state != "resolved" || interfaceID == nil || *interfaceID != client.InterfaceID {
 		t.Errorf("the client's lookup is %s on %v, not resolved on %d", state, interfaceID, client.InterfaceID)
 	}
 	if err := network.DB.DB().QueryRow(`SELECT interface_lookup_state FROM dns_resolution
-		WHERE client_address = ?`, stranger).Scan(&state); err != nil {
+		WHERE client_address = $1`, stranger).Scan(&state); err != nil {
 		t.Fatalf("reading the lookup: %v", err)
 	}
 	if state != "not_found" {
@@ -357,7 +357,7 @@ func TestReclassifyingAStepFourDatabaseClearsTheRemoteClients(t *testing.T) {
 	// Checked by address and not by id: a removed row's id can be taken again by a client the
 	// classification mints for an inside address.
 	for _, remote := range remoteAddresses {
-		if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE last_address = ?", remote); rows != 0 {
+		if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE last_address = $1", remote); rows != 0 {
 			t.Errorf("the remote address %s still has %d client rows", remote, rows)
 		}
 	}
@@ -420,11 +420,11 @@ func TestALeaseNamingAnAddressSeenOnlyInFlowsRepointsItsRows(t *testing.T) {
 		t.Fatalf("attributing: %v", err)
 	}
 	var addressLevel int64
-	if err := network.DB.DB().QueryRow(`SELECT src_client_id FROM flow WHERE observed_at = ?`,
+	if err := network.DB.DB().QueryRow(`SELECT src_client_id FROM flow WHERE observed_at = $1`,
 		network.Now-40).Scan(&addressLevel); err != nil {
 		t.Fatalf("reading the flow's client: %v", err)
 	}
-	if kind := queryString(t, network.DB, "SELECT identity_kind FROM client WHERE id = ?", addressLevel); kind != vocab.IdentityAddressInInterface {
+	if kind := queryString(t, network.DB, "SELECT identity_kind FROM client WHERE id = $1", addressLevel); kind != vocab.IdentityAddressInInterface {
 		t.Fatalf("an address seen only in flows has a %s identity", kind)
 	}
 
@@ -455,18 +455,18 @@ func TestALeaseNamingAnAddressSeenOnlyInFlowsRepointsItsRows(t *testing.T) {
 	}
 
 	if stale := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow
-		WHERE src_address = ? AND src_client_id IS DISTINCT FROM ?`, client.Address, leaseClient); stale != 0 {
+		WHERE src_address = $1 AND src_client_id IS DISTINCT FROM $2`, client.Address, leaseClient); stale != 0 {
 		t.Errorf("%d flows of the address still name the old identity", stale)
 	}
 	if stale := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM dns_resolution
-		WHERE client_address = ? AND client_id IS DISTINCT FROM ?`, client.Address, leaseClient); stale != 0 {
+		WHERE client_address = $1 AND client_id IS DISTINCT FROM $2`, client.Address, leaseClient); stale != 0 {
 		t.Errorf("%d lookups of the address still name the old identity", stale)
 	}
 	if attributed := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM domain_attribution a
-		JOIN flow f ON f.id = a.flow_id WHERE f.observed_at = ?`, network.Now-40); attributed != 1 {
+		JOIN flow f ON f.id = a.flow_id WHERE f.observed_at = $1`, network.Now-40); attributed != 1 {
 		t.Errorf("the flow the lookup names carries %d attributions after re-pointing", attributed)
 	}
-	if gone := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE id = ?", addressLevel); gone != 0 {
+	if gone := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE id = $1", addressLevel); gone != 0 {
 		t.Error("the superseded address-level identity is still there with nothing naming it")
 	}
 	settled := derivedSnapshot(t, network.DB)
@@ -475,7 +475,7 @@ func TestALeaseNamingAnAddressSeenOnlyInFlowsRepointsItsRows(t *testing.T) {
 		t.Error("the slots after re-pointing differ from a recomputation")
 	}
 	if rows := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM client_volume_aggregate_24h
-		WHERE client_id = ?`, leaseClient); rows == 0 {
+		WHERE client_id = $1`, leaseClient); rows == 0 {
 		t.Error("the client family carries no slot under the better identity")
 	}
 }

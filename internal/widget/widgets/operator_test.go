@@ -192,7 +192,7 @@ func TestABrandNewWidgetCreatedOnlyByWritingFilesIsServedOverHTTP(t *testing.T) 
 	if int(remainder["members"].(float64)) < 1 {
 		t.Errorf("a limit of 1 over several protocols dropped no member: %v", remainder)
 	}
-	want := f.scalar(t, `SELECT sum(packet_bytes) FROM flow WHERE observed_at >= ? AND observed_at < ?`,
+	want := f.scalar(t, `SELECT sum(packet_bytes) FROM flow WHERE observed_at >= $1 AND observed_at < $2`,
 		f.now-86400, f.now)
 	if int64(total) != want {
 		t.Errorf("the total is %v and the database holds %d bytes in the window", total, want)
@@ -220,7 +220,7 @@ func TestADeclarativeWidgetObeysItsParametersAndTheEnvelope(t *testing.T) {
 	service := f.operatorService(t, directory)
 
 	_, blocked := serve(t, service, exampleWidgetType, map[string]any{"action": "block", "limit": 50})
-	want := f.scalar(t, `SELECT coalesce(sum(packet_bytes), 0) FROM flow WHERE observed_at >= ? AND observed_at < ?
+	want := f.scalar(t, `SELECT coalesce(sum(packet_bytes), 0) FROM flow WHERE observed_at >= $1 AND observed_at < $2
 		AND action = 'block'`, f.now-86400, f.now)
 	if got := int64(figureValue(t, object(t, blocked, "data")["total"])); got != want {
 		t.Errorf("action block totals %d bytes and the database holds %d", got, want)
@@ -583,7 +583,7 @@ func TestAnOperatorWidgetBindsReferenceAndListParameters(t *testing.T) {
 		FROM flow AS f
 		WHERE f.observed_at >= :from AND f.observed_at < :to
 		  AND f.src_interface_id IS NOT NULL
-		  AND (:interfaces IS NULL OR f.src_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interfaces AS jsonb)) AS j(value)))
+		  AND (CAST(:interfaces AS jsonb) IS NULL OR f.src_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interfaces AS jsonb)) AS j(value)))
 		  AND f.action IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:actions AS jsonb)) AS j(value))
 		GROUP BY f.src_interface_id`
 	writeWidget(t, directory, "example_flows_of_interfaces", manifest, query)
@@ -607,7 +607,7 @@ func TestAnOperatorWidgetBindsReferenceAndListParameters(t *testing.T) {
 	}
 	_, blockOnly := serve(t, service, "example_flows_of_interfaces", map[string]any{"actions": []any{"block"}})
 	blocked := f.scalar(t, `SELECT count(DISTINCT src_interface_id) FROM flow WHERE action = 'block'
-		AND src_interface_id IS NOT NULL AND observed_at >= ? AND observed_at < ?`, f.now-86400, f.now)
+		AND src_interface_id IS NOT NULL AND observed_at >= $1 AND observed_at < $2`, f.now-86400, f.now)
 	if int64(len(list(t, object(t, blockOnly, "data"), "bars"))) != blocked {
 		t.Errorf("the enum_set did not reach the query: %v bars, %d interfaces with a block", blockOnly["data"], blocked)
 	}

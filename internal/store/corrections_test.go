@@ -34,7 +34,7 @@ var allFamilies = []string{"volume", "owner", "client", "domain", "rule", "peer"
 func slotBytes(t *testing.T, database *store.Store, family string, period vocab.Period, instant int64) int64 {
 	t.Helper()
 	return storetest.QueryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM "+familyTable(family, period)+
-		" WHERE period_start_at = ?", period.SlotStart(instant))
+		" WHERE period_start_at = $1", period.SlotStart(instant))
 }
 
 // outboundFlow is one flow from a client to an outside address.
@@ -199,7 +199,7 @@ func TestAnHourHoldingTheHorizonTakesALateFlowAndAReclassification(t *testing.T)
 		}
 	}
 	if peers := storetest.QueryInt(t, network.DB, `SELECT distinct_peers FROM client_volume_aggregate_1h
-		WHERE period_start_at = ? AND traffic_direction = 'outbound'`, hour); peers != 3 {
+		WHERE period_start_at = $1 AND traffic_direction = 'outbound'`, hour); peers != 3 {
 		t.Errorf("the hour counts %d distinct peers, not the purged one and the two present", peers)
 	}
 
@@ -222,7 +222,7 @@ func TestAnHourHoldingTheHorizonTakesALateFlowAndAReclassification(t *testing.T)
 	}
 	byDirection := func(direction string) int64 {
 		return storetest.QueryInt(t, network.DB, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h
-			WHERE period_start_at = ? AND traffic_direction = ?`, hour, direction)
+			WHERE period_start_at = $1 AND traffic_direction = $2`, hour, direction)
 	}
 	if got := byDirection("inter_interface"); got != 200 {
 		t.Errorf("the hour holds %d bytes between interfaces after the reclassification, not 200", got)
@@ -271,9 +271,9 @@ func TestTheRolledUpWeekAndMonthEqualADirectComputation(t *testing.T) {
 			}
 			table := familyTable(family, period)
 			rolled := storetest.QueryInt(t, network.DB, "SELECT coalesce(sum(bytes), 0) FROM "+table+
-				" WHERE period_start_at = ?", period.SlotStart(network.Now))
+				" WHERE period_start_at = $1", period.SlotStart(network.Now))
 			days := storetest.QueryInt(t, network.DB, "SELECT coalesce(sum(bytes), 0) FROM "+familyTable(family, vocab.PeriodDay)+
-				" WHERE period_start_at >= ? AND period_start_at < ?", period.SlotStart(network.Now),
+				" WHERE period_start_at >= $1 AND period_start_at < $2", period.SlotStart(network.Now),
 				period.SlotEnd(period.SlotStart(network.Now)))
 			if rolled != days {
 				t.Errorf("%s holds %d bytes in the current slot, its days %d", table, rolled, days)
@@ -308,7 +308,7 @@ func TestDistinctPeersIsExactInAComposedAndARolledUpSlot(t *testing.T) {
 	network.ClassifyAndRefresh(t, addresses)
 	direct := func(from, to int64) int64 {
 		return storetest.QueryInt(t, network.DB, `SELECT count(DISTINCT dst_address) FROM flow
-			WHERE src_address = ? AND observed_at >= ? AND observed_at < ?`, client.Address, from, to)
+			WHERE src_address = $1 AND observed_at >= $2 AND observed_at < $3`, client.Address, from, to)
 	}
 	wantDay, wantMonth := direct(day, day+86400), direct(vocab.PeriodMonth.SlotStart(day), network.Now+1)
 	if wantDay != 3 || wantMonth != 4 {
@@ -316,7 +316,7 @@ func TestDistinctPeersIsExactInAComposedAndARolledUpSlot(t *testing.T) {
 	}
 	peers := func(period vocab.Period) int64 {
 		return storetest.QueryInt(t, network.DB, "SELECT coalesce(max(distinct_peers), 0) FROM client_volume_aggregate_"+
-			period.Name+" WHERE period_start_at = ? AND traffic_direction = 'outbound'", period.SlotStart(day))
+			period.Name+" WHERE period_start_at = $1 AND traffic_direction = 'outbound'", period.SlotStart(day))
 	}
 	check := func(when string) {
 		t.Helper()
@@ -368,7 +368,7 @@ func rowVersions(t *testing.T, database *store.Store) string {
 	t.Helper()
 	ctx := context.Background()
 	rows, err := database.DB().QueryContext(ctx,
-		"SELECT tablename FROM pg_tables WHERE schemaname = ? ORDER BY tablename", sqldb.CoreSchema)
+		"SELECT tablename FROM pg_tables WHERE schemaname = $1 ORDER BY tablename", sqldb.CoreSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,7 +504,7 @@ func TestALeaseNamingOneAddressReclassifiesThatAddressAlone(t *testing.T) {
 	if result.Placed != 1 {
 		t.Errorf("%d addresses were placed in full, not the one the lease names", result.Placed)
 	}
-	targetFlows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM flow WHERE src_address = ? OR dst_address = ?",
+	targetFlows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM flow WHERE src_address = $1 OR dst_address = $2",
 		target.Address, target.Address)
 	if targetFlows == 0 || int64(len(result.FlowInstants)) != targetFlows {
 		t.Errorf("the lease moved %d flows, the address has %d", len(result.FlowInstants), targetFlows)
@@ -524,7 +524,7 @@ func TestALeaseNamingOneAddressReclassifiesThatAddressAlone(t *testing.T) {
 func placedOn(t *testing.T, database *store.Store, address string) int64 {
 	t.Helper()
 	return storetest.QueryInt(t, database, `SELECT coalesce(max(coalesce(src_interface_id, -1)), -2) FROM flow
-		WHERE src_address = ?`, address)
+		WHERE src_address = $1`, address)
 }
 
 // TestOperatorNetworksFollowDecisionD1 is AC6, its second and third parts: detected
@@ -636,7 +636,7 @@ func TestALinkLocalAddressIsEvidenceOnlyWhereTheRuleSaysSo(t *testing.T) {
 	if got := placedOn(t, network.DB, address); got != -1 {
 		t.Errorf("with the rule at its default, the link-local address is placed on %d", got)
 	}
-	if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE last_address = ?", address); rows != 0 {
+	if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE last_address = $1", address); rows != 0 {
 		t.Errorf("with the rule at its default, the link-local address has %d client rows", rows)
 	}
 	for _, step := range []struct {

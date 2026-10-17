@@ -1,8 +1,9 @@
 package surfaces_test
 
 import (
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"strings"
+
+	"github.com/NaejEL/opnview/internal/web/webtest"
 )
 
 // visibleLines returns the non-empty text nodes of a document.

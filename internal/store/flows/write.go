@@ -26,7 +26,7 @@ import (
 func (s *FlowStore) ProviderID(ctx context.Context, kind, providerKey string) (int64, error) {
 	var id int64
 	err := s.SQL.QueryRowContext(ctx,
-		"SELECT id FROM provider WHERE kind = ? AND provider_key = ?", kind, providerKey).Scan(&id)
+		"SELECT id FROM provider WHERE kind = $1 AND provider_key = $2", kind, providerKey).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("store: looking up provider %s/%s: %w", kind, providerKey, err)
 	}
@@ -49,7 +49,7 @@ func (s *FlowStore) EnsureProvider(ctx context.Context, kind, providerKey, displ
 	now int64) (int64, bool, error) {
 	var id int64
 	err := s.SQL.QueryRowContext(ctx,
-		"SELECT id FROM provider WHERE kind = ? AND provider_key = ?", kind, providerKey).Scan(&id)
+		"SELECT id FROM provider WHERE kind = $1 AND provider_key = $2", kind, providerKey).Scan(&id)
 	if err == nil {
 		return id, false, nil
 	}
@@ -63,7 +63,7 @@ func (s *FlowStore) EnsureProvider(ctx context.Context, kind, providerKey, displ
 	defer func() { _ = transaction.Rollback() }()
 	result, err := transaction.ExecContext(ctx,
 		"INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) "+
-			"VALUES (?, ?, ?, 0, ?) ON CONFLICT (kind, provider_key) DO NOTHING",
+			"VALUES ($1, $2, $3, false, $4) ON CONFLICT (kind, provider_key) DO NOTHING",
 		kind, providerKey, displayName, now)
 	if err != nil {
 		return 0, false, fmt.Errorf("store: registering provider %s/%s: %w", kind, providerKey, err)
@@ -73,13 +73,13 @@ func (s *FlowStore) EnsureProvider(ctx context.Context, kind, providerKey, displ
 		return 0, false, fmt.Errorf("store: registering provider %s/%s: %w", kind, providerKey, err)
 	}
 	if err := transaction.QueryRowContext(ctx,
-		"SELECT id FROM provider WHERE kind = ? AND provider_key = ?", kind, providerKey).Scan(&id); err != nil {
+		"SELECT id FROM provider WHERE kind = $1 AND provider_key = $2", kind, providerKey).Scan(&id); err != nil {
 		return 0, false, fmt.Errorf("store: looking up provider %s/%s: %w", kind, providerKey, err)
 	}
 	if _, err := transaction.ExecContext(ctx,
 		"INSERT INTO source_availability (provider_id, state, outcome, probe, detail, checked_at) "+
-			"SELECT ?, 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0 "+
-			"WHERE NOT EXISTS (SELECT 1 FROM source_availability WHERE provider_id = ?)", id, id); err != nil {
+			"SELECT CAST($1 AS BIGINT), 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0 "+
+			"WHERE NOT EXISTS (SELECT 1 FROM source_availability WHERE provider_id = $2)", id, id); err != nil {
 		return 0, false, fmt.Errorf("store: giving provider %s/%s its availability row: %w", kind, providerKey, err)
 	}
 	if err := transaction.Commit(); err != nil {
@@ -94,7 +94,7 @@ func (s *FlowStore) EnsureProvider(ctx context.Context, kind, providerKey, displ
 func (s *FlowStore) ProviderKey(ctx context.Context, providerID int64) (string, error) {
 	var key string
 	if err := s.SQL.QueryRowContext(ctx,
-		"SELECT provider_key FROM provider WHERE id = ?", providerID).Scan(&key); err != nil {
+		"SELECT provider_key FROM provider WHERE id = $1", providerID).Scan(&key); err != nil {
 		return "", fmt.Errorf("store: reading provider %d: %w", providerID, err)
 	}
 	return key, nil
@@ -115,7 +115,7 @@ func (s *FlowStore) ActiveProviderID(ctx context.Context, kind string) (int64, b
 	}
 	var id int64
 	err := s.SQL.QueryRowContext(ctx,
-		"SELECT id FROM provider WHERE kind = ? AND is_active = 1", kind).Scan(&id)
+		"SELECT id FROM provider WHERE kind = $1 AND is_active", kind).Scan(&id)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return 0, false, nil
@@ -130,7 +130,7 @@ func (s *FlowStore) ActiveProviderID(ctx context.Context, kind string) (int64, b
 // is the whole stack the firewall is running.
 func (s *FlowStore) ActiveProviderIDs(ctx context.Context, kind string) ([]int64, error) {
 	rows, err := s.SQL.QueryContext(ctx,
-		"SELECT id FROM provider WHERE kind = ? AND is_active = 1 ORDER BY provider_key", kind)
+		"SELECT id FROM provider WHERE kind = $1 AND is_active ORDER BY provider_key", kind)
 	if err != nil {
 		return nil, fmt.Errorf("store: looking up the active %s providers: %w", kind, err)
 	}
@@ -156,7 +156,7 @@ func (s *FlowStore) ActiveProviderIDs(ctx context.Context, kind string) ([]int64
 //
 // The deactivation runs first, in one transaction with the activation, because for
 // an EXCLUSIVE kind the schema carries a partial unique index over kind where
-// is_active = 1 and setting a second one active fails — which is the guarantee, so
+// is_active and setting a second one active fails — which is the guarantee, so
 // the switch cannot be two separate statements. For a concurrent kind there is no
 // such index and the whole list is activated; passing several keys for an
 // exclusive kind is refused here rather than left to the index, so the caller gets
@@ -173,7 +173,7 @@ func (s *FlowStore) SetActiveProviders(ctx context.Context, kind string, provide
 	defer func() { _ = transaction.Rollback() }()
 
 	if _, err := transaction.ExecContext(ctx,
-		"UPDATE provider SET is_active = 0 WHERE kind = ?", kind); err != nil {
+		"UPDATE provider SET is_active = false WHERE kind = $1", kind); err != nil {
 		return fmt.Errorf("store: deactivating the %s providers: %w", kind, err)
 	}
 	for _, providerKey := range providerKeys {
@@ -181,7 +181,7 @@ func (s *FlowStore) SetActiveProviders(ctx context.Context, kind string, provide
 			continue
 		}
 		result, err := transaction.ExecContext(ctx,
-			"UPDATE provider SET is_active = 1 WHERE kind = ? AND provider_key = ?", kind, providerKey)
+			"UPDATE provider SET is_active = true WHERE kind = $1 AND provider_key = $2", kind, providerKey)
 		if err != nil {
 			return fmt.Errorf("store: activating %s/%s: %w", kind, providerKey, err)
 		}
@@ -219,19 +219,17 @@ func (s *FlowStore) SetAvailability(ctx context.Context, providerID int64,
 	result, err := s.SQL.ExecContext(ctx,
 		`UPDATE source_availability
 		 SET state_since_after_at = CASE
-		         WHEN state = :state THEN state_since_after_at
+		         WHEN state = $1 THEN state_since_after_at
 		         WHEN outcome = 'not_yet_probed' THEN NULL
-		         ELSE LEAST(checked_at, :checked_at) END,
+		         ELSE LEAST(checked_at, $2) END,
 		     state_since_by_at = CASE
-		         WHEN state = :state THEN state_since_by_at
+		         WHEN state = $1 THEN state_since_by_at
 		         WHEN outcome = 'not_yet_probed' THEN NULL
-		         ELSE :checked_at END,
-		     state = :state, outcome = :outcome, probe = :probe, detail = :detail,
-		     checked_at = :checked_at
-		 WHERE provider_id = :provider_id`,
-		sql.Named("state", string(state)), sql.Named("outcome", string(outcome)),
-		sql.Named("probe", probe), sql.Named("detail", detail), sql.Named("checked_at", checkedAt),
-		sql.Named("provider_id", providerID))
+		         ELSE $2 END,
+		     state = $1, outcome = $3, probe = $4, detail = $5,
+		     checked_at = $2
+		 WHERE provider_id = $6`,
+		string(state), checkedAt, string(outcome), probe, detail, providerID)
 	if err != nil {
 		return fmt.Errorf("store: recording availability for provider %d: %w", providerID, err)
 	}
@@ -253,7 +251,7 @@ func (s *FlowStore) Availability(ctx context.Context, providerID int64) (vocab.A
 		checkedAt int64
 	)
 	err := s.SQL.QueryRowContext(ctx,
-		"SELECT state, probe, checked_at FROM source_availability WHERE provider_id = ?", providerID).
+		"SELECT state, probe, checked_at FROM source_availability WHERE provider_id = $1", providerID).
 		Scan(&state, &probe, &checkedAt)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("store: reading availability for provider %d: %w", providerID, err)
@@ -271,7 +269,7 @@ func (s *FlowStore) UpsertInterface(ctx context.Context, iface vocab.Interface, 
 		`INSERT INTO interface (identifier, device, description, status, enabled,
 		                        link_type, link_kind, vlan_tag, is_upstream,
 		                        first_seen_at, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 ON CONFLICT (identifier) DO UPDATE SET
 		     device       = excluded.device,
 		     description  = excluded.description,
@@ -283,13 +281,13 @@ func (s *FlowStore) UpsertInterface(ctx context.Context, iface vocab.Interface, 
 		     is_upstream  = excluded.is_upstream,
 		     last_seen_at = excluded.last_seen_at`,
 		iface.Identifier, iface.Device, iface.Description, iface.Status, iface.Enabled,
-		iface.LinkType, iface.LinkKind, iface.VLANTag, boolToInt(iface.IsUpstream), now, now)
+		iface.LinkType, iface.LinkKind, iface.VLANTag, iface.IsUpstream, now, now)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing interface %s: %w", iface.Identifier, err)
 	}
 	var id int64
 	if err := s.SQL.QueryRowContext(ctx,
-		"SELECT id FROM interface WHERE identifier = ?", iface.Identifier).Scan(&id); err != nil {
+		"SELECT id FROM interface WHERE identifier = $1", iface.Identifier).Scan(&id); err != nil {
 		return 0, fmt.Errorf("store: reading back interface %s: %w", iface.Identifier, err)
 	}
 	return id, nil
@@ -323,8 +321,8 @@ func (s *FlowStore) UpsertInterfaceAddress(ctx context.Context, address vocab.In
 	)
 	err = transaction.QueryRowContext(ctx,
 		`SELECT id, last_seen_at FROM interface_address
-		 WHERE interface_id = ? AND source_field = ? AND address = ?
-		   AND coalesce(prefix_length, -1) = coalesce(?, -1)
+		 WHERE interface_id = $1 AND source_field = $2 AND address = $3
+		   AND coalesce(prefix_length, -1) = coalesce($4, -1)
 		 ORDER BY first_seen_at DESC LIMIT 1`,
 		address.InterfaceID, address.SourceField, address.Address, address.PrefixLength).
 		Scan(&latestID, &latestSeen)
@@ -334,12 +332,12 @@ func (s *FlowStore) UpsertInterfaceAddress(ctx context.Context, address vocab.In
 	}
 	if found && (previousDiscovery == nil || latestSeen >= *previousDiscovery) {
 		_, err = transaction.ExecContext(ctx,
-			"UPDATE interface_address SET last_seen_at = GREATEST(last_seen_at, ?) WHERE id = ?", now, latestID)
+			"UPDATE interface_address SET last_seen_at = GREATEST(last_seen_at, $1) WHERE id = $2", now, latestID)
 	} else {
 		_, err = transaction.ExecContext(ctx,
 			`INSERT INTO interface_address (interface_id, source_field, address, prefix_length,
 			                                address_family, first_seen_at, last_seen_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
 			 ON CONFLICT (interface_id, source_field, address, coalesce(prefix_length, -1), first_seen_at)
 			 DO UPDATE SET last_seen_at = GREATEST(interface_address.last_seen_at, excluded.last_seen_at)`,
 			address.InterfaceID, address.SourceField, address.Address, address.PrefixLength,
@@ -360,7 +358,7 @@ func (s *FlowStore) UpsertInterfaceMapEntry(ctx context.Context, device, descrip
 	interfaceID *int64, now int64) error {
 	_, err := s.SQL.ExecContext(ctx,
 		`INSERT INTO interface_map (device, description, interface_id, discovered_at)
-		 VALUES (?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (device) DO UPDATE SET
 		     description   = excluded.description,
 		     interface_id  = excluded.interface_id,
@@ -377,7 +375,7 @@ func (s *FlowStore) UpsertRule(ctx context.Context, rule vocab.Rule, now int64) 
 	_, err := s.SQL.ExecContext(ctx,
 		`INSERT INTO rule (pf_label, description, action, direction, interface, legacy,
 		                   logs_matches, enabled, is_automatic, discovered_at, destination_net)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 ON CONFLICT (pf_label) DO UPDATE SET
 		     description     = excluded.description,
 		     action          = excluded.action,
@@ -390,14 +388,14 @@ func (s *FlowStore) UpsertRule(ctx context.Context, rule vocab.Rule, now int64) 
 		     discovered_at   = excluded.discovered_at,
 		     destination_net = excluded.destination_net`,
 		rule.PfLabel, rule.Description, rule.Action, rule.Direction, rule.Interface,
-		boolToNullableInt(rule.Legacy), boolToNullableInt(rule.LogsMatches), boolToNullableInt(rule.Enabled),
-		boolToInt(rule.IsAutomatic), now, rule.DestinationNet)
+		rule.Legacy, rule.LogsMatches, rule.Enabled,
+		rule.IsAutomatic, now, rule.DestinationNet)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing rule %s: %w", rule.PfLabel, err)
 	}
 	var id int64
 	if err := s.SQL.QueryRowContext(ctx,
-		"SELECT id FROM rule WHERE pf_label = ?", rule.PfLabel).Scan(&id); err != nil {
+		"SELECT id FROM rule WHERE pf_label = $1", rule.PfLabel).Scan(&id); err != nil {
 		return 0, fmt.Errorf("store: reading back rule %s: %w", rule.PfLabel, err)
 	}
 	return id, nil
@@ -418,7 +416,7 @@ func upsertClient(ctx context.Context, q sqldb.Querier, client vocab.Client, now
 	_, err := q.ExecContext(ctx,
 		`INSERT INTO client (identity_kind, identity_key, interface_id, mac, hostname,
 		                     vendor_hint, last_address, first_seen_at, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 ON CONFLICT (identity_kind, identity_key) DO UPDATE SET
 		     interface_id = coalesce(excluded.interface_id, client.interface_id),
 		     mac          = coalesce(excluded.mac, client.mac),
@@ -433,7 +431,7 @@ func upsertClient(ctx context.Context, q sqldb.Querier, client vocab.Client, now
 	}
 	var id int64
 	if err := q.QueryRowContext(ctx,
-		"SELECT id FROM client WHERE identity_kind = ? AND identity_key = ?",
+		"SELECT id FROM client WHERE identity_kind = $1 AND identity_key = $2",
 		client.Identity.Kind, client.Identity.Key).Scan(&id); err != nil {
 		return 0, fmt.Errorf("store: reading back client %s/%s: %w",
 			client.Identity.Kind, client.Identity.Key, err)
@@ -457,7 +455,7 @@ func (s *FlowStore) ClientRefByAddressSince(ctx context.Context, address string,
 	)
 	err := s.SQL.QueryRowContext(ctx,
 		`SELECT id, interface_id FROM client
-		 WHERE last_address = ? AND last_seen_at >= ?
+		 WHERE last_address = $1 AND last_seen_at >= $2
 		 ORDER BY last_seen_at DESC, id DESC LIMIT 1`,
 		address, notBefore).Scan(&id, &interfaceID)
 	switch {
@@ -488,7 +486,7 @@ func (s *FlowStore) InsertDHCPLease(ctx context.Context, providerID int64, lease
 		`INSERT INTO dhcp_lease (provider_id, client_id, backend, address, mac, hostname,
 		                         dhcp_client_id, duid, iaid, vendor_hint, lease_state,
 		                         interface_id, starts_at, generation_key, expires_at, observed_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		 ON CONFLICT (address, generation_key, provider_id) DO NOTHING`,
 		providerID, lease.ClientID, lease.Backend, lease.Address, lease.MAC, lease.Hostname,
 		lease.DHCPClientID, lease.DUID, lease.IAID, lease.VendorHint, lease.LeaseState,
@@ -517,31 +515,88 @@ func (s *FlowStore) InsertDHCPLease(ctx context.Context, providerID int64, lease
 // row's interfaces. The schema's CHECK would reject one anyway; this makes the
 // rejection unreachable rather than merely caught.
 func (s *FlowStore) InsertFlow(ctx context.Context, flow vocab.Flow) error {
-	// A record is stored with neither end recognised as this firewall: that is
-	// classification's to decide, from the addresses the firewall held at the
-	// record's instant (classify.go).
-	_, err := s.SQL.ExecContext(ctx,
+	return s.InsertFlows(ctx, []vocab.Flow{flow})
+}
+
+// InsertFlows is InsertFlow over every record of a pass, in ONE statement whatever their number
+// (PA17 of specs/SPEC-backend-completion-plugins.md): the rows travel as one JSON array read back by
+// jsonb_to_recordset, so a page of a thousand records costs the statements a page of ten does. Each
+// row is written or refused exactly as InsertFlow writes or refuses it.
+func (s *FlowStore) InsertFlows(ctx context.Context, flows []vocab.Flow) error {
+	if len(flows) == 0 {
+		return nil
+	}
+	rows := make([]map[string]any, len(flows))
+	for index, flow := range flows {
+		rows[index] = map[string]any{
+			"log_digest": flow.LogDigest, "observed_at": flow.ObservedAt, "ingested_at": flow.IngestedAt,
+			"interface_device": flow.InterfaceDevice, "interface_lookup_state": string(flow.InterfaceLookupState),
+			"src_interface_id": flow.SrcInterfaceID, "dst_interface_id": flow.DstInterfaceID,
+			"src_client_id": flow.SrcClientID, "dst_client_id": flow.DstClientID,
+			"src_address": flow.SrcAddress, "dst_address": flow.DstAddress, "src_port": flow.SrcPort,
+			"dst_port": flow.DstPort, "protocol": flow.Protocol, "ip_version": flow.IPVersion,
+			"action": flow.Action, "direction": flow.Direction, "log_reason": flow.LogReason,
+			"packet_bytes": flow.PacketBytes, "rid": flow.Rid, "rule_id": flow.RuleID,
+			"rule_lookup_state": string(flow.RuleLookupState), "ip_id": flow.IPID, "tcp_seq": flow.TCPSeq,
+			"traffic_scope": string(vocab.ScopeOf(flow.SrcInterfaceID, flow.DstInterfaceID, false, false)),
+		}
+	}
+	encoded, err := json.Marshal(rows)
+	if err != nil {
+		return fmt.Errorf("store: encoding flows: %w", err)
+	}
+	// A record is stored with neither end recognised as this firewall: that is classification's to
+	// decide, from the addresses the firewall held at the record's instant (classify.go).
+	_, err = s.SQL.ExecContext(ctx,
 		`INSERT INTO flow (log_digest, observed_at, ingested_at, interface_device,
 		                   interface_lookup_state, src_interface_id, dst_interface_id,
 		                   src_client_id, dst_client_id, src_address, dst_address,
 		                   src_port, dst_port, protocol, ip_version, action, direction,
 		                   log_reason, packet_bytes, rid, rule_id, rule_lookup_state,
 		                   ip_id, tcp_seq, traffic_scope)
-		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-		 WHERE NOT EXISTS (SELECT 1 FROM retention_purge WHERE purged_before > ?)
-		 ON CONFLICT (log_digest) DO NOTHING`,
-		flow.LogDigest, flow.ObservedAt, flow.IngestedAt, flow.InterfaceDevice,
-		string(flow.InterfaceLookupState), flow.SrcInterfaceID, flow.DstInterfaceID,
-		flow.SrcClientID, flow.DstClientID, flow.SrcAddress, flow.DstAddress,
-		flow.SrcPort, flow.DstPort, flow.Protocol, flow.IPVersion, flow.Action,
-		flow.Direction, flow.LogReason, flow.PacketBytes, flow.Rid, flow.RuleID,
-		string(flow.RuleLookupState), flow.IPID, flow.TCPSeq,
-		string(vocab.ScopeOf(flow.SrcInterfaceID, flow.DstInterfaceID, false, false)),
-		flow.ObservedAt)
+		 SELECT r.log_digest, r.observed_at, r.ingested_at, r.interface_device, r.interface_lookup_state,
+		        r.src_interface_id, r.dst_interface_id, r.src_client_id, r.dst_client_id, r.src_address,
+		        r.dst_address, r.src_port, r.dst_port, r.protocol, r.ip_version, r.action, r.direction,
+		        r.log_reason, r.packet_bytes, r.rid, r.rule_id, r.rule_lookup_state, r.ip_id, r.tcp_seq,
+		        r.traffic_scope
+		 FROM jsonb_to_recordset(CAST($1 AS jsonb)) AS r (log_digest TEXT, observed_at BIGINT,
+		      ingested_at BIGINT, interface_device TEXT, interface_lookup_state TEXT, src_interface_id BIGINT,
+		      dst_interface_id BIGINT, src_client_id BIGINT, dst_client_id BIGINT, src_address TEXT,
+		      dst_address TEXT, src_port BIGINT, dst_port BIGINT, protocol TEXT, ip_version BIGINT,
+		      action TEXT, direction TEXT, log_reason TEXT, packet_bytes BIGINT, rid TEXT, rule_id BIGINT,
+		      rule_lookup_state TEXT, ip_id BIGINT, tcp_seq BIGINT, traffic_scope TEXT)
+		 WHERE NOT EXISTS (SELECT 1 FROM retention_purge WHERE purged_before > r.observed_at)
+		 ON CONFLICT (log_digest) DO NOTHING`, string(encoded))
 	if err != nil {
-		return fmt.Errorf("store: writing a flow: %w", err)
+		return fmt.Errorf("store: writing flows: %w", err)
 	}
 	return nil
+}
+
+// StoredFlowDigests reports which of the digests are stored already, in one statement.
+func (s *FlowStore) StoredFlowDigests(ctx context.Context, digests []string) (map[string]bool, error) {
+	stored := map[string]bool{}
+	if len(digests) == 0 {
+		return stored, nil
+	}
+	encoded, err := json.Marshal(digests)
+	if err != nil {
+		return nil, fmt.Errorf("store: encoding flow digests: %w", err)
+	}
+	rows, err := s.SQL.QueryContext(ctx, `SELECT log_digest FROM flow
+		WHERE log_digest IN (SELECT jsonb_array_elements_text(CAST($1 AS jsonb)))`, string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("store: looking up flow digests: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var digest string
+		if err := rows.Scan(&digest); err != nil {
+			return nil, fmt.Errorf("store: looking up flow digests: %w", err)
+		}
+		stored[digest] = true
+	}
+	return stored, rows.Err()
 }
 
 // NewestFlowObservedAt returns the newest observed_at stored, and whether there
@@ -562,7 +617,7 @@ func (s *FlowStore) NewestFlowObservedAt(ctx context.Context) (int64, bool, erro
 // makes the echoed record harmless without an insert attempt per line.
 func (s *FlowStore) HasFlowDigest(ctx context.Context, digest string) (bool, error) {
 	var one int
-	err := s.SQL.QueryRowContext(ctx, "SELECT 1 FROM flow WHERE log_digest = ?", digest).Scan(&one)
+	err := s.SQL.QueryRowContext(ctx, "SELECT 1 FROM flow WHERE log_digest = $1", digest).Scan(&one)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return false, nil
@@ -588,7 +643,7 @@ func (s *FlowStore) HasFlowDigest(ctx context.Context, digest string) (bool, err
 // is later than any lookup and says nothing about the list.
 func (s *FlowStore) UpsertBlocklist(ctx context.Context, name string, lookedUpAt int64) (int64, error) {
 	_, err := s.SQL.ExecContext(ctx,
-		`INSERT INTO blocklist (name, first_seen_at, last_seen_at) VALUES (?, ?, ?)
+		`INSERT INTO blocklist (name, first_seen_at, last_seen_at) VALUES ($1, $2, $3)
 		 ON CONFLICT (name) DO UPDATE SET
 		     first_seen_at = LEAST(blocklist.first_seen_at, excluded.first_seen_at),
 		     last_seen_at  = GREATEST(blocklist.last_seen_at, excluded.last_seen_at)`,
@@ -598,7 +653,7 @@ func (s *FlowStore) UpsertBlocklist(ctx context.Context, name string, lookedUpAt
 	}
 	var id int64
 	if err := s.SQL.QueryRowContext(ctx,
-		"SELECT id FROM blocklist WHERE name = ?", name).Scan(&id); err != nil {
+		"SELECT id FROM blocklist WHERE name = $1", name).Scan(&id); err != nil {
 		return 0, fmt.Errorf("store: reading back blocklist %s: %w", name, err)
 	}
 	return id, nil
@@ -635,8 +690,8 @@ func (s *FlowStore) StoreDNSResolution(ctx context.Context, lookup vocab.DNSReso
 		                             client_resolution, client_family, client_id, domain, resolver,
 		                             action, answer_source, rcode, dnssec_status, blocklist_id,
 		                             looked_up_at, ingested_at)
-		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-		 WHERE NOT EXISTS (SELECT 1 FROM retention_purge WHERE purged_before > ?)
+		 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+		 WHERE NOT EXISTS (SELECT 1 FROM retention_purge WHERE purged_before > $16)
 		 ON CONFLICT (lookup_key) DO NOTHING`,
 		lookup.LookupKey, lookup.ClientAddress, lookup.ClientHostname, resolution,
 		lookup.ClientFamily, lookup.ClientID, lookup.Domain, lookup.Resolver,
@@ -675,7 +730,7 @@ func (s *FlowStore) InsertSecurityEvent(ctx context.Context, providerID int64, e
 		                             rule_identity, signature, event_action, normalised_severity,
 		                             src_address, src_port, dst_address, dst_port, protocol,
 		                             in_interface_device, src_client_id, src_interface_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		 ON CONFLICT (provider_id, provider_event_key) DO NOTHING`,
 		providerID, event.ProviderEventKey, event.OccurredAt, event.IngestedAt,
 		event.RuleIdentity, event.Signature, event.EventAction, event.NormalisedSeverity,
@@ -693,7 +748,7 @@ func (s *FlowStore) InsertSecurityEvent(ctx context.Context, providerID int64, e
 func (s *FlowStore) UpsertEveCursor(ctx context.Context, cursor vocab.EveCursor) error {
 	_, err := s.SQL.ExecContext(ctx,
 		`INSERT INTO eve_ingest_cursor (file_id, byte_offset, file_sequence, rotation_state, observed_at)
-		 VALUES (?, ?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (file_id, byte_offset) DO UPDATE SET
 		     file_sequence  = excluded.file_sequence,
 		     rotation_state = excluded.rotation_state,
@@ -758,7 +813,7 @@ func (s *FlowStore) EveWatermarks(ctx context.Context) (map[string]EveWatermark,
 // permanent, so the state is written rather than the watermark being reset.
 func (s *FlowStore) MarkEveFileLost(ctx context.Context, fileID string, now int64) error {
 	_, err := s.SQL.ExecContext(ctx,
-		"UPDATE eve_ingest_cursor SET rotation_state = 'lost', observed_at = ? WHERE file_id = ?",
+		"UPDATE eve_ingest_cursor SET rotation_state = 'lost', observed_at = $1 WHERE file_id = $2",
 		now, fileID)
 	if err != nil {
 		return fmt.Errorf("store: marking eve file %s lost: %w", fileID, err)
@@ -789,7 +844,7 @@ func (s *FlowStore) InsertMeasurementSample(ctx context.Context, sample vocab.Me
 	_, err := s.SQL.ExecContext(ctx,
 		`INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
 		                                 unit, value, sampled_at, live_cadence_seconds)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (subject_kind, subject_key, measure, sampled_at, coalesce(provider_id, -1))
 		 DO UPDATE SET live_cadence_seconds = NULL
 		 WHERE measurement_sample.live_cadence_seconds IS NOT NULL
@@ -822,7 +877,7 @@ func (s *FlowStore) InsertStateSnapshot(ctx context.Context, snapshot vocab.Stat
 	defer func() { _ = transaction.Rollback() }()
 
 	if _, err := transaction.ExecContext(ctx,
-		`INSERT INTO state_snapshot (provider_id, set_key, captured_at) VALUES (?, ?, ?)
+		`INSERT INTO state_snapshot (provider_id, set_key, captured_at) VALUES ($1, $2, $3)
 		 ON CONFLICT (provider_id, set_key, captured_at) DO NOTHING`,
 		snapshot.ProviderID, snapshot.SetKey, snapshot.CapturedAt); err != nil {
 		return fmt.Errorf("store: writing the %s snapshot: %w", snapshot.SetKey, err)
@@ -831,7 +886,7 @@ func (s *FlowStore) InsertStateSnapshot(ctx context.Context, snapshot vocab.Stat
 	var snapshotID int64
 	if err := transaction.QueryRowContext(ctx,
 		`SELECT id FROM state_snapshot
-		 WHERE provider_id = ? AND set_key = ? AND captured_at = ?`,
+		 WHERE provider_id = $1 AND set_key = $2 AND captured_at = $3`,
 		snapshot.ProviderID, snapshot.SetKey, snapshot.CapturedAt).Scan(&snapshotID); err != nil {
 		return fmt.Errorf("store: reading back the %s snapshot: %w", snapshot.SetKey, err)
 	}
@@ -839,7 +894,7 @@ func (s *FlowStore) InsertStateSnapshot(ctx context.Context, snapshot vocab.Stat
 	for _, item := range snapshot.Items {
 		if _, err := transaction.ExecContext(ctx,
 			`INSERT INTO state_item (snapshot_id, item_key, attributes, valid_until_at)
-			 VALUES (?, ?, ?, ?)
+			 VALUES ($1, $2, $3, $4)
 			 ON CONFLICT (snapshot_id, item_key) DO UPDATE SET
 			     attributes     = excluded.attributes,
 			     valid_until_at = excluded.valid_until_at`,
@@ -860,7 +915,7 @@ func (s *FlowStore) StateItemsAt(ctx context.Context, providerID int64, setKey s
 		`SELECT i.item_key, i.attributes, i.valid_until_at
 		 FROM state_snapshot AS s
 		 JOIN state_item AS i ON i.snapshot_id = s.id
-		 WHERE s.provider_id = ? AND s.set_key = ? AND s.captured_at = ?
+		 WHERE s.provider_id = $1 AND s.set_key = $2 AND s.captured_at = $3
 		 ORDER BY i.item_key`,
 		providerID, setKey, capturedAt)
 	if err != nil {
@@ -895,7 +950,7 @@ func (s *FlowStore) StateDepartures(ctx context.Context, providerID int64, setKe
 		`SELECT provider_id, set_key, item_key, attributes, valid_until_at,
 		        last_present_at, absent_since_at
 		 FROM state_item_departure
-		 WHERE provider_id = ? AND set_key = ?
+		 WHERE provider_id = $1 AND set_key = $2
 		 ORDER BY item_key`,
 		providerID, setKey)
 	if err != nil {
@@ -925,7 +980,7 @@ func (s *FlowStore) RecordCollectionGap(ctx context.Context, gap vocab.Collectio
 	_, err := s.SQL.ExecContext(ctx,
 		`INSERT INTO collection_gap (provider_id, interval_start_at, interval_end_at,
 		                             reason, detail, detected_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		gap.ProviderID, gap.IntervalStartAt, gap.IntervalEndAt,
 		string(gap.Reason), gap.Detail, gap.DetectedAt)
 	if err != nil {
@@ -948,23 +1003,6 @@ func (s *FlowStore) CountRows(ctx context.Context, table string) (int, error) {
 	return count, nil
 }
 
-// boolToInt renders a Go bool as the 0 or 1 the schema's CHECK expects.
-func boolToInt(value bool) int64 {
-	if value {
-		return 1
-	}
-	return 0
-}
-
-// boolToNullableInt renders a three-state flag: true, false, or not reported.
-func boolToNullableInt(value *bool) *int64 {
-	if value == nil {
-		return nil
-	}
-	rendered := boolToInt(*value)
-	return &rendered
-}
-
 // LatestInterfaceDiscoveryAt returns the instant of the latest discovery that wrote the
 // interfaces -- every interface of one discovery carries its instant in last_seen_at --
 // and whether there was one. A discovery pass reads it before it writes anything, and
@@ -981,7 +1019,7 @@ func (s *FlowStore) LatestInterfaceDiscoveryAt(ctx context.Context) (int64, bool
 func (s *FlowStore) AvailabilityOutcomeOf(ctx context.Context, providerID int64) (vocab.AvailabilityOutcome, error) {
 	var outcome string
 	if err := s.SQL.QueryRowContext(ctx,
-		"SELECT outcome FROM source_availability WHERE provider_id = ?", providerID).Scan(&outcome); err != nil {
+		"SELECT outcome FROM source_availability WHERE provider_id = $1", providerID).Scan(&outcome); err != nil {
 		return "", fmt.Errorf("store: reading the availability outcome of provider %d: %w", providerID, err)
 	}
 	return vocab.AvailabilityOutcome(outcome), nil

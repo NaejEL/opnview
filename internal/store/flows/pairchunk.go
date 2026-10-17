@@ -236,7 +236,7 @@ func writePairing(ctx context.Context, q sqldb.Querier, outs []pairRecord, upstr
 			pairedIns = append(pairedIns, in)
 			continue
 		}
-		if out.srcFirewall == 1 && upstream[out.device] {
+		if out.srcFirewall && upstream[out.device] {
 			outcome := PairNotPaired
 			set(out.id, &outcome, nil)
 			continue

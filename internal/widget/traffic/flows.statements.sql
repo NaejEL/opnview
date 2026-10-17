@@ -42,9 +42,9 @@ WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
   AND (:scope = 'all' OR f.traffic_scope = :scope)
-  AND (:interface_ids IS NULL
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.local_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
-  AND (:client_ids IS NULL
+  AND (CAST(:client_ids AS jsonb) IS NULL
        OR f.local_client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
 GROUP BY 1, 2, 3, 4;
 
@@ -80,9 +80,9 @@ WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
   AND (:scope = 'all' OR f.traffic_scope = :scope)
-  AND (:interface_ids IS NULL
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.local_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
-  AND (:client_ids IS NULL
+  AND (CAST(:client_ids AS jsonb) IS NULL
        OR f.local_client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
 GROUP BY 1, 2, 3, 4, 5, 6, 7;
 
@@ -184,9 +184,9 @@ WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
   AND (:scope = 'all' OR f.traffic_scope = :scope)
-  AND (:interface_ids IS NULL
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.local_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
-  AND (:client_ids IS NULL
+  AND (CAST(:client_ids AS jsonb) IS NULL
        OR f.local_client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
 GROUP BY 1, 2, 3, 4;
 
@@ -221,9 +221,9 @@ WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
   AND (:scope = 'all' OR f.traffic_scope = :scope)
-  AND (:interface_ids IS NULL
+  AND (CAST(:interface_ids AS jsonb) IS NULL
        OR f.local_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:interface_ids AS jsonb)) AS j(value)))
-  AND (:client_ids IS NULL
+  AND (CAST(:client_ids AS jsonb) IS NULL
        OR f.local_client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
 GROUP BY 1, 2, 3, 4, 5, 6, 7;
 

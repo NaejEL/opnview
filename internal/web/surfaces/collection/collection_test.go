@@ -468,12 +468,12 @@ func TestDrawingTheSurfaceAndMeasuringWriteNothing(t *testing.T) {
 func TestTheMeasurementContactsNothing(t *testing.T) {
 	t.Parallel()
 	h := suggestedHarness(t)
-	before := len(h.Fake.Received())
+	before := len(h.Fake.Requests())
 	_ = webtest.PageSource(t, h, webtest.PathCollection)
 	webtest.Discard(t, h.Post(webtest.PathCollection, collectiontest.FillForm("firewall_log")))
 	webtest.Discard(t, h.Post(webtest.PathCollection, collectiontest.PairForm("firewall_log", "600", "15")))
 	webtest.Discard(t, h.Post(webtest.PathCollection, collectiontest.PairForm("firewall_log", "x", "15")))
-	if after := len(h.Fake.Received()); after != before {
+	if after := len(h.Fake.Requests()); after != before {
 		t.Errorf("the collection surface made %d calls to the firewall", after-before)
 	}
 }

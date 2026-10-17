@@ -1,7 +1,0 @@
-{
-  "module": "example.com/fixture",
-  "source": "shapes",
-  "packages": {
-    "shapes/geometry": {"name": "geometry", "files": ["square.go"]}
-  }
-}

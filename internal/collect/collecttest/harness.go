@@ -299,11 +299,6 @@ type Captured struct {
 	EgressOnly bool
 }
 
-// GetconfigBody is getconfig's answer for a set of captured interfaces, in the model's shape (S9a).
-func GetconfigBody(interfaces ...Captured) map[string]any {
-	return GetconfigBodyOffering([]string{InsideIdentifier, "example_if_b", UpstreamIdentifier}, interfaces...)
-}
-
 // GetconfigBodyOffering is GetconfigBody for a firewall offering some identifiers.
 func GetconfigBodyOffering(offered []string, interfaces ...Captured) map[string]any {
 	options := map[string]any{}
@@ -713,7 +708,7 @@ func (h *NetflowHarness) Records(t *testing.T) []RecordRow {
 	t.Helper()
 	rows, err := h.Store.DB().QueryContext(context.Background(),
 		`SELECT identity, start_at, ingress_role, egress_role, ingress_identifier, egress_identifier, join_state,
-		        joined_flow_id, copy_flow_id, copy_kind, orientation, unmatched_reason, counted_copy, loss_detectable,
+		        joined_flow_id, copy_flow_id, copy_kind, orientation, unmatched_reason, CAST(counted_copy AS INTEGER), CAST(loss_detectable AS INTEGER),
 		        octets, packets
 		 FROM flow_record ORDER BY start_at, octets, identity`)
 	if err != nil {
@@ -747,7 +742,7 @@ type VolumeRow struct {
 func (h *NetflowHarness) Volumes(t *testing.T) []VolumeRow {
 	t.Helper()
 	rows, err := h.Store.DB().QueryContext(context.Background(),
-		`SELECT connection_flow_id, direction, state, bytes, packets, records, counted_copy
+		`SELECT connection_flow_id, direction, state, bytes, packets, records, CAST(counted_copy AS INTEGER)
 		 FROM connection_measured_volume ORDER BY connection_flow_id, direction`)
 	if err != nil {
 		t.Fatal(err)
@@ -768,7 +763,7 @@ func (h *NetflowHarness) Volumes(t *testing.T) []VolumeRow {
 // FlowID reads the id of the flow logged under a digest.
 func (h *NetflowHarness) FlowID(t *testing.T, digest string) int64 {
 	t.Helper()
-	return int64(ScalarCount(t, h.Store, "SELECT id FROM flow WHERE log_digest = ?", digest))
+	return int64(ScalarCount(t, h.Store, "SELECT id FROM flow WHERE log_digest = $1", digest))
 }
 
 // OrNull reads a nullable text.
@@ -793,40 +788,6 @@ func NatRecords() (insideForward, insideReverse, upstreamForward, upstreamRevers
 	upstreamReverse = FlowRecord{Src: OutsideServer, Dst: TranslatedSource, SrcPort: 443, DstPort: 61000, Protocol: 6,
 		Flags: 0x1b, In: UpstreamIndex, Out: InsideIndex, Packets: 20, Octets: 20000, Start: start, End: end}
 	return
-}
-
-// AggregateFingerprint is every logged column of the six families' hours, for a comparison.
-func AggregateFingerprint(t *testing.T, h *NetflowHarness) string {
-	t.Helper()
-	var fingerprint string
-	for _, family := range []string{"volume", "owner_volume", "client_volume", "peer_volume", "domain_volume",
-		"rule_volume"} {
-		rows, err := h.Store.DB().QueryContext(context.Background(),
-			fmt.Sprintf("SELECT * FROM %s_aggregate_1h ORDER BY 1", family))
-		if err != nil {
-			t.Fatal(err)
-		}
-		columns, _ := rows.Columns()
-		for rows.Next() {
-			values := make([]any, len(columns))
-			pointers := make([]any, len(columns))
-			for index := range values {
-				pointers[index] = &values[index]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				t.Fatal(err)
-			}
-			for index, column := range columns {
-				if column == "computed_at" || column == "id" || strings.HasPrefix(column, "netflow_") {
-					continue
-				}
-				fingerprint += fmt.Sprintf("%s.%s=%v;", family, column, values[index])
-			}
-			fingerprint += "\n"
-		}
-		_ = rows.Close()
-	}
-	return fingerprint
 }
 
 // Forward is one record of the inside client's connection received on the inside device; reverse one
@@ -926,7 +887,7 @@ func Examined(t *testing.T, database *store.Store, key string) (bool, string) {
 		resolution string
 	)
 	if err := database.DB().QueryRow(`SELECT hostname_examined_at, client_resolution FROM dns_resolution
-		WHERE lookup_key = ?`, key).Scan(&at, &resolution); err != nil {
+		WHERE lookup_key = $1`, key).Scan(&at, &resolution); err != nil {
 		t.Fatalf("reading %s: %v", key, err)
 	}
 	return at != nil, resolution
@@ -1022,7 +983,7 @@ func (h *ProbeHarness) DetailOf(t *testing.T, kind, providerKey string) string {
 	}
 	var detail *string
 	if err := h.Store.DB().QueryRowContext(ctx,
-		"SELECT detail FROM source_availability WHERE provider_id = ?", providerID).
+		"SELECT detail FROM source_availability WHERE provider_id = $1", providerID).
 		Scan(&detail); err != nil {
 		t.Fatalf("reading the detail for %s/%s: %v", kind, providerKey, err)
 	}
@@ -1046,7 +1007,7 @@ func (h *ProbeHarness) MovedRows(t *testing.T,
 	rows, err := h.Store.DB().QueryContext(context.Background(),
 		`SELECT p.kind, p.provider_key FROM source_availability a
 		 JOIN provider p ON p.id = a.provider_id
-		 WHERE a.state = ? AND a.probe LIKE '%' || ? || '%'
+		 WHERE a.state = $1 AND a.probe LIKE '%' || $2 || '%'
 		 ORDER BY p.kind, p.provider_key`,
 		string(state), probePath)
 	if err != nil {
@@ -1073,7 +1034,7 @@ func (h *ProbeHarness) RowsInState(t *testing.T, state vocab.AvailabilityState) 
 	t.Helper()
 	var count int
 	if err := h.Store.DB().QueryRowContext(context.Background(),
-		"SELECT count(*) FROM source_availability WHERE state = ?", string(state)).
+		"SELECT count(*) FROM source_availability WHERE state = $1", string(state)).
 		Scan(&count); err != nil {
 		t.Fatalf("counting the rows in state %q: %v", state, err)
 	}

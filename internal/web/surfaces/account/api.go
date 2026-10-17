@@ -40,8 +40,7 @@ func (s *surface) apiRoutes() []web.Route {
 			RequiresNoAccount: true, Handler: s.handleAPISetup},
 		{Method: http.MethodPost, Pattern: PathAPISignIn, Access: web.AccessPublic, JSON: true,
 			Handler: s.handleAPISignIn},
-		{Method: http.MethodPost, Pattern: PathAPISignOut, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPISignOut},
+		web.JSONRoute(http.MethodPost, PathAPISignOut, s.handleAPISignOut),
 		{Method: http.MethodPost, Pattern: PathAPIRecover, Access: web.AccessKeyFile, JSON: true,
 			Handler: s.handleAPIRecover},
 	}

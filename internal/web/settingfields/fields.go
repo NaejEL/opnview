@@ -237,11 +237,6 @@ func Instant(epoch int64) string {
 	return time.Unix(epoch, 0).UTC().Format(time.RFC3339)
 }
 
-// WholeSeconds is a duration as a whole number of seconds.
-func WholeSeconds(d time.Duration) string {
-	return strconv.FormatInt(int64(d/time.Second), 10)
-}
-
 // overlayReader is the stored settings with some rows replaced by what was typed:
 // what config.Load would read if the save went through.
 type overlayReader struct {

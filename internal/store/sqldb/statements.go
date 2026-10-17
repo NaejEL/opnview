@@ -73,6 +73,9 @@ func RegisterStatements(owner string, files fs.FS) error {
 			if _, duplicate := parsed[name]; duplicate {
 				return fmt.Errorf("the statement %q is named twice in %s", name, owner)
 			}
+			if err := pretranslate(text); err != nil {
+				return fmt.Errorf("the statement %q of %s: %w", name, path, err)
+			}
 			parsed[name] = text
 		}
 		return nil
@@ -351,4 +354,27 @@ func FirstLine(statement string) string {
 		}
 	}
 	return strings.TrimSpace(statement)
+}
+
+// pretranslate translates a registered statement and, for a template, every expansion of it, so a
+// statement file is translated when it is registered and never when it runs (translate.go).
+func pretranslate(text string) error {
+	if !strings.Contains(text, periodToken) {
+		_, err := Translate(text)
+		return err
+	}
+	for _, period := range vocab.Periods() {
+		expanded := strings.ReplaceAll(text, periodToken, period.Name)
+		if strings.Contains(expanded, childToken) {
+			child, has := period.Child()
+			if !has {
+				continue
+			}
+			expanded = strings.ReplaceAll(expanded, childToken, child.Name)
+		}
+		if _, err := Translate(expanded); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -73,7 +73,7 @@ func IsLocalhostName(name string) bool {
 // discovery interval in force, from its setting row.
 func heldMargin(ctx context.Context, q sqldb.Querier) (int64, error) {
 	var value string
-	err := q.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", DiscoveryIntervalKey).
+	err := q.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = $1", DiscoveryIntervalKey).
 		Scan(&value)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -96,7 +96,7 @@ func firewallHoldings(ctx context.Context, q sqldb.Querier, address string) (str
 	if err != nil {
 		return "", err
 	}
-	rows, err := q.QueryContext(ctx, text, sqldb.Named(text, map[string]any{"address": address})...)
+	rows, err := sqldb.Query(ctx, q, text, map[string]any{"address": address})
 	if err != nil {
 		return "", fmt.Errorf("store: firewall_address_holdings: %w", err)
 	}

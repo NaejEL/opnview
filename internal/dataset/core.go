@@ -56,16 +56,6 @@ func Strings(language string) map[string]string {
 	return result
 }
 
-// LabelKeys returns the catalogue key of every core dataset's label.
-func LabelKeys() []string {
-	coreOnce.Do(loadCore)
-	keys := make([]string, 0, len(coreDatasets))
-	for _, declaration := range coreDatasets {
-		keys = append(keys, declaration.Label)
-	}
-	return keys
-}
-
 func loadCore() {
 	coreDatasets, coreStrings, coreErr = readTree(coreFiles)
 }
@@ -120,9 +110,12 @@ func readCore(fsys fs.FS, name string) (Declaration, map[string]map[string]strin
 	if err != nil {
 		return Declaration{}, nil, fmt.Errorf("dataset %s: %w", name, err)
 	}
+	translated, err := windowRelation(strings.TrimRight(strings.TrimSpace(sqlBody(string(relation))), ";"))
+	if err != nil {
+		return Declaration{}, nil, fmt.Errorf("dataset %s: relation.sql: %w", name, err)
+	}
 	declaration := Declaration{Name: name, Origin: OriginCore, Label: "dataset." + name, Nature: file.Nature,
-		Freshness: file.Freshness, Retention: file.Retention, Columns: file.Columns,
-		relation: strings.TrimRight(strings.TrimSpace(sqlBody(string(relation))), ";")}
+		Freshness: file.Freshness, Retention: file.Retention, Columns: file.Columns, relation: translated}
 	if earliest, err := fs.ReadFile(fsys, path.Join(directory, "earliest.sql")); err == nil {
 		declaration.earliest = strings.TrimRight(strings.TrimSpace(sqlBody(string(earliest))), ";")
 	}

@@ -445,7 +445,7 @@ func ReadProviders(ctx context.Context, database *store.Store) ([]envelope.Provi
 		var (
 			id                            int64
 			provider                      envelope.ProviderAvailability
-			active                        int64
+			active                        bool
 			state, probe, detail, outcome reads.NullString
 			checkedAt                     reads.NullInt64
 		)
@@ -453,7 +453,7 @@ func ReadProviders(ctx context.Context, database *store.Store) ([]envelope.Provi
 			&state, &probe, &detail, &checkedAt, &outcome); err != nil {
 			return err
 		}
-		provider.Active = active == 1
+		provider.Active = active
 		provider.Outcome = NullableText(outcome)
 		provider.State = NullableText(state)
 		provider.Probe = NullableText(probe)

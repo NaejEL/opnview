@@ -39,7 +39,6 @@ const (
 	RefusalMissingColumn               = "missing_column"
 	RefusalTooManyQueries              = "too_many_queries"
 	RefusalNotADirectory               = "not_a_directory"
-	RefusalNoManifestInDirectory       = "no_manifest"
 	RefusalStatementRegistrationFailed = "statement_registration_failed"
 	// RefusalScriptMissing is a script the manifest names that the directory does not hold.
 	RefusalScriptMissing = "script_missing"

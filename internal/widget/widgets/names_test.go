@@ -31,7 +31,7 @@ func TestEverySiteNameCarriesItsMethodAndTheRatesAgreeWithTheStore(t *testing.T)
 	check(t, err)
 	f.exec(t, `INSERT INTO resource_record_observation (provider_id, held_in, owner_name, rrtype, value, address,
 		first_seen_at, last_seen_at, covered_from_at, covered_until_at)
-		VALUES (?, 'cache', 'www.example.com', 'A', '198.51.100.10', '198.51.100.10', ?, ?, ?, ?)`,
+		VALUES ($1, 'cache', 'www.example.com', 'A', '198.51.100.10', '198.51.100.10', $2, $3, $4, $5)`,
 		provider, f.now-86400, f.now, f.now-86400, f.now)
 	f.exec(t, `UPDATE domain_attribution SET method = 'resolver_cache_answer',
 		address_observation_id = (SELECT max(id) FROM resource_record_observation)

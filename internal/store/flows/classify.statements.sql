@@ -51,8 +51,8 @@ SELECT l.interface_id
 FROM dhcp_lease AS l
 JOIN interface AS i ON i.id = l.interface_id
 WHERE l.address = :address
-  AND i.is_upstream = 0
-  AND (:link_local = 0 OR i.link_local_evidence = 1)
+  AND NOT i.is_upstream
+  AND (:link_local = 0 OR i.link_local_evidence)
 ORDER BY l.observed_at DESC, l.interface_id
 LIMIT 1;
 
@@ -63,8 +63,8 @@ FROM client AS c
 JOIN interface AS i ON i.id = c.interface_id
 WHERE c.last_address = :address
   AND c.identity_kind IN ('dhcp_client_id', 'mac')
-  AND i.is_upstream = 0
-  AND (:link_local = 0 OR i.link_local_evidence = 1)
+  AND NOT i.is_upstream
+  AND (:link_local = 0 OR i.link_local_evidence)
 ORDER BY c.last_seen_at DESC, c.id
 LIMIT 1;
 
@@ -77,7 +77,7 @@ LIMIT 1;
 SELECT n.interface_id, n.network_address, n.prefix_length, n.origin
 FROM interface_network AS n
 JOIN interface AS i ON i.id = n.interface_id
-WHERE i.is_upstream = 0
+WHERE NOT i.is_upstream
   AND n.removed_at IS NULL
   AND (n.origin = 'operator'
        OR n.last_detected_at = (SELECT max(m.last_detected_at) FROM interface_network AS m
@@ -94,8 +94,8 @@ FROM flow AS f
 JOIN interface AS i ON i.device = f.interface_device
 WHERE f.src_address = :address
   AND f.direction = 'in'
-  AND i.is_upstream = 0
-  AND (:link_local = 0 OR i.link_local_evidence = 1)
+  AND NOT i.is_upstream
+  AND (:link_local = 0 OR i.link_local_evidence)
 ORDER BY f.observed_at DESC, i.id
 LIMIT 1;
 
@@ -106,8 +106,8 @@ FROM flow AS f
 JOIN interface AS i ON i.device = f.interface_device
 WHERE f.dst_address = :address
   AND f.direction = 'out'
-  AND i.is_upstream = 0
-  AND (:link_local = 0 OR i.link_local_evidence = 1)
+  AND NOT i.is_upstream
+  AND (:link_local = 0 OR i.link_local_evidence)
 ORDER BY f.observed_at DESC, i.id
 LIMIT 1;
 
@@ -120,7 +120,7 @@ FROM client AS c
 WHERE c.last_address = :address
   AND c.identity_kind IN ('dhcp_client_id', 'mac')
   AND (c.interface_id IS NULL
-       OR c.interface_id NOT IN (SELECT id FROM interface WHERE is_upstream = 1))
+       OR c.interface_id NOT IN (SELECT id FROM interface WHERE is_upstream))
 ORDER BY CASE c.identity_kind WHEN 'dhcp_client_id' THEN 0 ELSE 1 END,
          c.last_seen_at DESC, c.id DESC
 LIMIT 1;
@@ -203,20 +203,20 @@ SET src_interface_id = n.interface_id,
     src_client_id = n.client_id,
     src_is_this_firewall = n.this_firewall,
     traffic_scope = CASE
-        WHEN n.this_firewall = 1 OR flow.dst_is_this_firewall = 1 THEN 'this_firewall'
+        WHEN n.this_firewall OR flow.dst_is_this_firewall THEN 'this_firewall'
         WHEN n.interface_id IS NOT NULL AND flow.dst_interface_id IS NOT NULL THEN 'east_west'
         ELSE 'north_south'
     END
 FROM (SELECT p.id,
              p.this_firewall,
-             CASE WHEN p.this_firewall = 1 THEN p.firewall_interface_id ELSE :interface_id END
+             CASE WHEN p.this_firewall THEN p.firewall_interface_id ELSE :interface_id END
                  AS interface_id,
              CASE
-                 WHEN p.this_firewall = 1 OR :interface_id IS NULL THEN NULL
+                 WHEN p.this_firewall OR CAST(:interface_id AS BIGINT) IS NULL THEN NULL
                  WHEN p.client_id IS NOT NULL
                       AND (SELECT k.identity_kind FROM client AS k WHERE k.id = p.client_id)
                           <> 'address_in_interface' THEN p.client_id
-                 WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
+                 WHEN CAST(:identity_client_id AS BIGINT) IS NOT NULL THEN CAST(:identity_client_id AS BIGINT)
                  WHEN p.client_id IS NOT NULL THEN p.client_id
                  ELSE :address_client_id
              END AS client_id
@@ -228,7 +228,7 @@ FROM (SELECT p.id,
                                           AND h.first_seen_at - :held_margin <= f.observed_at
                                           AND (h.is_current = 1
                                                OR h.last_seen_at + :held_margin >= f.observed_at))
-                        THEN 1 ELSE 0 END AS this_firewall,
+                        THEN true ELSE false END AS this_firewall,
                    (SELECT h.interface_id FROM this_firewall_address AS h
                     WHERE h.address = f.src_address
                       AND h.first_seen_at - :held_margin <= f.observed_at
@@ -251,20 +251,20 @@ SET dst_interface_id = n.interface_id,
     dst_client_id = n.client_id,
     dst_is_this_firewall = n.this_firewall,
     traffic_scope = CASE
-        WHEN flow.src_is_this_firewall = 1 OR n.this_firewall = 1 THEN 'this_firewall'
+        WHEN flow.src_is_this_firewall OR n.this_firewall THEN 'this_firewall'
         WHEN flow.src_interface_id IS NOT NULL AND n.interface_id IS NOT NULL THEN 'east_west'
         ELSE 'north_south'
     END
 FROM (SELECT p.id,
              p.this_firewall,
-             CASE WHEN p.this_firewall = 1 THEN p.firewall_interface_id ELSE :interface_id END
+             CASE WHEN p.this_firewall THEN p.firewall_interface_id ELSE :interface_id END
                  AS interface_id,
              CASE
-                 WHEN p.this_firewall = 1 OR :interface_id IS NULL THEN NULL
+                 WHEN p.this_firewall OR CAST(:interface_id AS BIGINT) IS NULL THEN NULL
                  WHEN p.client_id IS NOT NULL
                       AND (SELECT k.identity_kind FROM client AS k WHERE k.id = p.client_id)
                           <> 'address_in_interface' THEN p.client_id
-                 WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
+                 WHEN CAST(:identity_client_id AS BIGINT) IS NOT NULL THEN CAST(:identity_client_id AS BIGINT)
                  WHEN p.client_id IS NOT NULL THEN p.client_id
                  ELSE :address_client_id
              END AS client_id
@@ -276,7 +276,7 @@ FROM (SELECT p.id,
                                           AND h.first_seen_at - :held_margin <= f.observed_at
                                           AND (h.is_current = 1
                                                OR h.last_seen_at + :held_margin >= f.observed_at))
-                        THEN 1 ELSE 0 END AS this_firewall,
+                        THEN true ELSE false END AS this_firewall,
                    (SELECT h.interface_id FROM this_firewall_address AS h
                     WHERE h.address = f.dst_address
                       AND h.first_seen_at - :held_margin <= f.observed_at
@@ -300,14 +300,14 @@ SET src_interface_id = n.interface_id,
     src_is_this_firewall = n.this_firewall
 FROM (SELECT p.id,
              p.this_firewall,
-             CASE WHEN p.this_firewall = 1 THEN p.firewall_interface_id ELSE :interface_id END
+             CASE WHEN p.this_firewall THEN p.firewall_interface_id ELSE :interface_id END
                  AS interface_id,
              CASE
-                 WHEN p.this_firewall = 1 OR :interface_id IS NULL THEN NULL
+                 WHEN p.this_firewall OR CAST(:interface_id AS BIGINT) IS NULL THEN NULL
                  WHEN p.client_id IS NOT NULL
                       AND (SELECT k.identity_kind FROM client AS k WHERE k.id = p.client_id)
                           <> 'address_in_interface' THEN p.client_id
-                 WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
+                 WHEN CAST(:identity_client_id AS BIGINT) IS NOT NULL THEN CAST(:identity_client_id AS BIGINT)
                  WHEN p.client_id IS NOT NULL THEN p.client_id
                  ELSE :address_client_id
              END AS client_id
@@ -319,7 +319,7 @@ FROM (SELECT p.id,
                                           AND h.first_seen_at - :held_margin <= e.occurred_at
                                           AND (h.is_current = 1
                                                OR h.last_seen_at + :held_margin >= e.occurred_at))
-                        THEN 1 ELSE 0 END AS this_firewall,
+                        THEN true ELSE false END AS this_firewall,
                    (SELECT h.interface_id FROM this_firewall_address AS h
                     WHERE h.address = e.src_address
                       AND h.first_seen_at - :held_margin <= e.occurred_at
@@ -346,14 +346,14 @@ SET interface_id = n.interface_id,
     client_is_this_firewall = n.this_firewall
 FROM (SELECT p.id,
              p.this_firewall,
-             CASE WHEN p.this_firewall = 1 THEN p.firewall_interface_id ELSE :interface_id END
+             CASE WHEN p.this_firewall THEN p.firewall_interface_id ELSE :interface_id END
                  AS interface_id,
              CASE
-                 WHEN p.this_firewall = 1 OR :interface_id IS NULL THEN NULL
+                 WHEN p.this_firewall OR CAST(:interface_id AS BIGINT) IS NULL THEN NULL
                  WHEN p.client_id IS NOT NULL
                       AND (SELECT k.identity_kind FROM client AS k WHERE k.id = p.client_id)
                           <> 'address_in_interface' THEN p.client_id
-                 WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
+                 WHEN CAST(:identity_client_id AS BIGINT) IS NOT NULL THEN CAST(:identity_client_id AS BIGINT)
                  WHEN p.client_id IS NOT NULL THEN p.client_id
                  ELSE :address_client_id
              END AS client_id
@@ -365,7 +365,7 @@ FROM (SELECT p.id,
                                           AND h.first_seen_at - :held_margin <= r.looked_up_at
                                           AND (h.is_current = 1
                                                OR h.last_seen_at + :held_margin >= r.looked_up_at))
-                        THEN 1 ELSE 0 END AS this_firewall,
+                        THEN true ELSE false END AS this_firewall,
                    (SELECT h.interface_id FROM this_firewall_address AS h
                     WHERE h.address = r.client_address
                       AND h.first_seen_at - :held_margin <= r.looked_up_at
@@ -414,7 +414,7 @@ DELETE FROM client
 WHERE last_address = :address
   AND owner_id IS NULL
   AND (identity_kind = 'address_in_interface'
-       OR interface_id IN (SELECT id FROM interface WHERE is_upstream = 1))
+       OR interface_id IN (SELECT id FROM interface WHERE is_upstream))
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM security_event AS e WHERE e.src_client_id = client.id)
@@ -439,7 +439,7 @@ WHERE identity_kind = 'address_in_interface'
 
 -- statement: purge_unreferenced_upstream_clients
 DELETE FROM client
-WHERE interface_id IN (SELECT id FROM interface WHERE is_upstream = 1)
+WHERE interface_id IN (SELECT id FROM interface WHERE is_upstream)
   AND owner_id IS NULL
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.dst_client_id = client.id)

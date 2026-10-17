@@ -172,7 +172,7 @@ func TestDeletingAnAccountCascadesToItsSessions(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("creating a session: %v", err)
 	}
-	if _, err := database.DB().ExecContext(ctx, "DELETE FROM account WHERE id = ?",
+	if _, err := database.DB().ExecContext(ctx, "DELETE FROM account WHERE id = $1",
 		accountID); err != nil {
 		t.Fatalf("deleting the account: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestASecondAccountWithTheSameLoginIsRefused(t *testing.T) {
 		`INSERT INTO account (login, password_algorithm, password_memory_kib,
 		     password_iterations, password_parallelism, password_salt,
 		     password_digest, created_at, password_set_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		"operator", hash.Algorithm, hash.MemoryKiB, hash.Iterations, hash.Parallelism,
 		hash.Salt, hash.Digest, 1_700_000_000, 1_700_000_000); err == nil {
 		t.Error("a second account with the same login was accepted")

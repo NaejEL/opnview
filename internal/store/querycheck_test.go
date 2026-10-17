@@ -33,7 +33,7 @@ func TestCheckQueryRefusesWhatIsNotOneReadOnlyStatementUnderItsOwnKind(t *testin
 			sqldb.QueryNotReadOnly},
 		{"with delete", "WITH s(k) AS (SELECT key FROM setting) DELETE FROM setting WHERE key IN s", sqldb.QueryNotReadOnly},
 		{"unbound parameter", "SELECT :other AS value", sqldb.QueryUnboundParameter},
-		{"positional parameter", "SELECT ? AS value", sqldb.QueryUnboundParameter},
+		{"positional parameter", "SELECT $1 AS value", sqldb.QueryUnboundParameter},
 		{"does not plan", "SELECT no_such_column AS value FROM setting", sqldb.QueryDoesNotPlan},
 		{"syntax", "SELECT FROM WHERE", sqldb.QueryDoesNotPlan},
 	}

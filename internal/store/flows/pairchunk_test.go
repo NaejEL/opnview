@@ -134,10 +134,10 @@ func perturb(t *testing.T, database *store.Store) {
 	_ = rows.Close()
 	for index, out := range outs {
 		in := ins[(index+1)%len(ins)]
-		if _, err := database.DB().Exec("UPDATE flow SET paired_flow_id = ? WHERE id = ?", in, out); err != nil {
+		if _, err := database.DB().Exec("UPDATE flow SET paired_flow_id = $1 WHERE id = $2", in, out); err != nil {
 			t.Fatalf("perturbing: %v", err)
 		}
-		if _, err := database.DB().Exec("UPDATE flow SET paired_flow_id = ? WHERE id = ?", out, in); err != nil {
+		if _, err := database.DB().Exec("UPDATE flow SET paired_flow_id = $1 WHERE id = $2", out, in); err != nil {
 			t.Fatalf("perturbing: %v", err)
 		}
 	}

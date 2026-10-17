@@ -233,28 +233,6 @@ func (v *Value) Plain() any {
 	return nil
 }
 
-// Equal reports whether two values are the same JSON, lexically: same kinds, same texts, same
-// keys in the same order, same items.
-func Equal(a, b *Value) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	if a.Kind != b.Kind || a.Text != b.Text || len(a.Keys) != len(b.Keys) || len(a.Items) != len(b.Items) {
-		return false
-	}
-	for index, key := range a.Keys {
-		if b.Keys[index] != key || !Equal(a.Fields[key], b.Fields[key]) {
-			return false
-		}
-	}
-	for index := range a.Items {
-		if !Equal(a.Items[index], b.Items[index]) {
-			return false
-		}
-	}
-	return true
-}
-
 // Scalar reports whether the value is no object and no array.
 func (v *Value) Scalar() bool { return v != nil && v.Kind != Object && v.Kind != Array }
 
@@ -274,9 +252,6 @@ func NewObject() *Value { return &Value{Kind: Object, Fields: map[string]*Value{
 
 // NewArray is an array of the given items.
 func NewArray(items ...*Value) *Value { return &Value{Kind: Array, Items: items} }
-
-// NewBool is a boolean value.
-func NewBool(value bool) *Value { return &Value{Kind: Bool, Text: strconv.FormatBool(value)} }
 
 // CanonicalNumber reports whether a number's text is what PostgreSQL's numeric type prints back
 // for it: plain decimal notation, no exponent, no negative zero.

@@ -24,22 +24,6 @@ func Database(t testing.TB) string {
 	return database.DSN
 }
 
-// EmptyDatabase creates a database with nothing applied to it, for a test of what Open does to an
-// empty or an outdated database.
-func EmptyDatabase(t testing.TB) string {
-	t.Helper()
-	database, err := store.NewEmptyTestDatabase(context.Background())
-	if err != nil {
-		t.Fatalf("creating the empty test database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Drop(context.Background()); err != nil {
-			t.Errorf("dropping the test database: %v", err)
-		}
-	})
-	return database.DSN
-}
-
 // Open creates a database for the test and opens it. The store is closed, and the database
 // dropped, when the test ends.
 func Open(t testing.TB) *store.Store {

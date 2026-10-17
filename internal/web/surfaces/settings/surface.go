@@ -49,25 +49,22 @@ func init() {
 // surface is the surface's handlers over what the host grants.
 type surface struct {
 	web.Host
-	store        *store.Store
-	now          func() time.Time
-	box          *secret.Box
-	credentials  *config.FirewallCredentials
-	client       *opnsense.Client
-	geoip        web.GeoIP
-	publicSuffix web.PublicSuffixList
+	store       *store.Store
+	now         func() time.Time
+	box         *secret.Box
+	credentials *config.FirewallCredentials
+	client      *opnsense.Client
 }
 
 // newSurface binds the handlers to a host.
 func newSurface(host web.Host) *surface {
 	return &surface{Host: host, store: host.Store(), now: host.Now, box: host.Box(),
-		credentials: host.Credentials(), client: host.Client(), geoip: host.GeoIP(),
-		publicSuffix: host.PublicSuffix()}
+		credentials: host.Credentials(), client: host.Client()}
 }
 
 // view is everything the surface's template may read.
 //
-// IT CARRIES NO SECRET. There is no field here for an API secret, a MaxMind key, a
+// IT CARRIES NO SECRET. There is no field here for an API secret, a
 // password, a salt or a key file, and a test asserts that no response body contains any of
 // them.
 type view struct {
@@ -81,17 +78,9 @@ type view struct {
 	// same reason: it is a hash of a certificate the firewall shows to anybody, so
 	// it is configuration and not a secret.
 	CertificateFingerprint string
-	// The three states the surface reports. Each is a key.
+	// The two states the surface reports. Each is a key.
 	CredentialState   messageKey
 	VerificationState messageKey
-	LicenceKeyState   messageKey
-	// MaxMindAccountID is pre-filled: it identifies an account and grants nothing
-	// without the licence key.
-	MaxMindAccountID string
-	// GeoIPState says where the MaxMind databases stand, and GeoIPBuild is the
-	// build of the ones in use, empty when there are none.
-	GeoIPState messageKey
-	GeoIPBuild string
 	// Themes are the options the selector offers.
 	Themes []themeOption
 
@@ -99,14 +88,10 @@ type view struct {
 	// its refusal are drawn in that card rather than at the head of the page.
 	SettingsCard string
 	// SettingsEdited marks, by card, the cards drawn with values a submission carried that are
-	// not stored: edited, and not saved. APISecretNotKept and LicenceKeyNotKept say a secret
+	// not stored: edited, and not saved. APISecretNotKept says the API secret
 	// was typed and not stored, which a field never pre-filled cannot show any other way.
-	SettingsEdited    map[string]bool
-	APISecretNotKept  bool
-	LicenceKeyNotKept bool
-
-	// PublicSuffix is the Public Suffix List card.
-	PublicSuffix publicSuffixCard
+	SettingsEdited   map[string]bool
+	APISecretNotKept bool
 }
 
 // themeOption is one row of the theme selector.

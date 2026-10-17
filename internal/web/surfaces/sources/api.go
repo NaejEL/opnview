@@ -22,8 +22,7 @@ const PathAPISources = "/api/sources"
 // apiRoutes are the surface's JSON rows of the route table.
 func (s *surface) apiRoutes() []web.Route {
 	return []web.Route{
-		{Method: http.MethodGet, Pattern: PathAPISources, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPISources},
+		web.JSONRoute(http.MethodGet, PathAPISources, s.handleAPISources),
 	}
 }
 

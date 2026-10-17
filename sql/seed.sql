@@ -149,7 +149,7 @@ SELECT p.id, 'unavailable', 'not_yet_probed', NULL, 0
 FROM provider AS p
 WHERE NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);
 
-UPDATE provider SET is_active = 1
+UPDATE provider SET is_active = true
 WHERE (kind, provider_key) IN (
     VALUES ('firewall_log', 'pf'),
            ('security_event', 'suricata'),
@@ -242,15 +242,15 @@ FROM interface AS i JOIN synth_address AS a ON a.slot = 900000 + i.id
 UNION ALL
 SELECT i.id, 'gateways', a.address_v4, NULL, 4, :now - 8640000, :now
 FROM interface AS i JOIN synth_address AS a ON a.slot = 950000 + i.id
-WHERE i.is_upstream = 1
+WHERE i.is_upstream
 UNION ALL
 SELECT i.id, 'gateways', a.address_v6, NULL, 6, :now - 8640000, :now
 FROM interface AS i JOIN synth_address AS a ON a.slot = 950000 + i.id
-WHERE i.is_upstream = 1
+WHERE i.is_upstream
 UNION ALL
 SELECT i.id, 'addr4', a.address_v4, 24, 4, :now - 17280000, :now - 8640001
 FROM interface AS i JOIN synth_address AS a ON a.slot = 960000 + i.id
-WHERE i.is_upstream = 1;
+WHERE i.is_upstream;
 
 -- The same addresses as `ipv4[]` and `ipv6[]` report them: every address an
 -- interface holds, the primary one included, under the field's own name.
@@ -263,7 +263,7 @@ WHERE source_field IN ('addr4', 'addr6') AND last_seen_at = :now;
 
 -- The operator has said, on the first interface only, that a link-local address
 -- seen there is membership evidence. Every other interface keeps the default, no.
-UPDATE interface SET link_local_evidence = 1 WHERE id = 1;
+UPDATE interface SET link_local_evidence = true WHERE id = 1;
 
 -- The interface networks. Discovery proposed, for every interface, the network of
 -- its IPv4 and IPv6 address: the address of its slot masked to the prefix length
@@ -992,7 +992,7 @@ INSERT INTO geo_asn (address, provider_id, lookup_state, country_code, country_n
                      latitude, longitude, asn, operator, dataset_build_at, looked_up_at)
 SELECT
     address,
-    (SELECT id FROM provider WHERE kind = 'ip_geolocation' AND is_active = 1),
+    (SELECT id FROM provider WHERE kind = 'ip_geolocation' AND is_active),
     CASE WHEN is_miss THEN 'miss' ELSE 'resolved' END,
     CASE WHEN is_miss THEN NULL ELSE country_code END,
     CASE WHEN is_miss THEN NULL ELSE format('country-name-%s', country_code) END,
@@ -1048,7 +1048,7 @@ INSERT INTO security_event (id, provider_id, provider_event_key, occurred_at, in
                             in_interface_device, src_client_id, src_interface_id, flow_ref)
 SELECT
     m,
-    (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1),
+    (SELECT id FROM provider WHERE kind = 'security_event' AND is_active),
     format('eve-file-%s:%s', file_number, byte_position),
     occurred_at,
     occurred_at + 30,
@@ -1086,7 +1086,7 @@ raw AS (
 INSERT INTO provider_rule_info (provider_id, rule_identity, normalised_severity,
                                 provider_severity, category, rule_source, fetched_at)
 SELECT
-    (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1),
+    (SELECT id FROM provider WHERE kind = 'security_event' AND is_active),
     CASE WHEN x = 3 THEN 'named-rule-identity-alpha' ELSE format('%s', 1000000 + x) END,
     CASE provider_severity
         WHEN 1 THEN 'critical'
@@ -1322,7 +1322,7 @@ JOIN synth_address AS d ON d.slot = 1000000 + 900 + n;
 -- interval, 300 s -- is this firewall, records the interface the address belonged
 -- to and no client.
 UPDATE flow
-SET dst_is_this_firewall = 1,
+SET dst_is_this_firewall = true,
     dst_client_id = NULL,
     dst_interface_id = (SELECT h.interface_id FROM this_firewall_address AS h
                         WHERE h.address = flow.dst_address
@@ -1337,7 +1337,7 @@ WHERE EXISTS (SELECT 1 FROM this_firewall_address AS h
                 AND (h.is_current = 1 OR h.last_seen_at + 300 >= flow.observed_at));
 
 UPDATE flow
-SET src_is_this_firewall = 1,
+SET src_is_this_firewall = true,
     src_client_id = NULL,
     src_interface_id = (SELECT h.interface_id FROM this_firewall_address AS h
                         WHERE h.address = flow.src_address
@@ -1364,7 +1364,7 @@ INSERT INTO security_event (id, provider_id, provider_event_key, occurred_at, in
                             src_address, src_port, dst_address, dst_port, protocol,
                             in_interface_device, src_client_id, src_interface_id,
                             src_is_this_firewall, flow_ref)
-SELECT :alerts + n, (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1),
+SELECT :alerts + n, (SELECT id FROM provider WHERE kind = 'security_event' AND is_active),
        format('eve-file-3:this-firewall-%s', n), :now - n * 700, :now - n * 700 + 30,
        format('%s', 1000000 + n), format('signature-text-%s', n), 'allowed', NULL,
        u.address_v4, 30000 + n, x.address_v4, 443, 'tcp', format('device-%s', :interfaces + 1),
@@ -1426,7 +1426,7 @@ FROM synth_address AS a WHERE a.slot = :clients + 2;
 -- The cache and the local data of the one resolver are active, and each has been
 -- read successfully; resource_record_read holds that last poll.
 -- ---------------------------------------------------------------------------
-UPDATE provider SET is_active = 1
+UPDATE provider SET is_active = true
 WHERE kind IN ('resolver_cache', 'resolver_local_data') AND provider_key = 'unbound';
 
 INSERT INTO resource_record_read (provider_id, read_at)
@@ -1459,8 +1459,8 @@ JOIN dns_resolution AS r ON r.id = a.dns_resolution_id
 WHERE f.id % 12 = 11
   AND f.src_client_id IS NOT NULL
   AND f.dst_interface_id IS NULL
-  AND f.dst_is_this_firewall = 0
-  AND f.src_is_this_firewall = 0
+  AND NOT f.dst_is_this_firewall
+  AND NOT f.src_is_this_firewall
   AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg');
 
 -- The address records. The id is derived from the flow's, so the attribution can name
@@ -2328,12 +2328,12 @@ GROUP BY address;
 UPDATE source_availability
 SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/diagnostics/firewall/log',
     detail = NULL, checked_at = :now
-WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'firewall_log' AND is_active = 1);
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'firewall_log' AND is_active);
 
 UPDATE source_availability
 SET state = 'present_but_disabled', outcome = 'service_not_running', probe = 'GET /api/ids/service/status',
     detail = 'status reported stopped', checked_at = :now
-WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1);
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'security_event' AND is_active);
 
 -- The measurement source. Its probe is the firewall's own NetFlow configuration,
 -- which is what governs whether the per-pair snapshot it samples holds anything;
@@ -2342,12 +2342,12 @@ WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'security_event' AND 
 UPDATE source_availability
 SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/diagnostics/netflow/is_enabled',
     detail = 'local collection enabled', checked_at = :now
-WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active = 1);
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active);
 
 UPDATE source_availability
 SET state = 'reachable', outcome = 'healthy', probe = 'example state source probe',
     detail = NULL, checked_at = :now
-WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'reconciled_state' AND is_active = 1);
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'reconciled_state' AND is_active);
 
 -- The two DHCP servers, each with ITS OWN probe endpoint. One availability row per
 -- server, and neither borrows the other's conclusion: that is what the seam is for,
@@ -2357,37 +2357,37 @@ UPDATE source_availability
 SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/kea/service/status',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider
-                      WHERE kind = 'dhcp_lease' AND provider_key = 'kea' AND is_active = 1);
+                      WHERE kind = 'dhcp_lease' AND provider_key = 'kea' AND is_active);
 
 UPDATE source_availability
 SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/dnsmasq/service/status',
     detail = 'serving a range on its own interface', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider
-                      WHERE kind = 'dhcp_lease' AND provider_key = 'dnsmasq' AND is_active = 1);
+                      WHERE kind = 'dhcp_lease' AND provider_key = 'dnsmasq' AND is_active);
 
 UPDATE source_availability
 SET state = 'unavailable', outcome = 'present_but_disabled',
     probe = 'GET /api/unbound/overview/is_enabled',
     detail = 'query reporting is off', checked_at = :now
-WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'dns_lookup' AND is_active = 1);
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'dns_lookup' AND is_active);
 
 UPDATE source_availability
 SET state = 'reachable', outcome = 'healthy', probe = 'local dataset file stat',
     detail = NULL, checked_at = :now
-WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'ip_geolocation' AND is_active = 1);
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'ip_geolocation' AND is_active);
 
 -- The Public Suffix List: a list is held, so the grouping is available. Its probe
 -- is the outcome of the conditional download the refresher makes.
 UPDATE source_availability
 SET state = 'reachable', outcome = 'healthy', probe = 'list_not_modified',
     detail = NULL, checked_at = :now
-WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'registrable_domain' AND is_active = 1);
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'registrable_domain' AND is_active);
 
 -- Every implementation this installation does not run: probed, not running.
 UPDATE source_availability
 SET state = 'unavailable', outcome = 'not_found', probe = 'service status endpoint',
     detail = 'not installed on this firewall', checked_at = :now
-WHERE provider_id IN (SELECT id FROM provider WHERE is_active = 0);
+WHERE provider_id IN (SELECT id FROM provider WHERE NOT is_active);
 
 -- ---------------------------------------------------------------------------
 -- Collection gaps: the intervals opnview knows it did not cover.
@@ -2417,7 +2417,7 @@ reasons AS (
 INSERT INTO collection_gap (provider_id, interval_start_at, interval_end_at,
                             reason, detail, detected_at)
 SELECT
-    (SELECT id FROM provider WHERE kind = r.kind AND is_active = 1),
+    (SELECT id FROM provider WHERE kind = r.kind AND is_active),
     :now - ((k % 5) * 3600) - ((k % 6) * 8640000) - 600,
     :now - ((k % 5) * 3600) - ((k % 6) * 8640000),
     r.reason,
@@ -2479,7 +2479,7 @@ FROM counter
 JOIN interface AS i ON i.id = ((s - 1) % :interfaces) + 1
 UNION ALL
 SELECT
-    (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active = 1),
+    (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active),
     'interface_endpoint_pair',
     format('device-%s', ((s - 1) % :interfaces) + 1)
     || ' ' ||
@@ -2508,7 +2508,7 @@ UNION ALL
 -- The totals of one local address over all its peers, the only place traffic/top
 -- reports the address's sending.
 SELECT
-    (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active = 1),
+    (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active),
     'interface_endpoint',
     format('device-%s', ((s - 1) % :interfaces) + 1)
     || ' ' ||
@@ -2551,7 +2551,7 @@ sets AS (
 )
 INSERT INTO state_snapshot (provider_id, set_key, captured_at)
 SELECT
-    (SELECT id FROM provider WHERE kind = 'reconciled_state' AND is_active = 1),
+    (SELECT id FROM provider WHERE kind = 'reconciled_state' AND is_active),
     sets.set_key,
     :now - ((k - 1) * 3600) - ((k % 6) * 8640000)
 FROM capture, sets;
@@ -2799,7 +2799,7 @@ FROM provider AS p,
          AS h,
      LATERAL (VALUES ('pull', 0, h.handover), ('push', h.handover + 1, CAST(NULL AS BIGINT)))
          AS s (path, from_at, to_at)
-WHERE p.kind = 'firewall_log' AND p.is_active = 1;
+WHERE p.kind = 'firewall_log' AND p.is_active;
 
 -- The two push listeners, last heard alive half a minute ago.
 INSERT INTO push_listener (protocol, transport, alive_at)

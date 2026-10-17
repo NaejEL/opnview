@@ -15,9 +15,9 @@ import (
 // firewall API on the local network. ROADMAP.md permits exactly three outbound
 // calls and this is inside the first of them.
 //
-// THE MAXMIND KEY IS NOT VERIFIED HERE. A download verifies it, and downloading is
-// internal/maxmind's alone; a save wakes that refresh, and the settings surface
-// reports the state it recorded.
+// A PLUGIN'S CREDENTIALS ARE NOT VERIFIED HERE. The maxmind plugin's licence key is
+// verified by the download its refresh makes, through the plugin host's fetch facility
+// (internal/plugin/fetch), and its availability says what that download found.
 //
 // THE FOUR ANSWERS ARE FOUR ANSWERS. 401/403 is a credential failure, 404 is an
 // absent endpoint, a refused certificate is a host that answered and proved an

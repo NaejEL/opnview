@@ -5,11 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"testing"
-
-	"github.com/NaejEL/opnview/internal/store/reads"
 )
 
 // The list and the algorithm, tested against the list's own test vectors.
@@ -82,35 +79,6 @@ func TestTheRegistrableDomainPassesTheListsOwnTestVectors(t *testing.T) {
 		}
 	}
 
-	// The grouping never alters a site name: each group carries the stored names verbatim,
-	// whatever the case, the trailing dot or the script they were written in, and the totals
-	// it was handed are left as they were. The names are chosen so that any normalisation --
-	// lower-casing, stripping the dot, punycode -- would change at least one of them.
-	stored := []reads.SiteTotal{
-		{SiteName: "WWW.Example.co.uk", Bytes: 10, Connections: 1},
-		{SiteName: "shop.example.co.uk.", Bytes: 20, Connections: 2},
-		{SiteName: "bücher.example.de", Bytes: 30, Connections: 3},
-		{SiteName: "co.uk", Bytes: 40, Connections: 4},
-	}
-	handed := append([]reads.SiteTotal(nil), stored...)
-	var carried []string
-	for _, group := range GroupSites(list.RegistrableDomain, handed) {
-		carried = append(carried, group.SiteNames...)
-	}
-	sort.Strings(carried)
-	var want []string
-	for _, site := range stored {
-		want = append(want, site.SiteName)
-	}
-	sort.Strings(want)
-	if strings.Join(carried, "|") != strings.Join(want, "|") {
-		t.Errorf("the groups carry the site names %q, not the stored %q verbatim", carried, want)
-	}
-	for index := range stored {
-		if handed[index] != stored[index] {
-			t.Errorf("grouping altered the site total it was handed: %+v became %+v", stored[index], handed[index])
-		}
-	}
 	if got, ok := list.RegistrableDomain("www.example.com."); !ok || got != "example.com." {
 		t.Errorf("a trailing dot gave %q", got)
 	}

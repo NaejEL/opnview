@@ -121,12 +121,6 @@ type ErrMalformed struct{ Reason string }
 
 func (e ErrMalformed) Error() string { return "malformed parameters: " + e.Reason }
 
-// ParseParameters parses a raw parameters payload against a type's declared keys. An
-// empty payload is an empty object.
-func ParseParameters(raw string, params []Param) (ParsedParameters, error) {
-	return ParseParametersWith(raw, params, nil)
-}
-
 // ParseParametersWith parses a payload with the data catalogue at hand: a series may then be read
 // from any of its datasets (custom_chart, P8 of specs/SPEC-backend-completion-plugins.md).
 func ParseParametersWith(raw string, params []Param, datasets *dataset.Catalogue) (ParsedParameters, error) {

@@ -2,13 +2,10 @@ package dhcplease
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
-	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // Kind is the registry kind this package answers for.
@@ -46,51 +43,6 @@ type Source interface {
 	Probe(ctx context.Context, host provider.Session) (provider.Result, error)
 	// Leases returns the backend's current lease table, or provider.ErrUnsupportedRead.
 	Leases(ctx context.Context, host provider.Session, pageSize int) ([]Observation, provider.Result, error)
-}
-
-// ReadLeaseRows is the part of a lease read that is the same for every backend: one page, the
-// standard envelope, and the availability state the answer implies.
-//
-// The page holds pageSize rows, the operator's page size for the kind. The table is small --
-// one row per active lease -- so one page is the whole of it in practice.
-//
-// IT IS A FREE FUNCTION OVER THE PORT RATHER THAN A METHOD ON IT. Only this kind's
-// implementations call it, and a port that gains a method for one kind's convenience stops
-// being a boundary. Written this way it reads identically at the call site and costs a connector
-// nothing, and when connectors speak a protocol it travels with the lease reader instead of
-// becoming a verb the far side has to implement.
-func ReadLeaseRows(ctx context.Context, host provider.Session, endpoint opnsense.Endpoint, pageSize int) (
-	[]decode.Object, provider.Result, error) {
-	result := provider.Result{Probe: endpoint, State: vocab.StateUnavailable,
-		Outcome: vocab.OutcomeRequestNotMade}
-
-	response, err := host.Call(ctx, endpoint, opnsense.RequestOptions{
-		Form: opnsense.Pagination(1, pageSize),
-	})
-	if err != nil && response.Outcome == "" {
-		return nil, result, err
-	}
-	if !response.OK() {
-		result.Outcome = provider.ResponseOutcome(response)
-		result.Detail = response.Detail
-		return nil, result, fmt.Errorf("collect: %s answered %s", endpoint.Path, response.Outcome)
-	}
-
-	rows, err := decode.Rows(response.Body)
-	if err != nil {
-		result.Outcome = vocab.OutcomeUndecodable
-		result.Detail = "the lease table could not be read"
-		return nil, result, fmt.Errorf("collect: reading %s: %w", endpoint.Path, err)
-	}
-	result.State, result.Outcome = vocab.StateReachable, vocab.OutcomeHealthy
-	result.Separable = true
-	if len(rows) == 0 {
-		result.Outcome = vocab.OutcomeHealthyEmpty
-		// Returned as an empty, non-nil slice so a caller can tell "read nothing" from "did
-		// not read".
-		return []decode.Object{}, result, nil
-	}
-	return rows, result, nil
 }
 
 // DecodeLease reads the fields the two current backends and the legacy plugin share, with the

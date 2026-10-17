@@ -4,7 +4,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -37,11 +36,9 @@ const (
 	FieldFill     = "fill_suggestion"
 
 	// The settings surface's cards.
-	FieldSettingsCard        = "settings_card"
-	SettingsCardFirewall     = "firewall"
-	SettingsCardGeolocation  = "geolocation"
-	SettingsCardPublicSuffix = "public_suffix"
-	SettingsCardAppearance   = "appearance"
+	FieldSettingsCard      = "settings_card"
+	SettingsCardFirewall   = "firewall"
+	SettingsCardAppearance = "appearance"
 
 	// The Interfaces surface's forms.
 	FieldNetworkAction = "action"
@@ -91,10 +88,6 @@ const (
 	FieldConfirm         = "confirm"
 	FieldCancel          = "cancel"
 	FieldSelectionPrefix = "selection_"
-
-	// FieldPublicSuffixInterval is the Public Suffix List refresh interval's field: the
-	// setting's own key.
-	FieldPublicSuffixInterval = config.KeyPublicSuffixRefreshInterval
 
 	// The two values of the site-name mode.
 	AggregateModeFull      = "full"

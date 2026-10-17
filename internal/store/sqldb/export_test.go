@@ -8,8 +8,8 @@ var UnreadableObjects = unreadableObjects
 // Role is the read connections' role.
 func (c *ReadConnections) Role() string { return c.role }
 
-// ParameterNames is the names rewriteParameters binds, in order; "" for a positional parameter.
+// ParameterNames is the names a text's translation binds, in order.
 func ParameterNames(text string) ([]string, error) {
-	rewritten, err := rewriteParameters(text)
-	return rewritten.names, err
+	translation, err := Translate(text)
+	return translation.Names, err
 }

@@ -25,7 +25,7 @@ func TestAPushGapSeenAgainIsExtended(t *testing.T) {
 	}
 	var count, end int64
 	if err := database.DB().QueryRowContext(ctx,
-		"SELECT count(*), max(interval_end_at) FROM collection_gap WHERE provider_id = ?", providerID).
+		"SELECT count(*), max(interval_end_at) FROM collection_gap WHERE provider_id = $1", providerID).
 		Scan(&count, &end); err != nil {
 		t.Fatal(err)
 	}

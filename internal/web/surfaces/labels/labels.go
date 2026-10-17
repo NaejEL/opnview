@@ -41,20 +41,11 @@ type surface struct {
 }
 
 func (s *surface) routes() []web.Route {
-	route := func(method, pattern string, handler http.HandlerFunc) web.Route {
-		return web.Route{Method: method, Pattern: pattern, Access: web.AccessAuthenticated, JSON: true,
-			Handler: handler}
-	}
 	return []web.Route{
-		route(http.MethodPost, PathInterfaceLabelPattern, s.handleLabel),
-		route(http.MethodGet, PathBlocklists, s.handleBlocklists),
-		route(http.MethodPost, PathBlocklistPurposePattern, s.handlePurpose),
+		web.JSONRoute(http.MethodPost, PathInterfaceLabelPattern, s.handleLabel),
+		web.JSONRoute(http.MethodGet, PathBlocklists, s.handleBlocklists),
+		web.JSONRoute(http.MethodPost, PathBlocklistPurposePattern, s.handlePurpose),
 	}
-}
-
-// Refusal is a refused request's closed code.
-type Refusal struct {
-	Condition string `json:"condition"`
 }
 
 // Interface is an interface as a label write leaves it.
@@ -108,14 +99,14 @@ func refuse(writer http.ResponseWriter, request *http.Request, err error) {
 	if refusal.Code == owners.RefusalUnknownInterface || refusal.Code == owners.RefusalUnknownBlocklist {
 		status = http.StatusNotFound
 	}
-	web.WriteJSON(writer, status, Refusal{Condition: refusal.Code})
+	web.RefuseJSON(writer, status, refusal.Code, "")
 }
 
 // pathID reads the {id} of the path; a value that is not a positive whole number names nothing.
 func pathID(writer http.ResponseWriter, request *http.Request, unknown string) (int64, bool) {
 	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		web.WriteJSON(writer, http.StatusNotFound, Refusal{Condition: unknown})
+		web.RefuseJSON(writer, http.StatusNotFound, unknown, "")
 		return 0, false
 	}
 	return id, true
@@ -134,7 +125,7 @@ func nullableText(writer http.ResponseWriter, request *http.Request, key string)
 			return &text, true
 		}
 	}
-	web.WriteJSON(writer, http.StatusBadRequest, Refusal{Condition: web.ConditionMalformedBody})
+	web.RefuseJSON(writer, http.StatusBadRequest, web.ConditionMalformedBody, "")
 	return nil, false
 }
 

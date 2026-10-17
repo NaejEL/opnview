@@ -61,7 +61,7 @@ func (s *surface) handleSetupSubmit(writer http.ResponseWriter, request *http.Re
 	password := request.PostFormValue("password")
 	if key, ok := validateNewCredentials(login, password,
 		request.PostFormValue("password_again")); !ok {
-		s.renderSetupRefusal(writer, request, login, key)
+		s.renderRefusal(writer, request, pageSetup, msgTitleSetup, login, key)
 		return
 	}
 
@@ -92,17 +92,18 @@ func (s *surface) handleSetupSubmit(writer http.ResponseWriter, request *http.Re
 	s.RedirectWithNotice(writer, request, web.PathSettings, msgSetupDone)
 }
 
-// renderSetupRefusal redraws the setup form with a refusal and the login kept.
-func (s *surface) renderSetupRefusal(writer http.ResponseWriter, request *http.Request,
-	login string, key messageKey) {
-	built, err := s.newView(writer, request, nil, msgTitleSetup)
+// renderRefusal redraws a signed-out form -- the setup or the reset -- with a refusal and the
+// login kept.
+func (s *surface) renderRefusal(writer http.ResponseWriter, request *http.Request, page string,
+	title messageKey, login string, key messageKey) {
+	built, err := s.newView(writer, request, nil, title)
 	if err != nil {
 		s.FailInternal(writer, request, err)
 		return
 	}
 	built.Login = login
 	built.Error = key
-	if err := s.Render(writer, http.StatusBadRequest, pageSetup, &built); err != nil {
+	if err := s.Render(writer, http.StatusBadRequest, page, &built); err != nil {
 		s.FailInternal(writer, request, err)
 	}
 }
@@ -226,7 +227,7 @@ func (s *surface) handleRecoverSubmit(writer http.ResponseWriter, request *http.
 	password := request.PostFormValue("password")
 	if key, ok := validateNewCredentials(login, password,
 		request.PostFormValue("password_again")); !ok {
-		s.renderRecoverRefusal(writer, request, login, key)
+		s.renderRefusal(writer, request, pageRecover, msgTitleRecover, login, key)
 		return
 	}
 
@@ -240,7 +241,7 @@ func (s *surface) handleRecoverSubmit(writer http.ResponseWriter, request *http.
 		// wrong key file: somebody holding the key file already holds the secrets, so
 		// there is nothing to protect by telling them which half they got wrong, and
 		// one message is one fewer thing to get inconsistent.
-		s.renderRecoverRefusal(writer, request, login, msgKeyFileRefused)
+		s.renderRefusal(writer, request, pageRecover, msgTitleRecover, login, msgKeyFileRefused)
 		return
 	}
 
@@ -256,21 +257,6 @@ func (s *surface) handleRecoverSubmit(writer http.ResponseWriter, request *http.
 	}
 	web.ClearSessionCookie(writer)
 	s.RedirectWithNotice(writer, request, web.PathSignIn, msgPasswordReset)
-}
-
-// renderRecoverRefusal redraws the reset form with a refusal and the login kept.
-func (s *surface) renderRecoverRefusal(writer http.ResponseWriter, request *http.Request,
-	login string, key messageKey) {
-	built, err := s.newView(writer, request, nil, msgTitleRecover)
-	if err != nil {
-		s.FailInternal(writer, request, err)
-		return
-	}
-	built.Login = login
-	built.Error = key
-	if err := s.Render(writer, http.StatusBadRequest, pageRecover, &built); err != nil {
-		s.FailInternal(writer, request, err)
-	}
 }
 
 // validateNewCredentials checks a login and a new password, returning the

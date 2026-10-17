@@ -28,14 +28,8 @@ type Element struct {
 // The abstract data types of RFC 7012, section 3.1, as the registry writes them.
 const (
 	TypeOctetArray           = "octetArray"
-	TypeUnsigned8            = "unsigned8"
-	TypeUnsigned16           = "unsigned16"
-	TypeUnsigned32           = "unsigned32"
 	TypeUnsigned64           = "unsigned64"
-	TypeSigned8              = "signed8"
 	TypeSigned16             = "signed16"
-	TypeSigned32             = "signed32"
-	TypeSigned64             = "signed64"
 	TypeFloat32              = "float32"
 	TypeFloat64              = "float64"
 	TypeBoolean              = "boolean"
@@ -94,18 +88,6 @@ func ByName(name string) (Element, bool) {
 	loadOnce.Do(load)
 	element, found := byName[name]
 	return element, found
-}
-
-// Len is how many elements the registry holds.
-func Len() int {
-	loadOnce.Do(load)
-	return len(byID)
-}
-
-// Err is the error reading the embedded registry met, or nil.
-func Err() error {
-	loadOnce.Do(load)
-	return loadErr
 }
 
 // EnterpriseName is the name a field of an enterprise-specific element is exposed under, which no

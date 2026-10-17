@@ -24,7 +24,7 @@ FROM flow
 WHERE observed_at >= :from
   AND observed_at <= :to
   AND dst_interface_id IS NULL
-  AND dst_is_this_firewall = 0
+  AND NOT dst_is_this_firewall
   AND (pair_outcome IS NULL OR pair_outcome <> 'second_leg')
 ORDER BY id;
 
@@ -39,7 +39,7 @@ JOIN domain_attribution AS a ON a.flow_id = f.id
 WHERE f.observed_at >= :from
   AND f.observed_at <= :to
   AND (f.dst_interface_id IS NOT NULL
-       OR f.dst_is_this_firewall = 1
+       OR f.dst_is_this_firewall
        OR f.pair_outcome = 'second_leg')
 ORDER BY f.id;
 
@@ -66,7 +66,7 @@ WHERE r.client_address = :address
   AND r.action = 'pass'
   AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
   AND r.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname')
-  AND (r.client_id IS NULL OR :client_id IS NULL);
+  AND (r.client_id IS NULL OR CAST(:client_id AS BIGINT) IS NULL);
 
 
 -- ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ WHERE lower(rtrim(a.domain, '.')) = :name
   AND a.client_address = :address
   AND a.looked_up_at >= :start
   AND a.looked_up_at <= :end
-  AND (a.client_id IS NULL OR :client_id IS NULL)
+  AND (a.client_id IS NULL OR CAST(:client_id AS BIGINT) IS NULL)
   AND a.action = 'pass'
   AND a.answer_source IN ('Recursion', 'Cache', 'Local-data')
   AND a.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname');

@@ -46,6 +46,10 @@ func (s *ReadStore) CatalogueRows(ctx context.Context, text string, args []any, 
 	if err != nil {
 		return err
 	}
+	converter, err := newCellConverter(rows)
+	if err != nil {
+		return err
+	}
 	for rows.Next() {
 		cells := make([]any, len(columns))
 		pointers := make([]any, len(columns))
@@ -55,11 +59,7 @@ func (s *ReadStore) CatalogueRows(ctx context.Context, text string, args []any, 
 		if err := rows.Scan(pointers...); err != nil {
 			return fmt.Errorf("store: a catalogue read: %w", err)
 		}
-		for index, cell := range cells {
-			if bytes, isBytes := cell.([]byte); isBytes {
-				cells[index] = string(bytes)
-			}
-		}
+		converter.convert(cells)
 		if err := scan(cells); err != nil {
 			return err
 		}

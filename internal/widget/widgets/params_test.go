@@ -101,7 +101,7 @@ func TestEveryReferenceKindResolvesByItsKeyAndNeverByItsLabel(t *testing.T) {
 	}
 	// A dhcp_client_id reference needs a client known by one.
 	f.exec(t, `INSERT INTO client (identity_kind, identity_key, first_seen_at, last_seen_at)
-		VALUES ('dhcp_client_id', 'example-client-id', ?, ?)`, f.now, f.now)
+		VALUES ('dhcp_client_id', 'example-client-id', $1, $2)`, f.now, f.now)
 	matches = append(matches, referenceCase{"client", "dhcp_client_id", "example-client-id"})
 	covered := map[string]bool{}
 	for _, item := range matches {

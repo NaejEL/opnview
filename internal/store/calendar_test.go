@@ -80,7 +80,7 @@ func TestEverySlotEqualsTheFlowsAcrossTheCalendarAndItsCorrections(t *testing.T)
 			}
 		}
 		if bytes := storetest.QueryInt(t, network.DB, "SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_7d "+
-			"WHERE period_start_at = ?", crossing); bytes == 0 {
+			"WHERE period_start_at = $1", crossing); bytes == 0 {
 			t.Errorf("%s: the week crossing the year boundary holds nothing", stage)
 		}
 	}
@@ -91,7 +91,7 @@ func TestEverySlotEqualsTheFlowsAcrossTheCalendarAndItsCorrections(t *testing.T)
 	oldest := network.Clients[0]
 	late := network.Insert(t, []storetest.Flow{{ObservedAt: from + 3600, Device: oldest.Device, Direction: "in",
 		Src: oldest.Address, Dst: storetest.Outside(5, oldest.V6), Protocol: "tcp", Action: "pass", Bytes: 999}})
-	if _, err := network.DB.DB().Exec(`UPDATE client SET owner_id = 2, owner_assigned_at = ? WHERE owner_id = 1`,
+	if _, err := network.DB.DB().Exec(`UPDATE client SET owner_id = 2, owner_assigned_at = $1 WHERE owner_id = 1`,
 		network.Now); err != nil {
 		t.Fatal(err)
 	}

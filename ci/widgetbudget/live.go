@@ -22,7 +22,7 @@ func timeLive(ctx context.Context, database *store.Store, now int64, label strin
 	// samples over months, and a live figure reads only the last two intervals.
 	var newest *int64
 	if err := database.DB().QueryRowContext(ctx, `SELECT max(sampled_at) FROM measurement_sample
-		WHERE subject_kind = 'interface_endpoint' AND sampled_at <= ?`, now).Scan(&newest); err != nil {
+		WHERE subject_kind = 'interface_endpoint' AND sampled_at <= $1`, now).Scan(&newest); err != nil {
 		return fmt.Errorf("the seed's newest sample: %w", err)
 	}
 	if newest != nil {

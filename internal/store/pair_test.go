@@ -94,7 +94,7 @@ func TestTwoClientsToOneDestinationEachPairWithTheirOwnLeg(t *testing.T) {
 				first, second := pair[0], pair[1]
 				var partnerOfFirst int64
 				if err := network.DB.DB().QueryRow(`SELECT p.ip_id FROM flow AS f JOIN flow AS p ON p.id = f.paired_flow_id
-					WHERE f.src_address = ? AND f.direction = 'in'`, first.Src).Scan(&partnerOfFirst); err != nil {
+					WHERE f.src_address = $1 AND f.direction = 'in'`, first.Src).Scan(&partnerOfFirst); err != nil {
 					t.Fatalf("reading the partner of %s: %v", first.Src, err)
 				}
 				if partnerOfFirst != *second.IPID {
@@ -326,7 +326,7 @@ func TestAPairedConnectionCountsOnceInTheVolumeFamily(t *testing.T) {
 				t.Errorf("the volume family's totals hold %d bytes; counted once, the flows hold %d", got, once)
 			}
 			legs := storetest.QueryInt(t, network.DB, `SELECT sum(packet_bytes) FROM flow WHERE pair_outcome = 'second_leg'
-				AND interface_device = ?`, network.Upstream.Device)
+				AND interface_device = $1`, network.Upstream.Device)
 			if got := familySum(t, network.DB, "volume_aggregate", "WHERE exit_leg_device = '"+network.Upstream.Device+"'"); got != legs {
 				t.Errorf("the upstream interface's own figures hold %d bytes of second legs, the flows %d", got, legs)
 			}
@@ -335,7 +335,7 @@ func TestAPairedConnectionCountsOnceInTheVolumeFamily(t *testing.T) {
 				t.Fatalf("reading the window: %v", err)
 			}
 			if got := window.Total().Bytes; got != storetest.QueryInt(t, network.DB, `SELECT sum(packet_bytes) FROM flow
-				WHERE observed_at >= ? AND (pair_outcome IS NULL OR pair_outcome <> 'second_leg')`, network.Now-86400) {
+				WHERE observed_at >= $1 AND (pair_outcome IS NULL OR pair_outcome <> 'second_leg')`, network.Now-86400) {
 				t.Errorf("the window's total %d counts a paired connection twice", got)
 			}
 			if got := window.ExitLegs()[network.Upstream.Device].Bytes; got != legs {
@@ -466,8 +466,8 @@ func TestNoRecordIsEverLabelledThisFirewallsOwnTraffic(t *testing.T) {
 				t.Errorf("%d records carry an outcome other than a leg or not paired", others)
 			}
 			if wrong := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow AS f JOIN interface AS i
-				ON i.device = f.interface_device WHERE f.direction = 'out' AND f.src_is_this_firewall = 1
-				AND i.is_upstream = 1 AND (f.pair_outcome IS NULL
+				ON i.device = f.interface_device WHERE f.direction = 'out' AND f.src_is_this_firewall
+				AND i.is_upstream AND (f.pair_outcome IS NULL
 				OR (f.pair_outcome = 'not_paired') = (f.paired_flow_id IS NOT NULL)
 				OR f.pair_outcome NOT IN ('second_leg', 'not_paired'))`); wrong != 0 {
 				t.Errorf("%d upstream records sourced by this firewall have no single outcome", wrong)

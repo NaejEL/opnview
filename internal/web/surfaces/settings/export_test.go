@@ -25,31 +25,12 @@ func PageFigures(ctx context.Context, host web.Host) (map[string]string, error) 
 	if err := newSurface(host).fillSettings(request, &built, msgVerifyNotAttempted); err != nil {
 		return nil, err
 	}
-	card := built.PublicSuffix
-	unit := ""
-	for _, option := range card.IntervalField.Units {
-		if option.Selected {
-			unit = option.Value
-		}
-	}
 	figures := map[string]string{
-		"firewall_url":                  built.FirewallURL,
-		"api_key":                       built.APIKey,
-		"certificate_fingerprint":       built.CertificateFingerprint,
-		"credential_state":              string(built.CredentialState),
-		"verification":                  string(built.VerificationState),
-		"licence_key_state":             string(built.LicenceKeyState),
-		"account_id":                    built.MaxMindAccountID,
-		"geoip_state":                   string(built.GeoIPState),
-		"geoip_build":                   built.GeoIPBuild,
-		"public_suffix.state":           string(card.StateKey),
-		"public_suffix.in_use":          string(card.InUseKey),
-		"public_suffix.version":         card.Version,
-		"public_suffix.version_state":   string(card.VersionState),
-		"public_suffix.rules":           card.Rules,
-		"public_suffix.confirmed":       card.Confirmed,
-		"public_suffix.confirmed_state": string(card.ConfirmedState),
-		"public_suffix.interval":        card.IntervalField.Value + " " + unit,
+		"firewall_url":            built.FirewallURL,
+		"api_key":                 built.APIKey,
+		"certificate_fingerprint": built.CertificateFingerprint,
+		"credential_state":        string(built.CredentialState),
+		"verification":            string(built.VerificationState),
 	}
 	for _, option := range built.Themes {
 		if option.Selected {

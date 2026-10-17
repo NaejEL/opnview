@@ -143,7 +143,7 @@ func refusalCases() []refusalCase {
 		withQuery("example_syntax", "SELEKT 1"),
 		withQuery("example_unknown_table", "SELECT a AS key, 1 AS value FROM no_such_table"),
 		withQuery("example_unbound", "SELECT :nobody AS key, 1 AS value"),
-		withQuery("example_positional", "SELECT ? AS key, 1 AS value"),
+		withQuery("example_positional", "SELECT $1 AS key, 1 AS value"),
 		withQuery("example_from_unwindowed", "SELECT :from AS key, 1 AS value"),
 		withQuery("example_missing_column", "SELECT 1 AS value"),
 	}

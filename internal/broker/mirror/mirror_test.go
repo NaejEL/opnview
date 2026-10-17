@@ -77,7 +77,7 @@ func (tm *testMirror) store(t *testing.T, datum *Datum, body string, corrections
 func columnsOf(t *testing.T, tm *testMirror, table string) []string {
 	t.Helper()
 	rows, err := tm.mirror.db.Query(`SELECT column_name FROM information_schema.columns
-		WHERE table_schema = 'opnsense' AND table_name = ? AND left(column_name, 1) <> '#' ORDER BY 1`, table)
+		WHERE table_schema = 'opnsense' AND table_name = $1 AND left(column_name, 1) <> '#' ORDER BY 1`, table)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestATypeChangeConvertsTheColumnToJSONBWithoutLoss(t *testing.T) {
 	tm.store(t, datum, `{"value": "forty-two"}`, infer.Corrections{})
 	var kind string
 	if err := tm.mirror.db.QueryRow(`SELECT data_type FROM information_schema.columns WHERE table_schema = 'opnsense'
-		AND table_name = ? AND column_name = 'value'`, TableName(datum.Endpoint, "")).Scan(&kind); err != nil ||
+		AND table_name = $1 AND column_name = 'value'`, TableName(datum.Endpoint, "")).Scan(&kind); err != nil ||
 		kind != "jsonb" {
 		t.Fatalf("the column is %q (%v)", kind, err)
 	}
@@ -228,7 +228,7 @@ func TestATypeChangeConvertsTheColumnToJSONBWithoutLoss(t *testing.T) {
 		t.Errorf("the converted column serves %s", served.Marshal())
 	}
 	var versions int
-	_ = tm.mirror.db.QueryRow(`SELECT count(*) FROM opnsense.mirror_schema_version WHERE endpoint_id = ?
+	_ = tm.mirror.db.QueryRow(`SELECT count(*) FROM opnsense.mirror_schema_version WHERE endpoint_id = $1
 		AND cause LIKE '%converted%'`, datum.EndpointID).Scan(&versions)
 	if versions != 1 {
 		t.Errorf("%d conversion versions recorded", versions)

@@ -59,10 +59,8 @@ type surface struct {
 
 func (s *surface) routes() []web.Route {
 	return []web.Route{
-		{Method: http.MethodGet, Pattern: PathPlugins, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleListing},
-		{Method: http.MethodPost, Pattern: PathPluginSettingsPattern, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleSettings},
+		web.JSONRoute(http.MethodGet, PathPlugins, s.handleListing),
+		web.JSONRoute(http.MethodPost, PathPluginSettingsPattern, s.handleSettings),
 	}
 }
 
@@ -123,8 +121,7 @@ func (s *surface) handleSettings(writer http.ResponseWriter, request *http.Reque
 		widget.WriteJSON(writer, http.StatusInternalServerError, SettingsRefusal{Condition: ConditionInternal})
 		return
 	}
-	// A plugin placing addresses is asked to refresh now rather than at its next daily check, as a
-	// save of the MaxMind credentials on the settings page asks.
+	// A plugin placing addresses is asked to refresh now rather than at its next daily check.
 	if s.GeoIP() != nil {
 		for _, provided := range loaded.Providers {
 			if provided.Kind == ipgeolocation.Kind {

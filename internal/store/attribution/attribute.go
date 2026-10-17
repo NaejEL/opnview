@@ -150,7 +150,7 @@ func (s *AttributionStore) AttributeWith(ctx context.Context, from, to int64, wi
 	if err != nil {
 		return result, err
 	}
-	rows, err := prepared.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, prepared, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return result, fmt.Errorf("store: attribution_candidates: %w", err)
 	}
@@ -176,8 +176,7 @@ func (s *AttributionStore) AttributeWith(ctx context.Context, from, to int64, wi
 	if err != nil {
 		return result, err
 	}
-	ineligible, err := prepared.QueryContext(ctx, ineligibleText, sql.Named("from", from),
-		sql.Named("to", to))
+	ineligible, err := sqldb.Query(ctx, prepared, ineligibleText, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return result, fmt.Errorf("store: attribution_ineligible: %w", err)
 	}
@@ -324,7 +323,7 @@ func decideAttribution(ctx context.Context, q sqldb.Querier, flow attributionFlo
 // scanLookups reads the rows of a lookup statement.
 func scanLookups(ctx context.Context, q sqldb.Querier, name, text string, parameters map[string]any) (
 	[]attributionLookup, error) {
-	rows, err := q.QueryContext(ctx, text, sqldb.Named(text, parameters)...)
+	rows, err := sqldb.Query(ctx, q, text, parameters)
 	if err != nil {
 		return nil, fmt.Errorf("store: %s: %w", name, err)
 	}
@@ -534,7 +533,7 @@ func (s *AttributionStore) ResolveLeaseHostname(ctx context.Context, hostname st
 	if err != nil {
 		return "", "", err
 	}
-	rows, err := s.SQL.QueryContext(ctx, text, sql.Named("label", label), sql.Named("at", at))
+	rows, err := sqldb.Query(ctx, s.SQL, text, map[string]any{"label": label, "at": at})
 	if err != nil {
 		return "", "", fmt.Errorf("store: lease_addresses_for_hostname: %w", err)
 	}
@@ -613,7 +612,7 @@ func (s *AttributionStore) ResolveLoggedHostnames(ctx context.Context, ingestedB
 	if err != nil {
 		return result, err
 	}
-	rows, err := s.SQL.QueryContext(ctx, text, sql.Named("ingested_before", ingestedBefore))
+	rows, err := sqldb.Query(ctx, s.SQL, text, map[string]any{"ingested_before": ingestedBefore})
 	if err != nil {
 		return result, fmt.Errorf("store: unresolved_hostname_lookups: %w", err)
 	}
@@ -675,7 +674,7 @@ func (s *AttributionStore) ResolveLoggedHostnames(ctx context.Context, ingestedB
 // lookupResolution reads one lookup's client_resolution.
 func (s *AttributionStore) lookupResolution(ctx context.Context, id int64) (string, error) {
 	var resolution string
-	if err := s.SQL.QueryRowContext(ctx, "SELECT client_resolution FROM dns_resolution WHERE id = ?",
+	if err := s.SQL.QueryRowContext(ctx, "SELECT client_resolution FROM dns_resolution WHERE id = $1",
 		id).Scan(&resolution); err != nil {
 		return "", fmt.Errorf("store: reading lookup %d: %w", id, err)
 	}

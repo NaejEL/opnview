@@ -83,7 +83,7 @@ func TestANeighbourAtAnAddressThisFirewallHoldsCreatesNoClient(t *testing.T) {
 	ctx := context.Background()
 	held := stringColumn(t, harness.Store, `SELECT DISTINCT a.address FROM interface_address AS a
 		JOIN interface AS i ON i.id = a.interface_id
-		WHERE a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6') AND i.is_upstream = 0
+		WHERE a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6') AND NOT i.is_upstream
 		ORDER BY a.address`)
 	var heldV4, heldV6 string
 	for _, address := range held {
@@ -97,7 +97,7 @@ func TestANeighbourAtAnAddressThisFirewallHoldsCreatesNoClient(t *testing.T) {
 	if heldV4 == "" || heldV6 == "" {
 		t.Fatalf("discovery stored no inside address of both families to hold: %v", held)
 	}
-	device := stringColumn(t, harness.Store, `SELECT device FROM interface WHERE is_upstream = 0
+	device := stringColumn(t, harness.Store, `SELECT device FROM interface WHERE NOT is_upstream
 		ORDER BY id LIMIT 1`)[0]
 
 	harness.Fake.AnswerJSON(opnsense.ARPTable, []any{
@@ -115,14 +115,14 @@ func TestANeighbourAtAnAddressThisFirewallHoldsCreatesNoClient(t *testing.T) {
 	}
 
 	for _, address := range []string{heldV4, heldV6} {
-		if clients := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM client WHERE last_address = ?",
+		if clients := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM client WHERE last_address = $1",
 			address); clients != 0 {
 			t.Errorf("the neighbour entry at %s, an address this firewall holds, made %d clients",
 				address, clients)
 		}
 	}
 	if clients := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM client
-		WHERE last_address = '198.51.100.77' AND identity_kind = ?`, vocab.IdentityMAC); clients != 1 {
+		WHERE last_address = '198.51.100.77' AND identity_kind = $1`, vocab.IdentityMAC); clients != 1 {
 		t.Errorf("the neighbour at an address the firewall does not hold made %d clients, want 1", clients)
 	}
 }

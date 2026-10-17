@@ -21,11 +21,9 @@ const PathWidgetPattern = widget.PathPrefix + "{type}"
 func (s *surface) widgetRoutes() []web.Route {
 	var routes []web.Route
 	for _, widgetType := range s.Widgets().Types() {
-		routes = append(routes, web.Route{Method: http.MethodGet, Pattern: widget.PathPrefix + widgetType,
-			Access: web.AccessAuthenticated, JSON: true, Handler: s.handleWidget(widgetType)})
+		routes = append(routes, web.JSONRoute(http.MethodGet, widget.PathPrefix+widgetType, s.handleWidget(widgetType)))
 	}
-	routes = append(routes, web.Route{Method: http.MethodGet, Pattern: PathWidgetPattern,
-		Access: web.AccessAuthenticated, JSON: true, Handler: s.handleUnknownWidget})
+	routes = append(routes, web.JSONRoute(http.MethodGet, PathWidgetPattern, s.handleUnknownWidget))
 	return routes
 }
 

@@ -153,14 +153,9 @@ type Options struct {
 	// the same reason. cmd/opnview passes its collector, which is the one the
 	// scheduler runs.
 	Collector Reconfigurable
-	// GeoIP is the MaxMind databases: woken when the licence key or the account ID is
-	// saved, and asked which build is in use. Nil, as in a test that does not need it,
-	// wakes nothing and reports no build.
+	// GeoIP is the MaxMind databases: woken when a plugin placing addresses has its settings
+	// saved. Nil, as in a test that does not need it, wakes nothing.
 	GeoIP GeoIP
-	// PublicSuffix is the Public Suffix List's copy in use, asked for its figures
-	// when the settings surface is drawn. Nil, as in a test that does not need it,
-	// reports no copy held.
-	PublicSuffix PublicSuffixList
 	// SuffixLists is the Public Suffix List in use, which the widget API groups site names
 	// by. Nil reports the grouping unavailable.
 	SuffixLists request.SuffixLists
@@ -178,22 +173,11 @@ type Options struct {
 	Surfaces []Surface
 }
 
-// PublicSuffixList is what the settings surface needs of the Public Suffix List's
-// refresh: the copy this process holds, its version, its rule count and when a
-// refresh last confirmed it current. It is answered from memory and contacts
-// nothing, and it is an interface so this package does not import the refresher.
-// The figures never come from the availability row's free-text detail.
-type PublicSuffixList interface {
-	Held() (version string, rules int, confirmedAt int64, held bool)
-}
-
-// GeoIP is what the settings surface needs of the MaxMind refresh: to be told that
-// the credentials changed, so the databases are fetched now rather than at the next
-// daily check, and the build of the databases in use. It is an interface so that
-// this package does not import the downloader.
+// GeoIP is what the plugin settings surface needs of the MaxMind refresh: to be told that
+// the credentials changed, so the databases are fetched now rather than at the next daily
+// check. It is an interface so that this package does not import the downloader.
 type GeoIP interface {
 	Wake()
-	Ready() (build int64, ready bool)
 }
 
 // Reconfigurable is what the collection surface needs of a running collector: to be
@@ -232,10 +216,8 @@ type Server struct {
 	// nil; see Options.
 	settings  *config.Live
 	collector Reconfigurable
-	// geoip is woken by a save of the MaxMind credentials; it may be nil.
+	// geoip is woken by a save of a geolocation plugin's settings; it may be nil.
 	geoip GeoIP
-	// publicSuffix answers for the Public Suffix List's copy in use; it may be nil.
-	publicSuffix PublicSuffixList
 	// plugins are the loaded plugins.
 	plugins *plugin.Loaded
 	// broker is the firewall broker, nil where none was given.
@@ -313,7 +295,6 @@ func New(options Options) (*Server, error) {
 		settings:      options.Settings,
 		collector:     options.Collector,
 		geoip:         options.GeoIP,
-		publicSuffix:  options.PublicSuffix,
 		plugins:       options.Plugins,
 		broker:        options.Broker,
 	}
@@ -547,11 +528,8 @@ func (s *Server) LiveSettings() *config.Live { return s.settings }
 // Collector is told the configuration after a save; may be nil.
 func (s *Server) Collector() Reconfigurable { return s.collector }
 
-// GeoIP is woken by a save of the MaxMind credentials; may be nil.
+// GeoIP is woken by a save of a geolocation plugin's settings; may be nil.
 func (s *Server) GeoIP() GeoIP { return s.geoip }
-
-// PublicSuffix answers for the Public Suffix List's copy in use; may be nil.
-func (s *Server) PublicSuffix() PublicSuffixList { return s.publicSuffix }
 
 // Plugins are the loaded plugins.
 func (s *Server) Plugins() *plugin.Loaded { return s.plugins }
@@ -563,3 +541,9 @@ func (s *Server) Broker() *broker.Broker { return s.broker }
 func (s *Server) Widgets() *widget.Service { return s.widgets }
 
 var _ Host = (*Server)(nil)
+
+// JSONRoute is a route of the JSON API that a signed-in session reaches: the shape most of the
+// surfaces' JSON routes share.
+func JSONRoute(method, pattern string, handler http.HandlerFunc) Route {
+	return Route{Method: method, Pattern: pattern, Access: AccessAuthenticated, JSON: true, Handler: handler}
+}

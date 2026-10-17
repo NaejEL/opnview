@@ -60,7 +60,7 @@ func TestAttributionNameLookupsKeepBothClientBranches(t *testing.T) {
 	insert := func(id int64, clientID any, address string) {
 		exec(`INSERT INTO dns_resolution (id, resolver, lookup_key, domain, action, answer_source,
 		      client_address, client_id, client_resolution, looked_up_at, ingested_at)
-		      VALUES (?, 'unbound', ?, 'Example.ORG.', 'pass', 'Recursion', ?, ?, 'logged_address', ?, ?)`,
+		      VALUES ($1, 'unbound', $2, 'Example.ORG.', 'pass', 'Recursion', $3, $4, 'logged_address', $5, $6)`,
 			id, "example-lookup-"+string(rune('a'+id)), address, clientID, storetest.ReferenceNow-10, storetest.ReferenceNow)
 	}
 	insert(1, int64(1), "192.0.2.10") // the flow's client, by id
@@ -73,8 +73,9 @@ func TestAttributionNameLookupsKeepBothClientBranches(t *testing.T) {
 	}
 	ids := func(clientID any) []int64 {
 		t.Helper()
-		rows, err := db.Query(text, sql.Named("name", "example.org"), sql.Named("client_id", clientID),
+		bound, arguments := storetest.Bound(t, text, sql.Named("name", "example.org"), sql.Named("client_id", clientID),
 			sql.Named("address", "192.0.2.10"), sql.Named("start", storetest.ReferenceNow-60), sql.Named("end", storetest.ReferenceNow))
+		rows, err := db.Query(bound, arguments...)
 		if err != nil {
 			t.Fatal(err)
 		}

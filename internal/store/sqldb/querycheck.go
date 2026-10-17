@@ -99,10 +99,14 @@ func (s *Handle) CheckQuery(ctx context.Context, text string, allowed []string) 
 		}
 	}
 	body := StatementBody(text, lexed)
-	if err := s.planIsReadOnly(ctx, body, NullArguments(lexed.Parameters)); err != nil {
+	planned, arguments, err := NullArguments(body)
+	if err != nil {
+		return QueryInfo{}, &QueryProblem{Kind: QueryDoesNotPlan, Detail: err.Error()}
+	}
+	if err := s.planIsReadOnly(ctx, planned, arguments); err != nil {
 		return QueryInfo{}, err
 	}
-	columns, err := s.queryColumns(ctx, body, NullArguments(lexed.Parameters))
+	columns, err := s.queryColumns(ctx, planned, arguments)
 	if err != nil {
 		return QueryInfo{}, &QueryProblem{Kind: QueryDoesNotPlan, Detail: err.Error()}
 	}
@@ -145,13 +149,14 @@ func (s *Handle) queryColumns(ctx context.Context, body string, arguments []any)
 	return rows.Columns()
 }
 
-// NullArguments binds every named parameter of a text to NULL, which is all planning needs.
-func NullArguments(names []string) []any {
-	arguments := make([]any, 0, len(names))
-	for _, name := range names {
-		arguments = append(arguments, sql.Named(name, nil))
+// NullArguments translates a :name text and binds every parameter to NULL, which is all planning
+// needs: the text to plan, and its arguments.
+func NullArguments(text string) (string, []any, error) {
+	translation, err := Translate(text)
+	if err != nil {
+		return "", nil, err
 	}
-	return arguments
+	return translation.Text, make([]any, len(translation.Names)), nil
 }
 
 // StatementBody is the text of the single statement a text holds: everything before its
@@ -175,6 +180,9 @@ func QueryParameters(text string) []string {
 // string literal. The caller has already passed it through CheckQuery.
 func RegisterQuery(owner, name, text string) error {
 	body := StatementBody(text, LexSQL(text))
+	if err := pretranslate(body); err != nil {
+		return fmt.Errorf("store: the statement %q of %s: %w", name, owner, err)
+	}
 	statementsMutex.Lock()
 	defer statementsMutex.Unlock()
 	if previous, duplicate := statementOwners[name]; duplicate {

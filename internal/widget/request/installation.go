@@ -102,7 +102,8 @@ func (r *Request) Install() (*installation, error) {
 			info              InterfaceInfo
 			label             reads.NullString
 			vlan              reads.NullInt64
-			upstream, labeled int64
+			labeled           int64
+			upstream          bool
 		)
 		if err := row.Scan(&info.ID, &info.Identifier, &info.Device, &info.Description, &label,
 			&info.LinkKind, &vlan, &upstream, &info.Label, &labeled); err != nil {
@@ -111,7 +112,7 @@ func (r *Request) Install() (*installation, error) {
 		info.UserLabel = NullableText(label)
 		info.Labelled = labeled == 1
 		info.VLANTag = NullableNumber(vlan)
-		info.Upstream = upstream == 1
+		info.Upstream = upstream
 		cache.Interfaces = append(cache.Interfaces, info)
 		cache.ByID[info.ID] = info
 		cache.ByDevice[info.Device] = info
@@ -302,13 +303,13 @@ func (r *Request) Rule(id int64) (*RuleInfo, error) {
 		func(row reads.RowScanner) error {
 			var (
 				scanned   RuleInfo
-				automatic int64
+				automatic bool
 			)
 			if err := row.Scan(&scanned.ID, &scanned.PfLabel, &scanned.Description, &scanned.Action,
 				&automatic); err != nil {
 				return err
 			}
-			scanned.Automatic = automatic == 1
+			scanned.Automatic = automatic
 			info = &scanned
 			return nil
 		})

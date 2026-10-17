@@ -54,7 +54,7 @@ func TestAProviderCanIntroduceASubjectMeasureAndUnitTheSchemaDidNotShipWith(t *t
 	)
 	if err := database.DB().QueryRowContext(ctx,
 		`SELECT subject_kind, measure, unit, value FROM measurement_sample
-		 WHERE subject_key = ?`, newTerms.SubjectKey).
+		 WHERE subject_key = $1`, newTerms.SubjectKey).
 		Scan(&subjectKind, &measure, &unit, &value); err != nil {
 		t.Fatalf("reading the provider's reading back: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestTwoProvidersReadingOneSubjectAtOneInstantAreTwoReadingsAndOneGaugeIsSti
 	if _, err := database.DB().ExecContext(ctx,
 		`INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
 		 VALUES ('measurement_sample', 'example-second-sampler', 'Example second sampler',
-		         1, 1750000000)`); err != nil {
+		         true, 1750000000)`); err != nil {
 		t.Fatalf("registering a second measurement provider: %v", err)
 	}
 	first, err := database.ProviderID(ctx, "measurement_sample", "insight")

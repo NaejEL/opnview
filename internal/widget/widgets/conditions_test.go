@@ -38,7 +38,7 @@ var conditionCases = []conditionCase{
 	{envelope.ConditionStateUnknown, func(t *testing.T, f *fixture, kind, key string) {
 		id, err := f.db.ProviderID(context.Background(), kind, key)
 		check(t, err)
-		f.exec(t, "DELETE FROM source_availability WHERE provider_id = ?", id)
+		f.exec(t, "DELETE FROM source_availability WHERE provider_id = $1", id)
 	}},
 }
 
@@ -51,7 +51,7 @@ func emptyFixture(t *testing.T) *fixture {
 	f := &fixture{db: database, now: fixtureNow}
 	// One person, so Per-person activity reads the source's conditions rather than its own
 	// fifth one, which TestNobodyCreatedYetIsPerPersonActivitysOwnCondition covers.
-	f.exec(t, "INSERT INTO owner (display_name, created_at, updated_at) VALUES ('Example Person', ?, ?)",
+	f.exec(t, "INSERT INTO owner (display_name, created_at, updated_at) VALUES ('Example Person', $1, $2)",
 		f.now, f.now)
 	f.allReachable(t)
 	f.service, err = widget.New(database, widget.Options{Now: func() time.Time { return time.Unix(f.now, 0) }})

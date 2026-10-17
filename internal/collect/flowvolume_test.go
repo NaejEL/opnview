@@ -170,7 +170,7 @@ func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 		{"gateway", vocab.MeasureLossRatio, vocab.UnitRatio, "a gateway packet loss"},
 	} {
 		stored := collecttest.ScalarCount(t, harness.Store,
-			"SELECT count(*) FROM measurement_sample WHERE subject_kind = ? AND measure = ? AND unit = ?",
+			"SELECT count(*) FROM measurement_sample WHERE subject_kind = $1 AND measure = $2 AND unit = $3",
 			expected.subjectKind, string(expected.measure), string(expected.unit))
 		if stored == 0 {
 			t.Errorf("no %s reading of %s was stored (%s)",
@@ -260,7 +260,7 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 	}
 
 	if temperatures := collecttest.ScalarCount(t, harness.Store,
-		"SELECT count(*) FROM measurement_sample WHERE measure = ?",
+		"SELECT count(*) FROM measurement_sample WHERE measure = $1",
 		string(vocab.MeasureTemperatureCelsius)); temperatures != 0 {
 		t.Errorf("%d temperature readings were written for a firewall that reports no sensor",
 			temperatures)
@@ -280,7 +280,7 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 	// rest of the pass.
 	for _, measure := range []vocab.Measure{vocab.MeasureUptimeSeconds, vocab.MeasureMemoryUseRatio} {
 		if collecttest.ScalarCount(t, harness.Store,
-			"SELECT count(*) FROM measurement_sample WHERE measure = ?", string(measure)) == 0 {
+			"SELECT count(*) FROM measurement_sample WHERE measure = $1", string(measure)) == 0 {
 			t.Errorf("the %s reading was lost along with the temperature", measure)
 		}
 	}
@@ -327,7 +327,7 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 		vocab.MeasureLoadAverage, vocab.MeasureDiskUseRatio, vocab.MeasureBytesIn,
 	} {
 		if stored := collecttest.ScalarCount(t, harness.Store,
-			"SELECT count(*) FROM measurement_sample WHERE measure = ?", string(measure)); stored != 0 {
+			"SELECT count(*) FROM measurement_sample WHERE measure = $1", string(measure)); stored != 0 {
 			t.Errorf("%d %s readings were written from a body that carries no figure this code "+
 				"can read", stored, measure)
 		}

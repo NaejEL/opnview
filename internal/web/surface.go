@@ -191,10 +191,8 @@ type Host interface {
 	LiveSettings() *config.Live
 	// Collector is told the configuration after a save; may be nil.
 	Collector() Reconfigurable
-	// GeoIP is woken by a save of the MaxMind credentials; may be nil.
+	// GeoIP is woken by a save of a geolocation plugin's settings; may be nil.
 	GeoIP() GeoIP
-	// PublicSuffix answers for the Public Suffix List's copy in use; may be nil.
-	PublicSuffix() PublicSuffixList
 	// Widgets is the widget API's service.
 	Widgets() *widget.Service
 	// Plugins are the loaded plugins and those refused.
@@ -249,8 +247,9 @@ func AllHandlerKeys() []MessageKey {
 	for key := range plugin.BuiltinsLoaded().Strings(SourceLanguage) {
 		keys = append(keys, MessageKey(key))
 	}
-	for _, key := range dataset.LabelKeys() {
-		keys = append(keys, MessageKey(key))
+	core, _ := dataset.Core()
+	for _, declaration := range core {
+		keys = append(keys, MessageKey(declaration.Label))
 	}
 	return keys
 }

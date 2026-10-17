@@ -147,10 +147,10 @@ WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.dst_interface_id IS NULL
   AND f.src_client_id IS NOT NULL
-  AND f.src_is_this_firewall = 0
-  AND f.dst_is_this_firewall = 0
+  AND NOT f.src_is_this_firewall
+  AND NOT f.dst_is_this_firewall
   AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
-  AND (:client_id IS NULL OR f.src_client_id = :client_id);
+  AND (CAST(:client_id AS BIGINT) IS NULL OR f.src_client_id = :client_id);
 
 
 -- The evidence that a resolver source answered for [from, to]: a lookup stored

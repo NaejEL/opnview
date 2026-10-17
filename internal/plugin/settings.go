@@ -23,9 +23,7 @@ import (
 // secret, an `encrypted_credential` row sealed with the key file beside the database, exactly as
 // the firewall's API secret is. No endpoint ever returns a secret: the listing says only whether
 // one is set. A composed key the core reads itself is refused at load (setting_collision), so a
-// plugin never shadows a core setting; the built-in maxmind plugin's keys -- maxmind_account_id
-// and the maxmind_licence_key credential -- are the keys the settings surface has always written,
-// so that page and the first-run wizard keep working unchanged.
+// plugin never shadows a core setting.
 
 // The setting types.
 const (

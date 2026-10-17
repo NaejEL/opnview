@@ -60,19 +60,6 @@ func HostAreaFailures() error {
 	return errors.Join(hostAreas.failures...)
 }
 
-// HostAreas returns the name of every area of the host, sorted: what docs/plugins.md documents,
-// which a test compares.
-func HostAreas() []string {
-	hostAreas.Lock()
-	defer hostAreas.Unlock()
-	names := make([]string, 0, len(hostAreas.areas))
-	for name := range hostAreas.areas {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // ScriptCall is one request's host: the request, the runtime, and the first failure of a read.
 type ScriptCall struct {
 	Request *request.Request

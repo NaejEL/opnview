@@ -194,7 +194,7 @@ func TestAPluginHypertableIsPurgedByChunkToTheExactSecond(t *testing.T) {
 	}
 	var older, kept int
 	if err := database.DB().QueryRowContext(ctx,
-		"SELECT count(*) FILTER (WHERE sampled_at < ?), count(*) FILTER (WHERE sampled_at >= ?) "+
+		"SELECT count(*) FILTER (WHERE sampled_at < $1), count(*) FILTER (WHERE sampled_at >= $2) "+
 			"FROM plugin_example_one.readings", horizon, horizon).Scan(&older, &kept); err != nil {
 		t.Fatal(err)
 	}

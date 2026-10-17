@@ -880,7 +880,7 @@ carries a secret, a ciphertext or a session token; the form token travels in the
 | `GET /recover` | `GET /api/session` |
 | `POST /recover` | `POST /api/account/recover` |
 | `GET /settings` | `GET /api/settings` |
-| `POST /settings` | `POST /api/settings/firewall`, `POST /api/settings/firewall/certificate`, `POST /api/plugins/{name}/settings` (MaxMind, `name` `maxmind`), `POST /api/settings/public-suffix`, `POST /api/settings/theme` |
+| `POST /settings` | `POST /api/settings/firewall`, `POST /api/settings/firewall/certificate`, `POST /api/settings/theme` |
 | `GET /collection` | `GET /api/collection` |
 | `POST /collection` | `POST /api/collection/kinds/{kind}` |
 | `POST /collection/settings` | `POST /api/collection/kinds/{kind}` (a polled kind), `POST /api/collection/settings/{card}` |
@@ -901,23 +901,19 @@ carries a secret, a ciphertext or a session token; the form token travels in the
   setup is, and `key_file_refused` (`400`) for a login that does not exist; it answers
   `{signed_in: false}`.
 
-**Settings.** `GET /api/settings` answers `{firewall, geolocation, public_suffix, theme}`:
+**Settings.** `GET /api/settings` answers `{firewall, theme}`:
 
 - `firewall`: `url`, `api_key`, `certificate_fingerprint` (each `null` when not set),
   `credential_state` (`absent`, `ready`, `undecryptable`) and `verification`;
-- `geolocation`: the `plugin` and `settings_path` the card's settings are written through,
-  `account_id`, `licence_key_state` (`absent`, `stored`, `undecryptable`), `download_state` (the
-  refresh's outcome) and `build_at` (`null` with no database in use);
-- `public_suffix`: `state`, `in_use`, `version`, `version_stated`, `rules`, `confirmed_at`
-  (`null` before a refresh confirmed a copy) and `refresh_interval_seconds`;
 - `theme`: `value` and `choices`.
+
+A plugin's settings -- MaxMind's account ID and licence key, the Public Suffix List's -- are the
+plugin's own: `GET` and `POST /api/plugins/{name}/settings` (*Plugins*, below).
 
 | Route | Body | Refusals |
 |---|---|---|
 | `POST /api/settings/firewall` | `{url, api_key, api_secret, certificate_fingerprint}`, the card's whole content: an absent or empty `url`, `api_key` or `certificate_fingerprint` removes that setting, an absent or empty `api_secret` keeps the stored one | `firewall_url_invalid`, `fingerprint_invalid`, `api_key_required`; the answer's `firewall.verification` is the check the save made |
 | `POST /api/settings/firewall/certificate` | `{url}`; stores nothing | `firewall_url_required`, `firewall_url_invalid`, `certificate_not_fetched`; answers `{presented_fingerprint}` |
-| `POST /api/plugins/maxmind/settings` | `{account_id, licence_key}`, the maxmind plugin's declared settings, stored under the keys the page stores (*Plugins*, below); `null` removes the account ID | the plugin settings' codes |
-| `POST /api/settings/public-suffix` | `{refresh_interval_seconds}`; absent changes nothing | `collection_value_invalid`, `collection_interval_too_large` |
 | `POST /api/settings/theme` | `{theme}` | `theme_unknown` |
 
 **Collection.** `GET /api/collection` answers `{kinds, polled_kinds, settings}`:

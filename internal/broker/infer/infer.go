@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/NaejEL/opnview/internal/broker/answer"
 	"github.com/NaejEL/opnview/internal/decode"
@@ -647,9 +646,6 @@ func ParameterRole(name string) string {
 	}
 	return RoleIdentifying
 }
-
-// DefaultNormaliser is the normaliser inference uses when none is given: UTC, now.
-func DefaultNormaliser() decode.Normaliser { return decode.Normaliser{Reference: time.Now().UTC()} }
 
 func contains(values []string, value string) bool {
 	for _, held := range values {

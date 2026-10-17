@@ -16,7 +16,7 @@ func (f *fixture) windowTotal(t *testing.T, window envelope.Interval, extra stri
 	t.Helper()
 	var bytes, connections int64
 	row := f.db.DB().QueryRow(`SELECT coalesce(sum(packet_bytes), 0), count(*) FROM classified_flow
-		WHERE observed_at >= ? AND observed_at < ? AND exit_leg_device IS NULL `+extra, window.From, window.To)
+		WHERE observed_at >= $1 AND observed_at < $2 AND exit_leg_device IS NULL `+extra, window.From, window.To)
 	check(t, row.Scan(&bytes, &connections))
 	return bytes, connections
 }

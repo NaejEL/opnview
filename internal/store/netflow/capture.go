@@ -235,7 +235,7 @@ func (s *NetflowStore) RecordCaptureRead(ctx context.Context, providerID, readAt
 	)
 	err = transaction.QueryRowContext(ctx,
 		`SELECT id, last_read_at, fingerprint, outcome FROM capture_configuration
-		 WHERE provider_id = ? ORDER BY first_read_at DESC LIMIT 1 FOR UPDATE`, providerID).
+		 WHERE provider_id = $1 ORDER BY first_read_at DESC LIMIT 1 FOR UPDATE`, providerID).
 		Scan(&latestID, &latestLast, &latestPrint, &latestReason)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("store: reading the newest capture configuration: %w", err)
@@ -253,7 +253,7 @@ func (s *NetflowStore) RecordCaptureRead(ctx context.Context, providerID, readAt
 		(!read.Readable && !latestPrint.Valid && latestReason.String == string(read.Outcome)))
 	if same {
 		if _, err := transaction.ExecContext(ctx,
-			"UPDATE capture_configuration SET last_read_at = ?, detail = ? WHERE id = ?",
+			"UPDATE capture_configuration SET last_read_at = $1, detail = $2 WHERE id = $3",
 			readAt, sqldb.NullableText(read.Detail), latestID); err != nil {
 			return false, fmt.Errorf("store: extending the capture configuration: %w", err)
 		}
@@ -264,14 +264,14 @@ func (s *NetflowStore) RecordCaptureRead(ctx context.Context, providerID, readAt
 		err = transaction.QueryRowContext(ctx,
 			`INSERT INTO capture_configuration (provider_id, first_read_at, last_read_at, fingerprint, enabled,
 			     export_version, active_timeout_seconds, inactive_timeout_seconds, detail)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
 			providerID, readAt, readAt, fingerprint, read.Enabled, sqldb.NullableText(read.ExportVersion),
 			sqldb.Optional(read.ActiveTimeoutSeconds), sqldb.Optional(read.InactiveTimeoutSeconds),
 			sqldb.NullableText(read.Detail)).Scan(&id)
 	} else {
 		err = transaction.QueryRowContext(ctx,
 			`INSERT INTO capture_configuration (provider_id, first_read_at, last_read_at, outcome, detail)
-			 VALUES (?, ?, ?, ?, ?) RETURNING id`,
+			 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
 			providerID, readAt, readAt, string(read.Outcome), sqldb.NullableText(read.Detail)).Scan(&id)
 	}
 	if err != nil {
@@ -302,14 +302,14 @@ func insertCaptureInterfaces(ctx context.Context, transaction *sql.Tx, id int64,
 		if _, err := transaction.ExecContext(ctx,
 			`INSERT INTO capture_interface (capture_configuration_id, identifier, ingress, egress, exported,
 			     not_exported_reason)
-			 VALUES (?, ?, ?, ?, ?, ?)`, id, captured.Identifier, captured.Ingress, captured.Egress, exported,
+			 VALUES ($1, $2, $3, $4, $5, $6)`, id, captured.Identifier, captured.Ingress, captured.Egress, exported,
 			reason); err != nil {
 			return fmt.Errorf("store: recording a captured interface: %w", err)
 		}
 		for _, of := range captured.ParentOf {
 			if _, err := transaction.ExecContext(ctx,
 				`INSERT INTO capture_interface_parent_of (capture_configuration_id, identifier, of_identifier)
-				 VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, id, captured.Identifier, of); err != nil {
+				 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, id, captured.Identifier, of); err != nil {
 				return fmt.Errorf("store: recording a parent_of: %w", err)
 			}
 		}
@@ -322,7 +322,7 @@ func (s *NetflowStore) CaptureConfigurations(ctx context.Context, providerID int
 	rows, err := s.SQL.QueryContext(ctx,
 		`SELECT id, first_read_at, last_read_at, fingerprint, outcome, detail, enabled, export_version,
 		        active_timeout_seconds, inactive_timeout_seconds
-		 FROM capture_configuration WHERE provider_id = ? ORDER BY first_read_at`, providerID)
+		 FROM capture_configuration WHERE provider_id = $1 ORDER BY first_read_at`, providerID)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading the capture configurations: %w", err)
 	}
@@ -333,7 +333,8 @@ func (s *NetflowStore) CaptureConfigurations(ctx context.Context, providerID int
 		var (
 			configuration                CaptureConfiguration
 			fingerprint, outcome, detail sql.NullString
-			enabled, active, inactive    sql.NullInt64
+			enabled                      sql.NullBool
+			active, inactive             sql.NullInt64
 			version                      sql.NullString
 		)
 		if err := rows.Scan(&configuration.ID, &configuration.FirstReadAt, &configuration.LastReadAt, &fingerprint,
@@ -344,7 +345,7 @@ func (s *NetflowStore) CaptureConfigurations(ctx context.Context, providerID int
 		configuration.Readable = fingerprint.Valid
 		configuration.Outcome = vocab.AvailabilityOutcome(outcome.String)
 		configuration.Detail = detail.String
-		configuration.Enabled = enabled.Valid && enabled.Int64 == 1
+		configuration.Enabled = enabled.Valid && enabled.Bool
 		configuration.ExportVersion = version.String
 		configuration.ActiveTimeoutSeconds = sqldb.NullInt(active)
 		configuration.InactiveTimeoutSeconds = sqldb.NullInt(inactive)
@@ -373,14 +374,15 @@ func (s *NetflowStore) readCaptureInterfaces(ctx context.Context, providerID int
 		                    AND p.identifier = i.identifier), '')
 		 FROM capture_interface AS i
 		 JOIN capture_configuration AS c ON c.id = i.capture_configuration_id
-		 WHERE c.provider_id = ? ORDER BY i.capture_configuration_id, i.identifier`, providerID)
+		 WHERE c.provider_id = $1 ORDER BY i.capture_configuration_id, i.identifier`, providerID)
 	if err != nil {
 		return fmt.Errorf("store: reading the captured interfaces: %w", err)
 	}
 	defer func() { _ = interfaces.Close() }()
 	for interfaces.Next() {
 		var (
-			id, ingress, egress                         int64
+			id                                          int64
+			ingress, egress                             bool
 			identifier, exported, reason, parentsJoined string
 		)
 		if err := interfaces.Scan(&id, &identifier, &ingress, &egress, &exported, &reason, &parentsJoined); err != nil {
@@ -390,7 +392,7 @@ func (s *NetflowStore) readCaptureInterfaces(ctx context.Context, providerID int
 		if !known {
 			continue
 		}
-		captured := CaptureInterface{Identifier: identifier, Ingress: ingress == 1, Egress: egress == 1,
+		captured := CaptureInterface{Identifier: identifier, Ingress: ingress, Egress: egress,
 			Exported: exported, NotExportedReason: reason}
 		if parentsJoined != "" {
 			captured.ParentOf = strings.Split(parentsJoined, unitSeparator)

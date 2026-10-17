@@ -74,7 +74,7 @@ func TestPublicAddressSaysWhenTheInstallationIsBehindAnotherNAT(t *testing.T) {
 	bits := int64(24)
 	check(t, f.db.UpsertInterfaceAddress(context.Background(), vocab.InterfaceAddress{InterfaceID: f.upstream.id,
 		SourceField: vocab.SourceFieldAddr4, Address: "11.22.33.44", PrefixLength: &bits, AddressFamily: 4}, nil, f.now))
-	f.exec(t, "UPDATE interface SET last_seen_at = ? WHERE id = ?", f.now, f.upstream.id)
+	f.exec(t, "UPDATE interface SET last_seen_at = $1 WHERE id = $2", f.now, f.upstream.id)
 	second := decodeData[publicAddressData](t, f.respond(t, "public_address", nil)).Upstreams[0]
 	changed := false
 	for _, address := range second.Current {

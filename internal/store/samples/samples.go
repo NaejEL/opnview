@@ -2,7 +2,6 @@ package samples
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -219,7 +218,7 @@ func (s *SampleStore) readRateRows(ctx context.Context, from, to, interval int64
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("since", from), sql.Named("now", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"since": from, "now": to})
 	if err != nil {
 		return nil, fmt.Errorf("store: read_pair_rates: %w", err)
 	}
@@ -590,7 +589,7 @@ func (s *SampleStore) ReadSampledBytes(ctx context.Context, from, to int64) ([]S
 	if err != nil {
 		return nil, "", err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
 	if err != nil {
 		return nil, "", fmt.Errorf("store: read_sampled_pair_bytes: %w", err)
 	}
@@ -654,8 +653,7 @@ func (s *SampleStore) ReadInterfaceThroughput(ctx context.Context, device string
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.Reader.QueryContext(ctx, text, sql.Named("device", device),
-		sql.Named("measure", string(measure)), sql.Named("from", from), sql.Named("to", to))
+	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"device": device, "measure": string(measure), "from": from, "to": to})
 	if err != nil {
 		return nil, fmt.Errorf("store: read_interface_counter: %w", err)
 	}

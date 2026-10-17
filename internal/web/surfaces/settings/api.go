@@ -5,17 +5,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
 // The settings surface's JSON equivalents (docs/widget-api.md, "Settings API"): every figure the
-// page draws, and every save of its cards. The MaxMind card's JSON equivalent is the maxmind
-// plugin's declared settings, written through POST /api/plugins/maxmind/settings, which stores
-// the same rows under the same keys; this surface reports their state and does not write them a
-// second way.
+// page draws, and every save of its cards. A plugin's settings -- the MaxMind and Public Suffix
+// List ones included -- are the plugin's own, served and written by /api/plugins/{name}/settings.
 
 // The JSON paths.
 const (
@@ -26,37 +23,24 @@ const (
 	// PathAPIFirewallCertificate reads the fingerprint of the certificate a firewall presents,
 	// and stores nothing.
 	PathAPIFirewallCertificate = "/api/settings/firewall/certificate"
-	// PathAPIPublicSuffix saves the Public Suffix List's refresh interval.
-	PathAPIPublicSuffix = "/api/settings/public-suffix"
 	// PathAPITheme saves the theme preference.
 	PathAPITheme = "/api/settings/theme"
 )
 
-// GeolocationPlugin is the plugin whose declared settings are the MaxMind card's.
-const GeolocationPlugin = "maxmind"
-
 // apiRoutes are the surface's JSON rows of the route table.
 func (s *surface) apiRoutes() []web.Route {
 	return []web.Route{
-		{Method: http.MethodGet, Pattern: PathAPISettings, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPISettings},
-		{Method: http.MethodPost, Pattern: PathAPIFirewall, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPIFirewall},
-		{Method: http.MethodPost, Pattern: PathAPIFirewallCertificate, Access: web.AccessAuthenticated,
-			JSON: true, Handler: s.handleAPIFirewallCertificate},
-		{Method: http.MethodPost, Pattern: PathAPIPublicSuffix, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPIPublicSuffix},
-		{Method: http.MethodPost, Pattern: PathAPITheme, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPITheme},
+		web.JSONRoute(http.MethodGet, PathAPISettings, s.handleAPISettings),
+		web.JSONRoute(http.MethodPost, PathAPIFirewall, s.handleAPIFirewall),
+		web.JSONRoute(http.MethodPost, PathAPIFirewallCertificate, s.handleAPIFirewallCertificate),
+		web.JSONRoute(http.MethodPost, PathAPITheme, s.handleAPITheme),
 	}
 }
 
 // SettingsAnswer is every figure of the settings page.
 type SettingsAnswer struct {
-	Firewall     FirewallState     `json:"firewall"`
-	Geolocation  GeolocationState  `json:"geolocation"`
-	PublicSuffix PublicSuffixState `json:"public_suffix"`
-	Theme        ThemeState        `json:"theme"`
+	Firewall FirewallState `json:"firewall"`
+	Theme    ThemeState    `json:"theme"`
 }
 
 // FirewallState is the firewall card. No secret is ever in it: the API secret is reported by the
@@ -71,36 +55,6 @@ type FirewallState struct {
 	// Verification is the outcome of the credential check: not_attempted unless the answer is a
 	// save's, which makes one.
 	Verification string `json:"verification"`
-}
-
-// GeolocationState is the MaxMind card, whose settings are the maxmind plugin's.
-type GeolocationState struct {
-	// Plugin and SettingsPath are where the card's settings are written.
-	Plugin       string `json:"plugin"`
-	SettingsPath string `json:"settings_path"`
-	// AccountID is the MaxMind account ID, null when not set.
-	AccountID *string `json:"account_id"`
-	// LicenceKeyState is absent, stored or undecryptable.
-	LicenceKeyState string `json:"licence_key_state"`
-	// DownloadState is where the databases stand, from the refresh's availability row.
-	DownloadState string `json:"download_state"`
-	// BuildAt is the build of the databases in use, null when none is.
-	BuildAt *int64 `json:"build_at"`
-}
-
-// PublicSuffixState is the Public Suffix List card.
-type PublicSuffixState struct {
-	// State is the last refresh's outcome.
-	State string `json:"state"`
-	// InUse says whether a copy is in use; Version, VersionStated and Rules describe it.
-	InUse         bool    `json:"in_use"`
-	Version       *string `json:"version"`
-	VersionStated bool    `json:"version_stated"`
-	Rules         *int    `json:"rules"`
-	// ConfirmedAt is when a refresh last confirmed the copy current, null when none has.
-	ConfirmedAt *int64 `json:"confirmed_at"`
-	// RefreshIntervalSeconds is the refresh interval in force.
-	RefreshIntervalSeconds int64 `json:"refresh_interval_seconds"`
 }
 
 // ThemeState is the appearance card: the preference in force and the values offered.
@@ -133,39 +87,11 @@ func (s *surface) settingsAnswer(request *http.Request, verification messageKey)
 			CertificateFingerprint: nullable(built.CertificateFingerprint),
 			CredentialState:        web.ConditionOf(built.CredentialState),
 			Verification:           web.ConditionOf(built.VerificationState)},
-		Geolocation: GeolocationState{Plugin: GeolocationPlugin,
-			SettingsPath:    "/api/plugins/" + GeolocationPlugin + "/settings",
-			AccountID:       nullable(built.MaxMindAccountID),
-			LicenceKeyState: web.ConditionOf(built.LicenceKeyState),
-			DownloadState:   web.ConditionOf(built.GeoIPState)},
 		Theme: ThemeState{Value: string(s.ReadTheme(request.Context()))},
-	}
-	if s.geoip != nil {
-		if build, ready := s.geoip.Ready(); ready {
-			answer.Geolocation.BuildAt = &build
-		}
 	}
 	for _, option := range built.Themes {
 		answer.Theme.Choices = append(answer.Theme.Choices, string(option.Value))
 	}
-	card := built.PublicSuffix
-	answer.PublicSuffix = PublicSuffixState{State: web.ConditionOf(card.StateKey), InUse: card.InUse}
-	if s.publicSuffix != nil {
-		version, rules, confirmedAt, held := s.publicSuffix.Held()
-		if held {
-			answer.PublicSuffix.Rules = &rules
-			answer.PublicSuffix.Version = nullable(version)
-			answer.PublicSuffix.VersionStated = version != ""
-		}
-		if confirmedAt > 0 {
-			answer.PublicSuffix.ConfirmedAt = &confirmedAt
-		}
-	}
-	settings, err := s.Configuration(request.Context())
-	if err != nil {
-		return SettingsAnswer{}, err
-	}
-	answer.PublicSuffix.RefreshIntervalSeconds = int64(settings.PublicSuffixRefreshInterval / time.Second)
 	return answer, nil
 }
 
@@ -250,30 +176,6 @@ func (s *surface) handleAPIFirewallCertificate(writer http.ResponseWriter, reque
 		return
 	}
 	web.WriteJSON(writer, http.StatusOK, CertificateAnswer{PresentedFingerprint: presented})
-}
-
-// handleAPIPublicSuffix saves the refresh interval, in seconds. An absent interval changes
-// nothing, as a form that does not carry the field.
-func (s *surface) handleAPIPublicSuffix(writer http.ResponseWriter, request *http.Request) {
-	body, ok := readBody(writer, request)
-	if !ok {
-		return
-	}
-	secondsText, sent := web.JSONText(body, "refresh_interval_seconds")
-	if sent {
-		seconds, changed, refusal := s.publicSuffixInterval(request.Context(), secondsText)
-		if refusal != "" {
-			web.RefuseJSON(writer, http.StatusBadRequest, web.ConditionOf(refusal), "refresh_interval_seconds")
-			return
-		}
-		if changed {
-			if err := s.savePublicSuffixInterval(request.Context(), seconds, s.now().UTC().Unix()); err != nil {
-				web.FailJSON(writer, request, err)
-				return
-			}
-		}
-	}
-	s.answerSaved(writer, request, msgVerifyNotAttempted)
 }
 
 // handleAPITheme saves the theme preference.

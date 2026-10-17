@@ -2,7 +2,6 @@ package providertest
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -20,9 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/broker"
-	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 )
 
@@ -44,6 +40,10 @@ type Recorded struct {
 	EndpointPath string
 	// Arguments are the positional path elements after the command.
 	Arguments []string
+	// APIKey and APISecret are the Basic-auth halves the request carried: what a test of a
+	// credential change asserts on, since the pass after it must carry the new value.
+	APIKey    string
+	APISecret string
 }
 
 // Firewall answers the registry's paths and records what was asked.
@@ -56,6 +56,19 @@ type Firewall struct {
 	streams  map[string]streamReply
 	requests []Recorded
 	unknown  []string
+	// fallback, when set, answers every request no reply is configured for, and every request
+	// at all while its status is not 200 (NewAnsweringFirewall).
+	fallback *reply
+	// down makes the fake refuse to answer at all, which is the unreachable-host case: the
+	// transport fails rather than a status coming back.
+	down bool
+	// handler answers every request no reply, stream or feed is configured for (AnswerWith).
+	handler func(request *http.Request, body string) (int, string, string)
+	// feeds serve a path from a channel, one event per value; open counts the connections held
+	// open to each, and refuse answers the next connections to one with a server error.
+	feeds  map[string]chan string
+	open   map[string]int
+	refuse map[string]int
 }
 
 // streamReply is a canned server-sent event stream: the events' data, each written as
@@ -87,8 +100,78 @@ func NewFirewall(t *testing.T) *Firewall {
 	return fake
 }
 
-// URL is the fake's address.
-func (f *Firewall) URL() string { return f.server.URL }
+// NewAnsweringFirewall starts a fake that answers every request it holds no reply for with one
+// default answer -- an empty search envelope until AnswerAll changes it -- rather than 404: the
+// firewall a test of the web surfaces needs, which reads several endpoints and is about none of
+// them. get_interface_names answers an empty map, its own shape, as a firewall with nothing
+// discovered does. overTLS serves it under a certificate httptest generates, which no system root
+// vouches for -- the shape of a firewall as OPNsense ships it.
+func NewAnsweringFirewall(t *testing.T, overTLS bool) *Firewall {
+	t.Helper()
+	fake := &Firewall{t: t, replies: map[string]reply{},
+		fallback: &reply{status: http.StatusOK, body: []byte(`{"rows":[],"total":0}`)}}
+	fake.replies[opnsense.InterfaceNames.Path] = reply{status: http.StatusOK, body: []byte(`{}`)}
+	if overTLS {
+		fake.server = httptest.NewTLSServer(http.HandlerFunc(fake.serve))
+	} else {
+		fake.server = httptest.NewServer(http.HandlerFunc(fake.serve))
+	}
+	t.Cleanup(fake.server.Close)
+	return fake
+}
+
+// AnswerAll sets the default answer of an answering fake, and brings a fake that went down back
+// up. A status other than 200 answers every request, the replies configured per endpoint included.
+func (f *Firewall) AnswerAll(status int, body []byte) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	f.fallback, f.down = &reply{status: status, body: body}, false
+}
+
+// GoDown makes the fake stop answering.
+func (f *Firewall) GoDown() {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	f.down = true
+}
+
+// Last returns the most recent request, failing if there is none.
+func (f *Firewall) Last() Recorded {
+	f.t.Helper()
+	received := f.Requests()
+	if len(received) == 0 {
+		f.t.Fatal("the fake firewall received no request, so this assertion is vacuous")
+	}
+	return received[len(received)-1]
+}
+
+// BaseURL is the fake's address: what a test types into the firewall URL field.
+func (f *Firewall) BaseURL() string { return f.server.URL }
+
+// Host is the fake's host:port, chosen by the operating system at run time.
+func (f *Firewall) Host() string {
+	f.t.Helper()
+	target, err := url.Parse(f.server.URL)
+	if err != nil {
+		f.t.Fatalf("parsing the fake firewall address: %v", err)
+	}
+	return target.Host
+}
+
+// Fingerprint is the SHA-256 fingerprint of the certificate this fake presents, or the empty
+// string when it speaks plain HTTP: what an operator reads off OPNsense's own interface.
+func (f *Firewall) Fingerprint() string {
+	if f.server.TLS == nil || len(f.server.Certificate().Raw) == 0 {
+		return ""
+	}
+	return opnsense.CertificateFingerprint(f.server.Certificate())
+}
+
+// FirewallOnly is a transport that refuses any host but the fake's, failing the test, in front of
+// inner: what makes "one outbound destination" a property a test can fail on.
+func FirewallOnly(t *testing.T, fake *Firewall, inner http.RoundTripper) http.RoundTripper {
+	return &firewallOnlyTransport{t: t, allowedHost: fake.Host(), inner: inner}
+}
 
 // serve routes one request to the longest registry path that prefixes it.
 func (f *Firewall) serve(writer http.ResponseWriter, request *http.Request) {
@@ -115,8 +198,11 @@ func (f *Firewall) serve(writer http.ResponseWriter, request *http.Request) {
 		arguments = strings.Split(strings.TrimPrefix(request.URL.Path, matched+"/"), "/")
 	}
 
+	apiKey, apiSecret, _ := request.BasicAuth()
 	f.mutex.Lock()
 	f.requests = append(f.requests, Recorded{
+		APIKey:       apiKey,
+		APISecret:    apiSecret,
 		Method:       request.Method,
 		Path:         request.URL.Path,
 		ContentType:  request.Header.Get("Content-Type"),
@@ -130,7 +216,45 @@ func (f *Firewall) serve(writer http.ResponseWriter, request *http.Request) {
 	}
 	answer, configured := f.replies[matched]
 	stream, streams := f.streams[matched]
+	fallback, down, handler := f.fallback, f.down, f.handler
+	feed := f.feeds[request.URL.Path]
+	refused := feed != nil && f.refuse[request.URL.Path] > 0
+	if refused {
+		f.refuse[request.URL.Path]--
+	} else if feed != nil {
+		f.open[request.URL.Path]++
+	}
 	f.mutex.Unlock()
+
+	if refused {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = writer.Write([]byte(`{}`))
+		return
+	}
+	if feed != nil {
+		f.serveFeed(writer, request, feed)
+		return
+	}
+
+	if down {
+		// Hijack and close without answering, so the client sees no response at all -- which is
+		// what an unreachable host looks like from the transport's side.
+		hijacker, ok := writer.(http.Hijacker)
+		if !ok {
+			f.t.Error("the fake cannot simulate an unreachable host on this server")
+			return
+		}
+		if connection, _, err := hijacker.Hijack(); err == nil {
+			_ = connection.Close()
+		}
+		return
+	}
+	if fallback != nil && (fallback.status != http.StatusOK || matched == "" || !configured) && !streams {
+		writer.WriteHeader(fallback.status)
+		_, _ = writer.Write(fallback.body)
+		return
+	}
 
 	if matched != "" && streams {
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -165,6 +289,13 @@ func (f *Firewall) serve(writer http.ResponseWriter, request *http.Request) {
 				}
 			}
 		}
+	}
+	if (matched == "" || !configured) && handler != nil {
+		status, contentType, answered := handler(request, string(body))
+		writer.Header().Set("Content-Type", contentType)
+		writer.WriteHeader(status)
+		_, _ = writer.Write([]byte(answered))
+		return
 	}
 	if matched == "" || !configured {
 		writer.WriteHeader(http.StatusNotFound)
@@ -279,7 +410,7 @@ func (f *Firewall) AssertEveryPathIsRegistered() {
 //
 // It is what makes "one outbound destination" a property a test can fail on. A second
 // destination -- a CDN, a telemetry endpoint, a MaxMind download that wandered out of
-// internal/maxmind -- does not merely get noticed: the call errors.
+// the plugin host's fetch facility -- does not merely get noticed: the call errors.
 type firewallOnlyTransport struct {
 	t           *testing.T
 	allowedHost string
@@ -304,17 +435,13 @@ func (transport *firewallOnlyTransport) RoundTrip(request *http.Request) (*http.
 // host, with credentials generated here so none exists in the repository.
 func NewClient(t *testing.T, fake *Firewall) *opnsense.Client {
 	t.Helper()
-	target, err := url.Parse(fake.server.URL)
-	if err != nil {
-		t.Fatalf("parsing the fake firewall address: %v", err)
-	}
 	return opnsense.NewClient(
 		opnsense.Credentials{
 			BaseURL:   fake.server.URL,
 			APIKey:    randomCredential(t),
 			APISecret: randomCredential(t),
 		},
-		&firewallOnlyTransport{t: t, allowedHost: target.Host, inner: http.DefaultTransport},
+		FirewallOnly(t, fake, http.DefaultTransport),
 		5*time.Second,
 	)
 }
@@ -327,21 +454,6 @@ func randomCredential(t *testing.T) string {
 		t.Fatalf("generating a test credential: %v", err)
 	}
 	return hex.EncodeToString(raw)
-}
-
-// NewSession returns the provider.Session an implementation is handed in production, over the
-// fake: the same Host code the collector embeds, with a firewall on UTC (offset zero) and a clock
-// stopped at the given instant. It is what an implementation's own tests call its Probe and its
-// read methods with.
-func NewSession(t *testing.T, fake *Firewall, at time.Time) provider.Session {
-	t.Helper()
-	gate := broker.New(NewClient(t, fake), nil, broker.Options{})
-	t.Cleanup(gate.Close)
-	return provider.NewHost(gate,
-		func(context.Context) (decode.Normaliser, error) {
-			return decode.Normaliser{Reference: at}, nil
-		},
-		func() int64 { return at.UTC().Unix() })
 }
 
 // FixtureFile is the on-disk shape of a labelled fixture: the provenance, and the response body
@@ -483,4 +595,99 @@ func (f *Firewall) RemoveStream(endpoint opnsense.Endpoint) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 	delete(f.streams, endpoint.Path)
+}
+
+// serveFeed writes a fed stream: each value of the channel as "data: <value>" and a blank line,
+// until the channel closes or the reader goes, the connection counted open meanwhile.
+func (f *Firewall) serveFeed(writer http.ResponseWriter, request *http.Request, feed chan string) {
+	defer func() {
+		f.mutex.Lock()
+		f.open[request.URL.Path]--
+		f.mutex.Unlock()
+	}()
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.WriteHeader(http.StatusOK)
+	flusher, _ := writer.(http.Flusher)
+	if flusher != nil {
+		flusher.Flush()
+	}
+	for {
+		select {
+		case event, open := <-feed:
+			if !open {
+				return
+			}
+			_, _ = writer.Write([]byte("data: " + event + "\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case <-request.Context().Done():
+			return
+		}
+	}
+}
+
+// AnswerWith hands every request no reply, stream or feed is configured for to a handler, which
+// returns the status, the content type and the body: the fake a test of the broker needs, whose
+// paths are the ones it learns rather than the registry's.
+func (f *Firewall) AnswerWith(handler func(request *http.Request, body string) (int, string, string)) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	f.handler = handler
+}
+
+// Feed serves a path, exactly, from a channel: each value is one event of a server-sent event
+// stream, until the channel closes. A later Feed of the same path serves its next connections.
+func (f *Firewall) Feed(path string, events chan string) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	f.makeFeeds()
+	f.feeds[path] = events
+}
+
+// RefuseFeed answers the next count connections to a fed path with a server error.
+func (f *Firewall) RefuseFeed(path string, count int) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	f.makeFeeds()
+	f.refuse[path] += count
+}
+
+// makeFeeds makes the feeds' maps; the caller holds the mutex.
+func (f *Firewall) makeFeeds() {
+	if f.feeds == nil {
+		f.feeds, f.open, f.refuse = map[string]chan string{}, map[string]int{}, map[string]int{}
+	}
+}
+
+// OpenFeeds is how many connections the fake holds open to a fed path.
+func (f *Firewall) OpenFeeds(path string) int {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	return f.open[path]
+}
+
+// CountTo is how many requests reached a path, or every path for the empty one.
+func (f *Firewall) CountTo(path string) int {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	count := 0
+	for _, request := range f.requests {
+		if path == "" || request.Path == path {
+			count++
+		}
+	}
+	return count
+}
+
+// LastTo is the most recent request to a path, or the zero Recorded when none reached it.
+func (f *Firewall) LastTo(path string) Recorded {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	for index := len(f.requests) - 1; index >= 0; index-- {
+		if f.requests[index].Path == path {
+			return f.requests[index]
+		}
+	}
+	return Recorded{}
 }

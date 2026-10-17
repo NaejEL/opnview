@@ -128,7 +128,7 @@ test("window_seconds adds the recent part, a gap after complete_until and never 
     "(4, 'd4', :at, :at, 'vlan0.10', 'resolved', 1, 11, '192.0.2.11', '203.0.113.7', 443, 'tcp', 4, " +
     "'pass', 'in', 80, 'pending', 'north_south')", { at: AT - 50 });
   // The filter log's last pass ended healthy 30 s before now: the last 30 s are not complete.
-  t.sql("UPDATE provider SET is_active = 1 WHERE kind = 'firewall_log'", {});
+  t.sql("UPDATE provider SET is_active = true WHERE kind = 'firewall_log'", {});
   t.sql("UPDATE source_availability SET outcome = 'healthy', probe = 'records_read', checked_at = :at " +
     "WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'firewall_log')", { at: AT - 30 });
   var recent = t.widget("traffic_composition", { group_by: "protocol", window_seconds: 120 }).body.data.recent;

@@ -21,7 +21,7 @@ func TestAMirrorReadDuringARefreshSeesOneConsistentDatum(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	ep := endpoint(t, http.MethodGet, "/api/example/racing/search", opnsense.NoBody)
-	w.fake.answer(jsonAnswer(rowsBody))
+	w.fake.AnswerWith(jsonAnswer(rowsBody))
 	w.call("example_reader_0", ep, opnsense.RequestOptions{}, time.Hour, "a")
 
 	const rounds = 20

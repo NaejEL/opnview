@@ -138,7 +138,7 @@ func contributions(t *testing.T, database *store.Store) []contribution {
 		if !all[index].localClient.Valid {
 			continue
 		}
-		if err := database.DB().QueryRow("SELECT owner_id FROM client WHERE id = ?",
+		if err := database.DB().QueryRow("SELECT owner_id FROM client WHERE id = $1",
 			all[index].localClient.Int64).Scan(&all[index].owner); err != nil {
 			t.Fatalf("reading the owner of client %d: %v", all[index].localClient.Int64, err)
 		}
@@ -281,7 +281,7 @@ func assertSlotsArePurgedPartPlusFlows(t *testing.T, database *store.Store) {
 func slotBytesAt(t *testing.T, database *store.Store, period vocab.Period, instant int64) int {
 	t.Helper()
 	return collecttest.ScalarCount(t, database, "SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_"+period.Name+
-		" WHERE period_start_at = ?", period.SlotStart(instant))
+		" WHERE period_start_at = $1", period.SlotStart(instant))
 }
 
 // arrangeProbeRecord stands up a harness whose filter log offers the verifier's probe: one
@@ -361,7 +361,7 @@ func TestAPurgeRequestedBetweenAPassStoreAndItsRefreshWaitsForTheDerivation(t *t
 
 	inside := interfaceIDOf(t, harness.Store, "example_if_a")
 	if placed := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM purged_flow_hour
-		WHERE src_interface_id = ? AND local_client_id IS NOT NULL`, inside); placed != 1 {
+		WHERE src_interface_id = $1 AND local_client_id IS NOT NULL`, inside); placed != 1 {
 		t.Errorf("the purged part holds the probe placed %d times, not once: the purge froze it "+
 			"before the derivation placed it", placed)
 	}

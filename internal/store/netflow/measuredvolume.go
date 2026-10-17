@@ -90,7 +90,7 @@ func (s *NetflowStore) connections(ctx context.Context, name string, parameters 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.SQL.QueryContext(ctx, text, sqldb.Named(text, parameters)...)
+	rows, err := sqldb.Query(ctx, s.SQL, text, parameters)
 	if err != nil {
 		return nil, fmt.Errorf("store: %s: %w", name, err)
 	}
@@ -99,7 +99,7 @@ func (s *NetflowStore) connections(ctx context.Context, name string, parameters 
 	for rows.Next() {
 		var (
 			connection                             ConnectionLegs
-			toFirewall                             int64
+			toFirewall                             bool
 			firstSrcPort, firstDstPort             sql.NullInt64
 			secondID, secondSrcPort, secondDstPort sql.NullInt64
 			secondDevice, secondDirection          sql.NullString
@@ -112,7 +112,7 @@ func (s *NetflowStore) connections(ctx context.Context, name string, parameters 
 			return nil, fmt.Errorf("store: %s: %w", name, err)
 		}
 		first.SrcPort, first.DstPort = sqldb.NullInt(firstSrcPort), sqldb.NullInt(firstDstPort)
-		connection.FirstToFirewall = toFirewall == 1
+		connection.FirstToFirewall = toFirewall
 		connection.SecondID = sqldb.NullInt(secondID)
 		connection.Second = LoggedLeg{Device: secondDevice.String, Direction: secondDirection.String,
 			Action: secondAction.String, SrcAddress: secondSrc.String, DstAddress: secondDst.String,
@@ -174,7 +174,7 @@ func (s *NetflowStore) countedRecords(ctx context.Context, name string, legIDs [
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.SQL.QueryContext(ctx, text, sqldb.Named(text, map[string]any{"ids": idList(legIDs)})...)
+	rows, err := sqldb.Query(ctx, s.SQL, text, map[string]any{"ids": idList(legIDs)})
 	if err != nil {
 		return nil, fmt.Errorf("store: %s: %w", name, err)
 	}
@@ -231,7 +231,7 @@ func (s *NetflowStore) MeasuredVolumesOf(ctx context.Context, connectionIDs []in
 		`SELECT connection_flow_id, direction, connection_start_at, state, bytes, packets, records, counted_copy,
 		        final, due_at, computed_at
 		 FROM connection_measured_volume
-		 WHERE connection_flow_id = ANY (CAST(string_to_array(?, ',') AS BIGINT[]))`, idList(connectionIDs))
+		 WHERE connection_flow_id = ANY (CAST(string_to_array($1, ',') AS BIGINT[]))`, idList(connectionIDs))
 	if err != nil {
 		return nil, fmt.Errorf("store: reading measured volumes: %w", err)
 	}
@@ -239,12 +239,12 @@ func (s *NetflowStore) MeasuredVolumesOf(ctx context.Context, connectionIDs []in
 	for rows.Next() {
 		var volume MeasuredVolume
 		var due sql.NullInt64
-		var final, counted int64
 		if err := rows.Scan(&volume.ConnectionFlowID, &volume.Direction, &volume.ConnectionStartAt, &volume.State,
-			&volume.Bytes, &volume.Packets, &volume.Records, &counted, &final, &due, &volume.ComputedAt); err != nil {
+			&volume.Bytes, &volume.Packets, &volume.Records, &volume.CountedCopy, &volume.Final, &due,
+			&volume.ComputedAt); err != nil {
 			return nil, fmt.Errorf("store: reading a measured volume: %w", err)
 		}
-		volume.CountedCopy, volume.Final, volume.DueAt = counted == 1, final == 1, sqldb.NullInt(due)
+		volume.DueAt = sqldb.NullInt(due)
 		stored[[2]any{volume.ConnectionFlowID, volume.Direction}] = volume
 	}
 	return stored, rows.Err()
@@ -289,7 +289,7 @@ func (s *NetflowStore) WriteMeasuredVolumes(ctx context.Context, connectionIDs [
 		if _, err := transaction.ExecContext(ctx,
 			`INSERT INTO connection_measured_volume (connection_flow_id, direction, connection_start_at, state, bytes,
 			     packets, records, counted_copy, final, due_at, computed_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			 ON CONFLICT (connection_flow_id, direction) DO UPDATE SET
 			     connection_start_at = excluded.connection_start_at, state = excluded.state, bytes = excluded.bytes,
 			     packets = excluded.packets, records = excluded.records, counted_copy = excluded.counted_copy,
@@ -306,7 +306,7 @@ func (s *NetflowStore) WriteMeasuredVolumes(ctx context.Context, connectionIDs [
 			continue
 		}
 		if _, err := transaction.ExecContext(ctx,
-			"DELETE FROM connection_measured_volume WHERE connection_flow_id = ? AND direction = ?",
+			"DELETE FROM connection_measured_volume WHERE connection_flow_id = $1 AND direction = $2",
 			key[0], key[1]); err != nil {
 			return nil, fmt.Errorf("store: deleting a measured volume: %w", err)
 		}
@@ -315,11 +315,9 @@ func (s *NetflowStore) WriteMeasuredVolumes(ctx context.Context, connectionIDs [
 	for _, mark := range marks {
 		if _, err := transaction.ExecContext(ctx,
 			`UPDATE flow_record
-			 SET counted_copy = CASE WHEN (orientation = 'forward' AND ? = 1) OR (orientation = 'reverse' AND ? = 1)
-			                         THEN 1 ELSE 0 END
-			 WHERE copy_flow_id = ?
-			   AND counted_copy <> CASE WHEN (orientation = 'forward' AND ? = 1) OR (orientation = 'reverse' AND ? = 1)
-			                            THEN 1 ELSE 0 END`,
+			 SET counted_copy = (orientation = 'forward' AND $1) OR (orientation = 'reverse' AND $2)
+			 WHERE copy_flow_id = $3
+			   AND counted_copy <> ((orientation = 'forward' AND $4) OR (orientation = 'reverse' AND $5))`,
 			mark.Forward, mark.Reverse, mark.SecondLegID, mark.Forward, mark.Reverse); err != nil {
 			return nil, fmt.Errorf("store: marking the counted copies: %w", err)
 		}
@@ -341,7 +339,7 @@ type ProviderGap struct {
 func (s *NetflowStore) ProviderGapsBetween(ctx context.Context, providerID, from, to int64) ([]ProviderGap, error) {
 	rows, err := s.SQL.QueryContext(ctx,
 		`SELECT interval_start_at, interval_end_at, reason FROM collection_gap
-		 WHERE provider_id = ? AND interval_start_at <= ? AND interval_end_at >= ?
+		 WHERE provider_id = $1 AND interval_start_at <= $2 AND interval_end_at >= $3
 		 ORDER BY interval_start_at, id`, providerID, to, from)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading a provider's gaps: %w", err)
@@ -367,7 +365,7 @@ func (s *NetflowStore) ProviderGapsBetween(ctx context.Context, providerID, from
 func PurgeNetflow(ctx context.Context, transaction *sql.Tx, now int64) error {
 	var retention int64
 	err := transaction.QueryRowContext(ctx,
-		"SELECT CAST(value AS BIGINT) FROM setting WHERE key = ?", FlowRecordRetentionKey).Scan(&retention)
+		"SELECT CAST(value AS BIGINT) FROM setting WHERE key = $1", FlowRecordRetentionKey).Scan(&retention)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("store: reading %s: %w", FlowRecordRetentionKey, err)
 	}
@@ -379,7 +377,7 @@ func PurgeNetflow(ctx context.Context, transaction *sql.Tx, now int64) error {
 		}
 		if _, err := transaction.ExecContext(ctx,
 			`DELETE FROM capture_configuration AS c
-			 WHERE c.last_read_at < ?
+			 WHERE c.last_read_at < $1
 			   AND c.first_read_at < (SELECT max(n.first_read_at) FROM capture_configuration AS n
 			                          WHERE n.provider_id = c.provider_id)`, horizon); err != nil {
 			return fmt.Errorf("store: purging capture configurations: %w", err)
@@ -389,14 +387,14 @@ func PurgeNetflow(ctx context.Context, transaction *sql.Tx, now int64) error {
 		return err
 	} else if bounded {
 		if _, err := transaction.ExecContext(ctx,
-			"DELETE FROM connection_measured_volume WHERE connection_start_at < ?", horizon); err != nil {
+			"DELETE FROM connection_measured_volume WHERE connection_start_at < $1", horizon); err != nil {
 			return fmt.Errorf("store: purging measured volumes: %w", err)
 		}
 		// The unmatched family's slots go at the flows' horizon, as an aggregate slot that is not
 		// composed from finer ones: once the slot has ended before it.
 		for _, period := range vocab.Periods() {
 			if _, err := transaction.ExecContext(ctx,
-				"DELETE FROM unmatched_record_aggregate_"+period.Name+" WHERE period_end_at < ?", horizon); err != nil {
+				"DELETE FROM unmatched_record_aggregate_"+period.Name+" WHERE period_end_at < $1", horizon); err != nil {
 				return fmt.Errorf("store: purging the unmatched family: %w", err)
 			}
 		}

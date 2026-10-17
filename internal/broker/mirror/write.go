@@ -340,11 +340,11 @@ func (m *Mirror) Store(ctx context.Context, datum *Datum, shape infer.Shape, val
 	if result.Changed {
 		changes = 1
 	}
-	if _, err := m.db.ExecContext(ctx, `UPDATE opnsense.mirror_datum SET nature = ?, row_set = ?, key = CAST(? AS jsonb),
-		cursor = CAST(? AS jsonb), cursor_type = ?, cursor_descending = CAST(? AS boolean),
-		dedupe_on_content = CAST(? AS boolean), generation = ?, fetched_at = ?, attempted_at = ?, outcome = 'ok',
-		status_code = ?, detail = NULL, root_shape = CAST(? AS jsonb), page_size = ?, body = ?,
-		read_whole = CAST(? AS boolean), changes = changes + ? WHERE id = ?`,
+	if _, err := m.db.ExecContext(ctx, `UPDATE opnsense.mirror_datum SET nature = $1, row_set = $2, key = CAST($3 AS jsonb),
+		cursor = CAST($4 AS jsonb), cursor_type = $5, cursor_descending = CAST($6 AS boolean),
+		dedupe_on_content = CAST($7 AS boolean), generation = $8, fetched_at = $9, attempted_at = $10, outcome = 'ok',
+		status_code = $11, detail = NULL, root_shape = CAST($12 AS jsonb), page_size = $13, body = $14,
+		read_whole = CAST($15 AS boolean), changes = changes + $16 WHERE id = $17`,
 		shape.Nature, shape.RowSet, string(key), string(cursor), shape.CursorType,
 		strconv.FormatBool(shape.CursorDescending), strconv.FormatBool(shape.DedupeOnContent), generation, fetch.At,
 		fetch.At, int64(fetch.StatusCode), string(rootShape), fetch.PageSize, body, strconv.FormatBool(readWhole),
@@ -397,7 +397,7 @@ func (m *Mirror) streamGap(ctx context.Context, datum *Datum, shape infer.Shape,
 	}
 	var newest *float64
 	if err := m.db.QueryRowContext(ctx, `SELECT max("#cursor") FROM `+qualified(table.name)+
-		` WHERE "#datum" = ?`, datum.ID).Scan(&newest); err != nil {
+		` WHERE "#datum" = $1`, datum.ID).Scan(&newest); err != nil {
 		return nil, err
 	}
 	if newest == nil || oldest <= *newest {
@@ -583,7 +583,7 @@ func (m *Mirror) writeRows(ctx context.Context, datum *Datum, table *tableInfo, 
 	var updates []string
 	for index, name := range names {
 		quotedNames[index] = quote(name)
-		casts[index] = "CAST(? AS " + types[index] + "[])"
+		casts[index] = "CAST($" + strconv.Itoa(index+1) + " AS " + types[index] + "[])"
 		arguments[index] = arrayLiteral(arrays[index])
 		if name != "#datum" && name != "#parent" && name != "#key" && name != "#first_seen" {
 			updates = append(updates, quote(name)+" = excluded."+quote(name))
@@ -753,7 +753,7 @@ func (m *Mirror) deleteChildren(ctx context.Context, datum *Datum, table string,
 	if len(parents) == 0 {
 		return nil
 	}
-	rows, err := m.db.QueryContext(ctx, `DELETE FROM `+qualified(table)+` WHERE "#datum" = ? AND "#parent" = ANY(CAST(? AS bigint[]))
+	rows, err := m.db.QueryContext(ctx, `DELETE FROM `+qualified(table)+` WHERE "#datum" = $1 AND "#parent" = ANY(CAST($2 AS bigint[]))
 		RETURNING "#id"`, datum.ID, int64ArrayLiteral(parents))
 	if err != nil {
 		return fmt.Errorf("mirror: replacing the rows of %s: %w", table, err)
@@ -787,7 +787,7 @@ func (m *Mirror) deleteChildren(ctx context.Context, datum *Datum, table string,
 func (m *Mirror) childTables(ctx context.Context, table string) ([]string, error) {
 	rows, err := m.db.QueryContext(ctx, `SELECT c.name FROM opnsense.mirror_table AS c
 		JOIN opnsense.mirror_table AS p ON p.endpoint_id = c.endpoint_id AND c.parent_row_set = p.row_set
-		WHERE p.name = ? AND c.name <> p.name`, table)
+		WHERE p.name = $1 AND c.name <> p.name`, table)
 	if err != nil {
 		return nil, err
 	}
@@ -855,8 +855,8 @@ func (m *Mirror) currentContent(ctx context.Context, datum *Datum, table *tableI
 		keys = append(keys, &key)
 	}
 	// The keys are joined, never tested with = ANY (incremental.go, keepUnchanged).
-	rows, err := m.db.QueryContext(ctx, "SELECT "+strings.Join(selected, ", ")+" FROM unnest(CAST(? AS text[])) AS k (key) "+
-		"JOIN "+qualified(table.name)+` AS r ON r."#key" = k.key WHERE r."#datum" = ?`, arrayLiteral(keys), datum.ID)
+	rows, err := m.db.QueryContext(ctx, "SELECT "+strings.Join(selected, ", ")+" FROM unnest(CAST($1 AS text[])) AS k (key) "+
+		"JOIN "+qualified(table.name)+` AS r ON r."#key" = k.key WHERE r."#datum" = $2`, arrayLiteral(keys), datum.ID)
 	if err != nil {
 		return nil, fmt.Errorf("mirror: reading the rows of %s: %w", table.name, err)
 	}
@@ -945,7 +945,7 @@ func (m *Mirror) writeHistory(ctx context.Context, datum *Datum, table *tableInf
 	for _, row := range history {
 		encoded, _ := json.Marshal(row.values)
 		if _, err := m.db.ExecContext(ctx, "INSERT INTO "+qualified(name)+
-			` ("#row", "#datum", "#changed_at", "#values") VALUES (?, ?, ?, CAST(? AS jsonb))`,
+			` ("#row", "#datum", "#changed_at", "#values") VALUES ($1, $2, $3, CAST($4 AS jsonb))`,
 			row.id, datum.ID, at, string(encoded)); err != nil {
 			return fmt.Errorf("mirror: writing the history of %s: %w", table.name, err)
 		}

@@ -40,7 +40,7 @@ func TestBlocklistLastSeenNeverMovesBackwardsOnReingestion(t *testing.T) {
 		t.Helper()
 		var first, last int64
 		if err := database.DB().QueryRowContext(ctx,
-			"SELECT first_seen_at, last_seen_at FROM blocklist WHERE name = ?", list).
+			"SELECT first_seen_at, last_seen_at FROM blocklist WHERE name = $1", list).
 			Scan(&first, &last); err != nil {
 			t.Fatalf("reading the blocklist row: %v", err)
 		}

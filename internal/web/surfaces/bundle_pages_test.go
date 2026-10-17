@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
@@ -17,7 +16,6 @@ import (
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 	"github.com/NaejEL/opnview/internal/web/webtest/interfacestest"
-	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 	"github.com/NaejEL/opnview/internal/web/webtest/sourcestest"
 )
 
@@ -181,26 +179,14 @@ func bundlePages(t *testing.T) []webtest.RenderedPage {
 	add("the collection surface with a submission naming no card", c.Post(webtest.PathCollectionSettings,
 		url.Values{config.KeyLeaseBackendFailurePassLimit: {"9"}}))
 
-	// The Public Suffix List card in every outcome, with a copy held and without.
+	// The settings surface's refusals and saves.
 	p := collectiontest.SignedInHarness(t)
-	for _, probe := range []string{registrabledomain.ProbeDownloaded, registrabledomain.ProbeNotModified,
-		registrabledomain.ProbeFailed, registrabledomain.ProbeMalformed} {
-		settingstest.SetPublicSuffixProbe(p, vocab.StateReachable, probe, nil)
-		pages = append(pages, webtest.RenderedPage{Name: "the settings surface after a " + probe + " refresh", Document: webtest.PageSource(t, p, web.PathSettings)})
-		if probe == registrabledomain.ProbeNotModified {
-			p.Suffix.Hold("2026-10-09_08-15-00_UTC", 9876, now-600)
-		}
-	}
-	p.Suffix.Hold("", 9876, now-600)
-	pages = append(pages, webtest.RenderedPage{Name: "the settings surface with a copy stating no version", Document: webtest.PageSource(t, p, web.PathSettings)})
 	add("the settings surface with a submission naming no card", p.Post(web.PathSettings,
-		url.Values{"theme": {string(web.ThemeSystem)}, webtest.FieldPublicSuffixInterval: {"daily"}}))
+		url.Values{"theme": {string(web.ThemeSystem)}}))
 	addFollowed("the settings surface with the appearance card saved", p, p.Post(web.PathSettings,
 		url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardAppearance}, "theme": {string(web.ThemeSystem)}}))
 	add("the settings surface refusing a card that does not exist", p.Post(web.PathSettings,
 		url.Values{webtest.FieldSettingsCard: {"no_such_card"}}))
-	add("the settings surface with the refresh interval refused in its card", p.Post(web.PathSettings,
-		url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix}, webtest.FieldPublicSuffixInterval: {"daily"}}))
 
 	// The indicator whose read failed: its own named state, on a page still drawn.
 	u := collectiontest.SignedInHarness(t)

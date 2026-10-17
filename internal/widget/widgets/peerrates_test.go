@@ -51,7 +51,7 @@ func TestAThirdPartyWidgetServesThePerPeerRateFromFilesAlone(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, defaultSpec)
 	client := f.clients[0]
-	clientID := f.scalar(t, "SELECT id FROM client WHERE last_address = ? AND identity_kind = 'mac' ORDER BY id LIMIT 1", client.address)
+	clientID := f.scalar(t, "SELECT id FROM client WHERE last_address = $1 AND identity_kind = 'mac' ORDER BY id LIMIT 1", client.address)
 	at := f.now - 20
 	peers := []string{f.peers[0], f.peers[1]}
 	f.sampleAt(t, at, vocab.SubjectInterfaceEndpoint, vocab.InterfaceEndpointKey(client.iface.device, client.address),

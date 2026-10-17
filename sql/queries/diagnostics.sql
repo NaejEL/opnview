@@ -40,8 +40,8 @@ WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end
   AND f.src_client_id IS NOT NULL
   AND f.dst_interface_id IS NULL
-  AND f.src_is_this_firewall = 0
-  AND f.dst_is_this_firewall = 0
+  AND NOT f.src_is_this_firewall
+  AND NOT f.dst_is_this_firewall
   AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
 GROUP BY f.src_client_id
 ORDER BY attribution_rate_percent ASC, client_id ASC;
@@ -86,7 +86,7 @@ SELECT
     a.probe       AS probe,
     a.detail      AS detail,
     a.checked_at  AS checked_at,
-    p.is_active   AS is_active
+    CAST(p.is_active AS INTEGER) AS is_active
 FROM provider AS p
 LEFT JOIN source_availability AS a ON a.provider_id = p.id
 ORDER BY p.kind, p.provider_key;
@@ -478,7 +478,7 @@ SELECT count(*) AS unmarked_flows
 FROM flow AS f
 WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end
-  AND ((f.src_is_this_firewall = 0
+  AND ((NOT f.src_is_this_firewall
         AND EXISTS (SELECT 1 FROM this_firewall_address AS h
                     WHERE h.address = f.src_address
                       AND h.first_seen_at - coalesce((SELECT CAST(s.value AS BIGINT) FROM setting AS s
@@ -486,7 +486,7 @@ WHERE f.observed_at >= :window_start
                       AND (h.is_current = 1
                            OR h.last_seen_at + coalesce((SELECT CAST(s.value AS BIGINT) FROM setting AS s
                             WHERE s.key = 'refresh_interval_discovery_seconds'), 300) >= f.observed_at)))
-    OR (f.dst_is_this_firewall = 0
+    OR (NOT f.dst_is_this_firewall
         AND EXISTS (SELECT 1 FROM this_firewall_address AS h
                     WHERE h.address = f.dst_address
                       AND h.first_seen_at - coalesce((SELECT CAST(s.value AS BIGINT) FROM setting AS s
@@ -529,8 +529,8 @@ JOIN interface AS i ON i.device = f.interface_device
 WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end
   AND f.direction = 'out'
-  AND f.src_is_this_firewall = 1
-  AND i.is_upstream = 1
+  AND f.src_is_this_firewall
+  AND i.is_upstream
 GROUP BY 1
 ORDER BY 1;
 
@@ -595,7 +595,7 @@ eligible AS (
     WHERE f.observed_at >= :window_start
       AND f.observed_at < :window_end
       AND f.dst_interface_id IS NULL
-      AND f.dst_is_this_firewall = 0
+      AND NOT f.dst_is_this_firewall
       AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
 ),
 paths (flow_id, observed_at, name, covered_from, held_in, links) AS (
@@ -661,7 +661,7 @@ eligible AS (
     WHERE f.observed_at >= :window_start
       AND f.observed_at < :window_end
       AND f.dst_interface_id IS NULL
-      AND f.dst_is_this_firewall = 0
+      AND NOT f.dst_is_this_firewall
       AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
 ),
 paths (flow_id, observed_at, name, covered_from, held_in, links) AS (
@@ -902,8 +902,8 @@ WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end
   AND f.src_client_id IS NOT NULL
   AND f.dst_interface_id IS NULL
-  AND f.src_is_this_firewall = 0
-  AND f.dst_is_this_firewall = 0
+  AND NOT f.src_is_this_firewall
+  AND NOT f.dst_is_this_firewall
   AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg');
 
 -- diagnostic: live_resolver_records_per_hour

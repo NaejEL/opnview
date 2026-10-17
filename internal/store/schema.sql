@@ -388,7 +388,7 @@ CREATE TABLE IF NOT EXISTS provider (
                          AND translate(kind, 'abcdefghijklmnopqrstuvwxyz0123456789_', '') = ''),
     provider_key  TEXT NOT NULL,
     display_name  TEXT NOT NULL,
-    is_active     BIGINT NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+    is_active     BOOLEAN NOT NULL DEFAULT false,
     registered_at BIGINT NOT NULL CHECK (registered_at >= 0 AND registered_at < 4102444800),
     UNIQUE (kind, provider_key)
 );
@@ -399,7 +399,7 @@ CREATE TABLE IF NOT EXISTS provider (
 -- and so the four kinds whose rows carry their provider are left alone.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_active_per_exclusive_kind
     ON provider (kind)
-    WHERE is_active = 1
+    WHERE is_active
       AND kind NOT IN ('security_event', 'dhcp_lease', 'measurement_sample',
                        'reconciled_state', 'resolver_cache', 'resolver_local_data');
 
@@ -470,7 +470,7 @@ CREATE TABLE IF NOT EXISTS interface (
     -- An address reached through an upstream interface is OUTSIDE: it has no
     -- interface membership, and on-link evidence on an upstream interface is not
     -- evidence of membership (docs/data-model.md, "Classification").
-    is_upstream    BIGINT NOT NULL DEFAULT 0 CHECK (is_upstream IN (0, 1)),
+    is_upstream    BOOLEAN NOT NULL DEFAULT false,
     -- link_local_evidence is the OPERATOR'S rule, and discovery never writes it:
     -- whether an IPv6 link-local address (RFC 4291, section 2.5.6) seen on this
     -- interface is evidence that the address belongs to it. A link-local prefix
@@ -478,7 +478,7 @@ CREATE TABLE IF NOT EXISTS interface (
     -- where a machine sits unless the operator says it does. The default is no
     -- (0), and setting it on one interface makes such an address evidence on
     -- that interface only (docs/data-model.md, "Classification").
-    link_local_evidence BIGINT NOT NULL DEFAULT 0 CHECK (link_local_evidence IN (0, 1)),
+    link_local_evidence BOOLEAN NOT NULL DEFAULT false,
     first_seen_at  BIGINT NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
     last_seen_at   BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800)
 );
@@ -692,16 +692,16 @@ CREATE TABLE IF NOT EXISTS rule (
                   CHECK (action IN ('pass', 'block', 'reject', 'unknown')),
     direction     TEXT CHECK (direction IS NULL OR direction IN ('in', 'out', 'any')),
     interface     TEXT,
-    legacy        BIGINT CHECK (legacy IS NULL OR legacy IN (0, 1)),
-    logs_matches  BIGINT CHECK (logs_matches IS NULL OR logs_matches IN (0, 1)),
+    legacy        BOOLEAN,
+    logs_matches  BOOLEAN,
     -- enabled is the endpoint's `enabled` field: "1" or "0" on a model rule, which the
     -- endpoint returns disabled or not, and always "1" on a legacy or automatic row,
     -- which it returns only when enabled (opnsense/core 26.7.3, Firewall/Filter.xml and
     -- scripts/filter/list_non_mvc_rules.php). NULL is not reported. Stored as
     -- coverage of the field: a rule a screen lists can say it is switched off, and
     -- nothing in the derivation reads it.
-    enabled       BIGINT CHECK (enabled IS NULL OR enabled IN (0, 1)),
-    is_automatic  BIGINT NOT NULL DEFAULT 0 CHECK (is_automatic IN (0, 1)),
+    enabled       BOOLEAN,
+    is_automatic  BOOLEAN NOT NULL DEFAULT false,
     discovered_at BIGINT NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800),
     -- destination_net is the endpoint's `destination_net` field, VERBATIM: an address,
     -- a network, an alias name, `any`, whatever the rule says (B8a of
@@ -957,8 +957,8 @@ CREATE TABLE IF NOT EXISTS flow (
     -- (none for a loopback address) and never a client: the CHECKs below. It is
     -- never outside either. Classification sets both, docs/data-model.md,
     -- "Classification"; the collector stores every record with neither set.
-    src_is_this_firewall   BIGINT NOT NULL DEFAULT 0 CHECK (src_is_this_firewall IN (0, 1)),
-    dst_is_this_firewall   BIGINT NOT NULL DEFAULT 0 CHECK (dst_is_this_firewall IN (0, 1)),
+    src_is_this_firewall   BOOLEAN NOT NULL DEFAULT false,
+    dst_is_this_firewall   BOOLEAN NOT NULL DEFAULT false,
     -- ip_id and tcp_seq are the filter log's `id` (IPv4 identification) and `seq`
     -- (TCP sequence number), the two logged fields verified to be carried
     -- unchanged by both legs of one connection under OPNsense's defaults (survey,
@@ -1007,14 +1007,14 @@ CREATE TABLE IF NOT EXISTS flow (
     -- name, no assumed addressing plan.
     traffic_scope          TEXT NOT NULL,
     CHECK (traffic_scope = CASE
-                               WHEN src_is_this_firewall = 1 OR dst_is_this_firewall = 1
+                               WHEN src_is_this_firewall OR dst_is_this_firewall
                                    THEN 'this_firewall'
                                WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
                                    THEN 'east_west'
                                ELSE 'north_south'
                            END),
-    CHECK (src_is_this_firewall = 0 OR src_client_id IS NULL),
-    CHECK (dst_is_this_firewall = 0 OR dst_client_id IS NULL),
+    CHECK (NOT src_is_this_firewall OR src_client_id IS NULL),
+    CHECK (NOT dst_is_this_firewall OR dst_client_id IS NULL),
     CHECK ((coalesce(pair_outcome, '') IN ('first_leg', 'second_leg')) = (paired_flow_id IS NOT NULL))
 );
 
@@ -1134,8 +1134,8 @@ SELECT
     rule_lookup_state,
     ip_version,
     CASE
-        WHEN src_is_this_firewall = 1 THEN 'from_this_firewall'
-        WHEN dst_is_this_firewall = 1 THEN 'to_this_firewall'
+        WHEN src_is_this_firewall THEN 'from_this_firewall'
+        WHEN dst_is_this_firewall THEN 'to_this_firewall'
         WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN 'inter_interface'
         WHEN src_interface_id IS NOT NULL THEN 'outbound'
         WHEN dst_interface_id IS NOT NULL THEN 'inbound'
@@ -1143,17 +1143,17 @@ SELECT
         ELSE 'inbound'
     END AS traffic_direction,
     CASE
-        WHEN src_is_this_firewall = 0 AND src_interface_id IS NOT NULL THEN src_interface_id
-        WHEN dst_is_this_firewall = 0 THEN dst_interface_id
+        WHEN NOT src_is_this_firewall AND src_interface_id IS NOT NULL THEN src_interface_id
+        WHEN NOT dst_is_this_firewall THEN dst_interface_id
     END AS local_interface_id,
     CASE
-        WHEN src_is_this_firewall = 0 AND src_interface_id IS NOT NULL THEN src_client_id
-        WHEN dst_is_this_firewall = 0 AND dst_interface_id IS NOT NULL THEN dst_client_id
+        WHEN NOT src_is_this_firewall AND src_interface_id IS NOT NULL THEN src_client_id
+        WHEN NOT dst_is_this_firewall AND dst_interface_id IS NOT NULL THEN dst_client_id
     END AS local_client_id,
     CASE
-        WHEN src_is_this_firewall = 1 AND dst_is_this_firewall = 1 THEN NULL
-        WHEN src_is_this_firewall = 1 THEN CASE WHEN dst_interface_id IS NULL THEN dst_address END
-        WHEN dst_is_this_firewall = 1 THEN CASE WHEN src_interface_id IS NULL THEN src_address END
+        WHEN src_is_this_firewall AND dst_is_this_firewall THEN NULL
+        WHEN src_is_this_firewall THEN CASE WHEN dst_interface_id IS NULL THEN dst_address END
+        WHEN dst_is_this_firewall THEN CASE WHEN src_interface_id IS NULL THEN src_address END
         WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN NULL
         WHEN src_interface_id IS NOT NULL THEN dst_address
         WHEN dst_interface_id IS NOT NULL THEN src_address
@@ -1411,7 +1411,7 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
                                                 'dual_stack_hostname')),
     client_family  BIGINT CHECK (client_family IS NULL OR client_family IN (4, 6)),
     client_id      BIGINT REFERENCES client (id),
-    client_is_this_firewall BIGINT NOT NULL DEFAULT 0 CHECK (client_is_this_firewall IN (0, 1)),
+    client_is_this_firewall BOOLEAN NOT NULL DEFAULT false,
     hostname_examined_at BIGINT CHECK (hostname_examined_at IS NULL
                                         OR (hostname_examined_at >= 0 AND hostname_examined_at < 4102444800)),
     domain         TEXT NOT NULL,
@@ -1431,7 +1431,7 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
                    CHECK (interface_lookup_state IN ('resolved', 'not_found', 'pending')),
     CHECK ((interface_lookup_state = 'resolved') = (interface_id IS NOT NULL)),
     CHECK ((client_resolution = 'logged_address') = (client_hostname IS NULL)),
-    CHECK (client_is_this_firewall = 0 OR client_id IS NULL)
+    CHECK (NOT client_is_this_firewall OR client_id IS NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_looked_up_at ON dns_resolution (looked_up_at);
@@ -1774,10 +1774,10 @@ CREATE TABLE IF NOT EXISTS security_event (
     src_interface_id    BIGINT REFERENCES interface (id),
     -- 1 when the event's source is this firewall, as flow.src_is_this_firewall
     -- decides it for a record's end; such a source has no client.
-    src_is_this_firewall BIGINT NOT NULL DEFAULT 0 CHECK (src_is_this_firewall IN (0, 1)),
+    src_is_this_firewall BOOLEAN NOT NULL DEFAULT false,
     flow_ref            BIGINT,
     UNIQUE (provider_id, provider_event_key),
-    CHECK (src_is_this_firewall = 0 OR src_client_id IS NULL)
+    CHECK (NOT src_is_this_firewall OR src_client_id IS NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_security_event_occurred_at ON security_event (occurred_at);
@@ -3465,7 +3465,7 @@ CREATE INDEX IF NOT EXISTS idx_collection_gap_interval
 CREATE TABLE IF NOT EXISTS opnview_heartbeat (
     id         BIGINT PRIMARY KEY CHECK (id = 1),
     beat_at    BIGINT NOT NULL CHECK (beat_at >= 0 AND beat_at < 4102444800),
-    clean_stop BIGINT NOT NULL DEFAULT 0 CHECK (clean_stop IN (0, 1))
+    clean_stop BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE TABLE IF NOT EXISTS opnview_downtime (
@@ -3476,7 +3476,7 @@ CREATE TABLE IF NOT EXISTS opnview_downtime (
                       CHECK (interval_end_at >= 0 AND interval_end_at < 4102444800),
     -- 1 when the service recorded a clean stop at interval_start_at, 0 when the
     -- start is the last heartbeat of a process that ended without one.
-    clean_stop        BIGINT NOT NULL CHECK (clean_stop IN (0, 1)),
+    clean_stop        BOOLEAN NOT NULL,
     detected_at       BIGINT NOT NULL CHECK (detected_at >= 0 AND detected_at < 4102444800),
     CHECK (interval_end_at > interval_start_at)
 );
@@ -3880,7 +3880,7 @@ CREATE TABLE IF NOT EXISTS capture_configuration (
     fingerprint              TEXT,
     outcome                  TEXT,
     detail                   TEXT,
-    enabled                  BIGINT CHECK (enabled IS NULL OR enabled IN (0, 1)),
+    enabled                  BOOLEAN,
     export_version           TEXT,
     active_timeout_seconds   BIGINT CHECK (active_timeout_seconds IS NULL OR active_timeout_seconds > 0),
     inactive_timeout_seconds BIGINT CHECK (inactive_timeout_seconds IS NULL OR inactive_timeout_seconds > 0),
@@ -3904,8 +3904,8 @@ CREATE TABLE IF NOT EXISTS capture_configuration (
 CREATE TABLE IF NOT EXISTS capture_interface (
     capture_configuration_id BIGINT NOT NULL REFERENCES capture_configuration (id) ON DELETE CASCADE,
     identifier               TEXT NOT NULL CHECK (length(identifier) > 0),
-    ingress                  BIGINT NOT NULL CHECK (ingress IN (0, 1)),
-    egress                   BIGINT NOT NULL CHECK (egress IN (0, 1)),
+    ingress                  BOOLEAN NOT NULL,
+    egress                   BOOLEAN NOT NULL,
     exported                 TEXT NOT NULL CHECK (exported IN ('yes', 'no', 'unknown')),
     not_exported_reason      TEXT CHECK (not_exported_reason IS NULL OR length(not_exported_reason) > 0),
     CHECK ((exported = 'no') = (not_exported_reason IS NOT NULL)),
@@ -4009,14 +4009,14 @@ CREATE TABLE IF NOT EXISTS flow_record (
                                                             'local_delivery', 'unmapped')),
     egress_identifier  TEXT CHECK (egress_identifier IS NULL OR length(egress_identifier) > 0),
     egress_device      TEXT CHECK (egress_device IS NULL OR length(egress_device) > 0),
-    loss_detectable    BIGINT NOT NULL CHECK (loss_detectable IN (0, 1)),
+    loss_detectable    BOOLEAN NOT NULL,
     tuple_key          TEXT NOT NULL,
     join_state         TEXT NOT NULL CHECK (join_state IN ('pending', 'joined', 'copy', 'unmatched')),
     joined_flow_id     BIGINT,
     copy_kind          TEXT CHECK (copy_kind IS NULL OR copy_kind IN ('translated_copy', 'parent_copy')),
     copy_flow_id       BIGINT,
     orientation        TEXT CHECK (orientation IS NULL OR orientation IN ('forward', 'reverse')),
-    counted_copy       BIGINT NOT NULL DEFAULT 0 CHECK (counted_copy IN (0, 1)),
+    counted_copy       BOOLEAN NOT NULL DEFAULT false,
     unmatched_reason   TEXT CHECK (unmatched_reason IS NULL
                                    OR unmatched_reason IN ('no_logged_leg', 'ambiguous', 'beyond_flow_horizon',
                                                            'interface_index_unmapped', 'reverse_unconfirmed')),
@@ -4030,7 +4030,7 @@ CREATE TABLE IF NOT EXISTS flow_record (
     CHECK ((join_state = 'copy') = (copy_kind IS NOT NULL)),
     CHECK (copy_flow_id IS NULL OR copy_kind = 'translated_copy'),
     CHECK ((orientation IS NOT NULL) = (joined_flow_id IS NOT NULL OR copy_flow_id IS NOT NULL)),
-    CHECK (counted_copy = 0 OR copy_flow_id IS NOT NULL),
+    CHECK (NOT counted_copy OR copy_flow_id IS NOT NULL),
     CHECK ((join_state = 'unmatched') = (unmatched_reason IS NOT NULL)),
     CHECK ((join_state IN ('joined', 'copy', 'unmatched')) = (decided_at IS NOT NULL)),
     UNIQUE (identity, start_at)
@@ -4091,25 +4091,25 @@ CREATE TABLE IF NOT EXISTS connection_measured_volume (
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     packets             BIGINT NOT NULL CHECK (packets >= 0),
     records             BIGINT NOT NULL CHECK (records >= 0),
-    counted_copy        BIGINT NOT NULL CHECK (counted_copy IN (0, 1)),
-    final               BIGINT NOT NULL CHECK (final IN (0, 1)),
+    counted_copy        BOOLEAN NOT NULL,
+    final               BOOLEAN NOT NULL,
     -- due_at is the read-through instant from which the state may change by time alone -- an
     -- in-progress direction ending, an awaited one going missing -- and NULL once final: an open row is
     -- computed again when it falls due, or when a record, a leg or a gap it reads changes.
     due_at              BIGINT CHECK (due_at IS NULL OR (due_at >= 0 AND due_at < 4102444800)),
     computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
-    CHECK ((final = 1) = (due_at IS NULL)),
+    CHECK ((final) = (due_at IS NULL)),
     CHECK (records > 0 OR (bytes = 0 AND packets = 0)),
     CHECK (state NOT IN ('measured', 'in_progress') OR records > 0),
     CHECK (state IN ('measured', 'in_progress', 'export_gap') OR records = 0),
-    CHECK (counted_copy = 0 OR state IN ('measured', 'in_progress', 'awaiting_export', 'missing', 'export_gap')),
+    CHECK (NOT counted_copy OR state IN ('measured', 'in_progress', 'awaiting_export', 'missing', 'export_gap')),
     PRIMARY KEY (connection_flow_id, direction)
 );
 
 CREATE INDEX IF NOT EXISTS idx_connection_measured_volume_start
     ON connection_measured_volume (connection_start_at);
 CREATE INDEX IF NOT EXISTS idx_connection_measured_volume_due
-    ON connection_measured_volume (due_at) WHERE final = 0;
+    ON connection_measured_volume (due_at) WHERE NOT final;
 
 -- ---------------------------------------------------------------------------
 -- connection_netflow — THE ONE PLACE a logged flow's `netflow` figures are read
@@ -4242,14 +4242,14 @@ AS $connection_netflow$
                CASE WHEN count(*) FILTER (WHERE e.state = 'interface_not_exported') > 0 THEN 1 ELSE 0 END AS state_interface_not_exported,
                CASE WHEN count(*) FILTER (WHERE e.state = 'interface_not_captured') > 0 THEN 1 ELSE 0 END AS state_interface_not_captured,
                CASE WHEN count(*) FILTER (WHERE e.state = 'capture_configuration_unknown') > 0 THEN 1 ELSE 0 END AS state_capture_configuration_unknown,
-               CASE WHEN count(*) FILTER (WHERE e.counted_copy = 1) > 0 THEN 1 ELSE 0 END AS counted_copy
+               CASE WHEN count(*) FILTER (WHERE e.counted_copy) > 0 THEN 1 ELSE 0 END AS counted_copy
         FROM (
             SELECT CASE WHEN r.refused_exit AND v.direction = 'forward' THEN 'not_exported_when_refused'
                         ELSE v.state END AS state,
                    CASE WHEN r.refused_exit AND v.direction = 'forward' THEN 0 ELSE v.bytes END AS bytes,
                    CASE WHEN r.refused_exit AND v.direction = 'forward' THEN 0 ELSE v.packets END AS packets,
                    CASE WHEN r.refused_exit AND v.direction = 'forward' THEN 0 ELSE v.records END AS records,
-                   CASE WHEN r.refused_exit AND v.direction = 'forward' THEN 0 ELSE v.counted_copy END AS counted_copy
+                   CASE WHEN r.refused_exit AND v.direction = 'forward' THEN false ELSE v.counted_copy END AS counted_copy
             FROM connection_measured_volume AS v
             CROSS JOIN (SELECT leg_pair_outcome IS NOT DISTINCT FROM 'second_leg'
                                AND leg_action IN ('block', 'reject') AS refused_exit) AS r
@@ -4433,15 +4433,15 @@ ON CONFLICT (key) DO NOTHING;
 -- citation below is in docs/opnsense-api-survey.md, and docs/data-model.md
 -- tabulates them.
 INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) VALUES
-    ('firewall_log',   'pf',                'pf filter log',        0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('security_event', 'suricata',          'Suricata',             0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('flow_volume',    'insight',           'NetFlow / Insight',    0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('dhcp_lease',     'kea',               'Kea DHCP',             0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('dhcp_lease',     'dnsmasq',           'Dnsmasq DHCP',         0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('dhcp_lease',     'isc',               'ISC dhcpd',            0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('dns_lookup',     'unbound',           'Unbound',              0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('dns_lookup',     'dnsmasq',           'Dnsmasq resolver',     0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('ip_geolocation', 'maxmind_geolite2',  'MaxMind GeoLite2',     0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('firewall_log',   'pf',                'pf filter log',        false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('security_event', 'suricata',          'Suricata',             false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('flow_volume',    'insight',           'NetFlow / Insight',    false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('dhcp_lease',     'kea',               'Kea DHCP',             false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('dhcp_lease',     'dnsmasq',           'Dnsmasq DHCP',         false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('dhcp_lease',     'isc',               'ISC dhcpd',            false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('dns_lookup',     'unbound',           'Unbound',              false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('dns_lookup',     'dnsmasq',           'Dnsmasq resolver',     false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('ip_geolocation', 'maxmind_geolite2',  'MaxMind GeoLite2',     false, CAST(extract(epoch FROM now()) AS BIGINT)),
     -- The measurement_sample kind's first implementation is the sampler 4A
     -- already wrote: the live per-pair traffic snapshot and the firewall's own
     -- gauges. It was registered under flow_volume because the kind did not exist,
@@ -4450,18 +4450,18 @@ INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at
     -- implements no external contract; what this row accounts for is the sampled
     -- per-pair volume, which is a source's material.
     ('measurement_sample', 'insight',       'NetFlow / Insight sampling',
-                                                                    0, CAST(extract(epoch FROM now()) AS BIGINT)),
+                                                                    false, CAST(extract(epoch FROM now()) AS BIGINT)),
     -- The Public Suffix List, downloaded from publicsuffix.org by the built-in
     -- publicsuffix plugin: the registrable_domain kind's built-in provider.
-    ('registrable_domain', 'public_suffix_list', 'Public Suffix List', 0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('registrable_domain', 'public_suffix_list', 'Public Suffix List', false, CAST(extract(epoch FROM now()) AS BIGINT)),
     -- The resolver's cache and its local data, one row per resolver for each: Unbound
     -- answers both reads; Dnsmasq is registered so that its state -- it offers no
     -- cache or local-data read through the API -- is probed and named rather than
     -- absent.
-    ('resolver_cache', 'unbound',           'Unbound cache',        0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('resolver_cache', 'dnsmasq',           'Dnsmasq cache',        0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('resolver_local_data', 'unbound',      'Unbound local data',   0, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('resolver_local_data', 'dnsmasq',      'Dnsmasq local data',   0, CAST(extract(epoch FROM now()) AS BIGINT))
+    ('resolver_cache', 'unbound',           'Unbound cache',        false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('resolver_cache', 'dnsmasq',           'Dnsmasq cache',        false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('resolver_local_data', 'unbound',      'Unbound local data',   false, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('resolver_local_data', 'dnsmasq',      'Dnsmasq local data',   false, CAST(extract(epoch FROM now()) AS BIGINT))
 ON CONFLICT (kind, provider_key) DO NOTHING;
 
 -- THE reconciled_state KIND HAS NO REGISTRY ROW, AND THAT IS NOT AN OMISSION.

@@ -90,7 +90,7 @@ func TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention(t *testing.T) {
 	}
 	var older, kept int
 	if err := database.DB().QueryRowContext(ctx,
-		"SELECT count(*) FILTER (WHERE start_at < ?), count(*) FILTER (WHERE start_at >= ?) FROM flow_record",
+		"SELECT count(*) FILTER (WHERE start_at < $1), count(*) FILTER (WHERE start_at >= $2) FROM flow_record",
 		horizon, horizon).Scan(&older, &kept); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestAnAddressIsComparedAsAValue(t *testing.T) {
 		"2001:DB8:0:0:0:0:0:10": "2001:db8::10", "2001:db8::10": "2001:db8::10", "198.51.100.10": "198.51.100.10",
 	} {
 		var got string
-		if err := database.DB().QueryRowContext(context.Background(), "SELECT canonical_address(?)", text).
+		if err := database.DB().QueryRowContext(context.Background(), "SELECT canonical_address($1)", text).
 			Scan(&got); err != nil || got != want {
 			t.Errorf("canonical_address(%q) = %q (%v), want %q", text, got, err, want)
 		}

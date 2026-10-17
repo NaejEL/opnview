@@ -163,12 +163,3 @@ func TestTheHostNameRetryReadsAnIndexAndNoGrowingTable(t *testing.T) {
 		t.Error("the retry does not read the partial index of the lookups waiting")
 	}
 }
-
-func containsWord(text, word string) bool {
-	for index := 0; index+len(word) <= len(text); index++ {
-		if text[index:index+len(word)] == word {
-			return true
-		}
-	}
-	return false
-}

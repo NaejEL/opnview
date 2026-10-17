@@ -390,13 +390,13 @@ func TestDrawingTheSettingsInterfacesAndSourcesContactsNothing(t *testing.T) {
 	counter.other = nil
 	counter.mutex.Unlock()
 	interfacestest.SeedBundleNetwork(h, 2)
-	firewallBefore := len(h.Fake.Received())
+	firewallBefore := len(h.Fake.Requests())
 
 	for _, path := range []string{web.PathSettings, webtest.PathInterfaces, webtest.PathSources} {
 		_ = webtest.PageSource(t, h, path)
 	}
 
-	if got := len(h.Fake.Received()) - firewallBefore; got != 0 {
+	if got := len(h.Fake.Requests()) - firewallBefore; got != 0 {
 		t.Errorf("drawing the three surfaces sent %d requests to the firewall", got)
 	}
 	counter.mutex.Lock()

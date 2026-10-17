@@ -5,20 +5,21 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/NaejEL/opnview/internal/web"
-	_ "github.com/NaejEL/opnview/internal/web/surfaces"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/web"
+	_ "github.com/NaejEL/opnview/internal/web/surfaces"
+
 	"github.com/NaejEL/opnview/internal/auth"
+	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/secret"
@@ -94,7 +95,7 @@ type Harness struct {
 	Clock      *TestClock
 	SetupToken *auth.SetupToken
 	Creds      *config.FirewallCredentials
-	Fake       *FakeFirewall
+	Fake       *providertest.Firewall
 	Server     *web.Server
 	HTTP       *httptest.Server
 	Client     *http.Client
@@ -104,34 +105,6 @@ type Harness struct {
 	Live      *config.Live
 	Collector *RecordingCollector
 	GeoIP     *RecordingGeoIP
-	// Suffix stands in for the Public Suffix List's refresher: the copy a test says
-	// is held, answered from memory, and a count of how often it was asked.
-	Suffix *RecordingPublicSuffix
-}
-
-// RecordingPublicSuffix stands in for the Public Suffix List's refresher.
-type RecordingPublicSuffix struct {
-	mutex       sync.Mutex
-	version     string
-	rules       int
-	confirmedAt int64
-	held        bool
-	asked       int
-}
-
-// Held answers the copy the test set.
-func (p *RecordingPublicSuffix) Held() (string, int, int64, bool) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.asked++
-	return p.version, p.rules, p.confirmedAt, p.held
-}
-
-// Hold makes a copy held, at a version, with a rule count, confirmed at an instant.
-func (p *RecordingPublicSuffix) Hold(version string, rules int, confirmedAt int64) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.version, p.rules, p.confirmedAt, p.held = version, rules, confirmedAt, true
 }
 
 // RecordingCollector stands in for the running collector and keeps every
@@ -149,13 +122,10 @@ func (c *RecordingCollector) Configure(settings config.Config) {
 	c.configured = append(c.configured, settings)
 }
 
-// RecordingGeoIP stands in for the MaxMind refresh: it counts the wakes and answers
-// a build a test sets.
+// RecordingGeoIP stands in for the MaxMind refresh: it counts the wakes.
 type RecordingGeoIP struct {
 	mutex sync.Mutex
 	wakes int
-	build int64
-	ready bool
 }
 
 // Wake counts one wake.
@@ -165,25 +135,11 @@ func (g *RecordingGeoIP) Wake() {
 	g.wakes++
 }
 
-// Ready answers the build the test set.
-func (g *RecordingGeoIP) Ready() (int64, bool) {
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
-	return g.build, g.ready
-}
-
 // Woken returns how many wakes arrived.
 func (g *RecordingGeoIP) Woken() int {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 	return g.wakes
-}
-
-// SetBuild makes the databases ready at a build.
-func (g *RecordingGeoIP) SetBuild(build int64) {
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
-	g.build, g.ready = build, true
 }
 
 // Reselect records the kind whose selection was applied.
@@ -266,7 +222,7 @@ func NewAdjusted(t *testing.T, dataDir string, withKeyFile, firewallOverTLS bool
 		}
 	}
 
-	fake := NewFakeFirewall(t, firewallOverTLS)
+	fake := providertest.NewAnsweringFirewall(t, firewallOverTLS)
 	credentials := config.NewFirewallCredentials()
 	// OVER TLS THE INNER TRANSPORT IS THE PRODUCT'S, so what decides whether the
 	// fake's certificate is acceptable is the code that decides it in production, not
@@ -277,7 +233,7 @@ func NewAdjusted(t *testing.T, dataDir string, withKeyFile, firewallOverTLS bool
 		inner = opnsense.NewTrustingTransport(credentials)
 	}
 	client := opnsense.NewClientFromSource(credentials,
-		&firewallOnlyTransport{T: t, allowedHost: fake.Host(), inner: inner},
+		providertest.FirewallOnly(t, fake, inner),
 		5*time.Second)
 
 	setupToken, err := auth.NewSetupToken()
@@ -289,11 +245,11 @@ func NewAdjusted(t *testing.T, dataDir string, withKeyFile, firewallOverTLS bool
 	// firewall on UTC, in the shape the survey records. It is the REAL time and not
 	// the test clock's, because the only collectors these tests run are on the system
 	// clock; the quarter-hour rounding absorbs the seconds a test takes.
-	fake.PerPath[opnsense.SystemTime.Path] = MustJSON(t, map[string]string{
+	fake.Answer(opnsense.SystemTime, http.StatusOK, MustJSON(t, map[string]string{
 		"datetime": time.Now().UTC().Format("Mon Jan _2 15:04:05 UTC 2006"),
 		"uptime":   "1 day, 00:00:00",
 		"loadavg":  "0.10, 0.10, 0.10",
-	})
+	}))
 
 	// The live holder is primed exactly as cmd/opnview primes it, so a restart test
 	// exercises the same path the product takes.
@@ -313,7 +269,6 @@ func NewAdjusted(t *testing.T, dataDir string, withKeyFile, firewallOverTLS bool
 	live := config.NewLive(settings)
 	collector := &RecordingCollector{}
 	geoip := &RecordingGeoIP{}
-	suffix := &RecordingPublicSuffix{}
 
 	options := web.Options{
 		Store:          database,
@@ -327,7 +282,6 @@ func NewAdjusted(t *testing.T, dataDir string, withKeyFile, firewallOverTLS bool
 		Settings:       live,
 		Collector:      collector,
 		GeoIP:          geoip,
-		PublicSuffix:   suffix,
 	}
 	if adjust != nil {
 		adjust(&options)
@@ -347,7 +301,7 @@ func NewAdjusted(t *testing.T, dataDir string, withKeyFile, firewallOverTLS bool
 	return &Harness{
 		T: t, DataDir: dataDir, Store: database, Box: box, Clock: clock,
 		SetupToken: setupToken, Creds: credentials, Fake: fake, Server: server,
-		HTTP: front, Live: live, Collector: collector, GeoIP: geoip, Suffix: suffix,
+		HTTP: front, Live: live, Collector: collector, GeoIP: geoip,
 		Client: &http.Client{
 			Jar: jar,
 			// A redirect is a fact a test asserts on, so it is never followed
@@ -517,148 +471,6 @@ func RandomHex(t *testing.T, bytes int) string {
 	return hex.EncodeToString(raw)
 }
 
-// FakeFirewall answers the registry's paths, records what was asked and with which
-// credentials, and refuses everything else.
-type FakeFirewall struct {
-	T      *testing.T
-	Server *httptest.Server
-
-	mutex  sync.Mutex
-	status int
-	body   []byte
-	// PerPath answers one path with a shape of its own. Runtime discovery reads three
-	// endpoints whose envelopes differ, and a collection pass that fell over on a body
-	// it could not decode would prove nothing about the credentials it carried.
-	PerPath  map[string][]byte
-	requests []FakeRequest
-	// down makes the fake refuse to answer at all, which is the unreachable-host
-	// case: the transport fails rather than a status coming back.
-	down bool
-}
-
-// FakeRequest is one request the fake received.
-type FakeRequest struct {
-	// Path is what was asked for.
-	Path string
-	// Method is how.
-	Method string
-	// APIKey and apiSecret are the Basic-auth halves the request carried. They are
-	// what AC16 asserts on: the pass after a credential change must carry the new
-	// value.
-	APIKey    string
-	APISecret string
-}
-
-// NewFakeFirewall starts a fake answering the verification endpoint. overTLS serves
-// it under a certificate httptest generates, which no system root vouches for —
-// which is the shape of a firewall as OPNsense ships it.
-func NewFakeFirewall(t *testing.T, overTLS bool) *FakeFirewall {
-	t.Helper()
-	fake := &FakeFirewall{T: t, status: http.StatusOK, PerPath: map[string][]byte{}}
-	fake.body = MustJSON(t, map[string]any{"rows": []any{}, "total": 0})
-	// get_interface_names answers a flat map from device name to description, not the
-	// search envelope every other endpoint uses. An empty map is a firewall with
-	// nothing discovered, which is a state rather than a failure.
-	fake.PerPath[opnsense.InterfaceNames.Path] = MustJSON(t, map[string]string{})
-	if overTLS {
-		fake.Server = httptest.NewTLSServer(http.HandlerFunc(fake.Serve))
-	} else {
-		fake.Server = httptest.NewServer(http.HandlerFunc(fake.Serve))
-	}
-	t.Cleanup(fake.Server.Close)
-	return fake
-}
-
-// Serve records one request and answers it.
-func (f *FakeFirewall) Serve(writer http.ResponseWriter, request *http.Request) {
-	apiKey, apiSecret, _ := request.BasicAuth()
-
-	f.mutex.Lock()
-	f.requests = append(f.requests, FakeRequest{
-		Path: request.URL.Path, Method: request.Method,
-		APIKey: apiKey, APISecret: apiSecret,
-	})
-	status, body, down := f.status, f.body, f.down
-	if override, present := f.PerPath[request.URL.Path]; present && status == http.StatusOK {
-		body = override
-	}
-	f.mutex.Unlock()
-
-	if down {
-		// Hijack and close without answering, so the client sees no response at all —
-		// which is what an unreachable host looks like from the transport's side.
-		hijacker, ok := writer.(http.Hijacker)
-		if !ok {
-			f.T.Fatal("the fake cannot simulate an unreachable host on this server")
-		}
-		connection, _, err := hijacker.Hijack()
-		if err != nil {
-			f.T.Fatalf("hijacking to simulate an unreachable host: %v", err)
-		}
-		_ = connection.Close()
-		return
-	}
-	writer.WriteHeader(status)
-	_, _ = writer.Write(body)
-}
-
-// Host is the fake's host:port, chosen by the operating system at run time.
-func (f *FakeFirewall) Host() string {
-	f.T.Helper()
-	target, err := url.Parse(f.Server.URL)
-	if err != nil {
-		f.T.Fatalf("parsing the fake firewall address: %v", err)
-	}
-	return target.Host
-}
-
-// BaseURL is what a test types into the firewall URL field.
-func (f *FakeFirewall) BaseURL() string { return f.Server.URL }
-
-// Fingerprint is the SHA-256 fingerprint of the certificate this fake presents, or
-// the empty string when it speaks plain HTTP. It is what an operator would read off
-// OPNsense's own interface and type into the settings surface.
-func (f *FakeFirewall) Fingerprint() string {
-	f.T.Helper()
-	if f.Server.TLS == nil || len(f.Server.Certificate().Raw) == 0 {
-		return ""
-	}
-	return opnsense.CertificateFingerprint(f.Server.Certificate())
-}
-
-// Answer sets what the fake replies with.
-func (f *FakeFirewall) Answer(status int, body []byte) {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-	f.status, f.body, f.down = status, body, false
-}
-
-// GoDown makes the fake stop answering.
-func (f *FakeFirewall) GoDown() {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-	f.down = true
-}
-
-// Received returns the requests the fake got.
-func (f *FakeFirewall) Received() []FakeRequest {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-	copied := make([]FakeRequest, len(f.requests))
-	copy(copied, f.requests)
-	return copied
-}
-
-// Last returns the most recent request, failing if there is none.
-func (f *FakeFirewall) Last() FakeRequest {
-	f.T.Helper()
-	received := f.Received()
-	if len(received) == 0 {
-		f.T.Fatal("the fake firewall received no request, so this assertion is vacuous")
-	}
-	return received[len(received)-1]
-}
-
 // MustJSON encodes a body the fake serves.
 func MustJSON(t *testing.T, value any) []byte {
 	t.Helper()
@@ -667,28 +479,6 @@ func MustJSON(t *testing.T, value any) []byte {
 		t.Fatalf("encoding a fake answer: %v", err)
 	}
 	return encoded
-}
-
-// firewallOnlyTransport refuses any host but the fake firewall.
-//
-// It is what makes "one outbound destination" a property a test can fail on rather
-// than a claim. It is the same guard internal/collect's own fake carries, and it is
-// duplicated rather than shared because a test helper exported across packages would
-// be product surface.
-type firewallOnlyTransport struct {
-	T           *testing.T
-	allowedHost string
-	inner       http.RoundTripper
-}
-
-// RoundTrip refuses a request to any other host.
-func (transport *firewallOnlyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if request.URL.Host != transport.allowedHost {
-		transport.T.Errorf("a request left for %s, which is not the configured firewall %s",
-			request.URL.Host, transport.allowedHost)
-		return nil, &url.Error{Op: request.Method, URL: request.URL.String(), Err: os.ErrPermission}
-	}
-	return transport.inner.RoundTrip(request)
 }
 
 // databases maps a harness's data directory to its database on the test instance, so a restart

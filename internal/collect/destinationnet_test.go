@@ -22,14 +22,14 @@ func TestRuleDestinationNetIsStoredVerbatimFromSearchRule(t *testing.T) {
 		raw, present := row["destination_net"]
 		if !present {
 			if stored := collecttest.ScalarCount(t, harness.Store,
-				"SELECT count(*) FROM rule WHERE pf_label = ? AND destination_net IS NULL", label); stored != 1 {
+				"SELECT count(*) FROM rule WHERE pf_label = $1 AND destination_net IS NULL", label); stored != 1 {
 				t.Errorf("the rule %s reports no destination_net and stored one", label)
 			}
 			continue
 		}
 		reported++
 		if stored := collecttest.ScalarCount(t, harness.Store,
-			"SELECT count(*) FROM rule WHERE pf_label = ? AND destination_net = ?", label, raw); stored != 1 {
+			"SELECT count(*) FROM rule WHERE pf_label = $1 AND destination_net = $2", label, raw); stored != 1 {
 			t.Errorf("the rule %s did not store its destination_net %q verbatim", label, raw)
 		}
 	}

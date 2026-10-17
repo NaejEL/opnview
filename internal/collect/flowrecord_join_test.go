@@ -208,7 +208,7 @@ func rowsByKey(t *testing.T, h *collecttest.NetflowHarness) map[string][]collect
 		var srcPort, dstPort, in, out *int64
 		if err := h.Store.DB().QueryRowContext(context.Background(),
 			`SELECT src_address, dst_address, src_port, dst_port, ingress_interface, egress_interface
-			 FROM flow_record WHERE identity = ? AND start_at = ?`, row.Identity, row.StartAt).
+			 FROM flow_record WHERE identity = $1 AND start_at = $2`, row.Identity, row.StartAt).
 			Scan(&src, &dst, &srcPort, &dstPort, &in, &out); err != nil {
 			t.Fatal(err)
 		}
@@ -232,7 +232,7 @@ func checkEveryShape(t *testing.T, h *collecttest.NetflowHarness, fixtures []col
 	id := func(digest string) int64 { return h.FlowID(t, digest) }
 	secondLegs := map[int64]bool{}
 	for _, digest := range digestsOf(fixtures) {
-		if collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM flow WHERE log_digest = ? AND pair_outcome = 'second_leg'",
+		if collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM flow WHERE log_digest = $1 AND pair_outcome = 'second_leg'",
 			digest) == 1 {
 			secondLegs[id(digest)] = true
 		}
@@ -313,13 +313,13 @@ func checkEveryShape(t *testing.T, h *collecttest.NetflowHarness, fixtures []col
 		// No record contributes twice: a counted copy is never joined too, and every counted record is in
 		// exactly one direction of one connection.
 		if twice := collecttest.ScalarCount(t, h.Store,
-			"SELECT count(*) FROM flow_record WHERE counted_copy = 1 AND joined_flow_id IS NOT NULL"); twice != 0 {
+			"SELECT count(*) FROM flow_record WHERE counted_copy AND joined_flow_id IS NOT NULL"); twice != 0 {
 			t.Errorf("%d records are both joined and counted as copies", twice)
 		}
 		if counted := collecttest.ScalarCount(t, h.Store, `SELECT coalesce(sum(octets), 0) FROM flow_record
 			WHERE join_state = 'joined' AND joined_flow_id IN (SELECT connection_flow_id FROM connection_measured_volume
 			                                                   WHERE state IN ('measured', 'in_progress', 'export_gap'))
-			   OR counted_copy = 1`); counted != int(sumOf(independent)) {
+			   OR counted_copy`); counted != int(sumOf(independent)) {
 			t.Errorf("the records counted in figures hold %d bytes, the independent computation %d", counted,
 				sumOf(independent))
 		}
@@ -385,7 +385,7 @@ func checkAggregates(t *testing.T, h *collecttest.NetflowHarness, fixtures []col
 	for _, fixture := range fixtures {
 		for _, leg := range fixture.Legs {
 			if leg.Dir == "out" && leg.Action == "pass" && collecttest.ScalarCount(t, h.Store,
-				"SELECT count(*) FROM flow WHERE log_digest = ? AND pair_outcome = 'second_leg'", leg.Digest) == 1 {
+				"SELECT count(*) FROM flow WHERE log_digest = $1 AND pair_outcome = 'second_leg'", leg.Digest) == 1 {
 				for _, other := range fixture.Legs {
 					if other.Dir == "in" && other.IPID == leg.IPID && other.IPID != 0 {
 						secondPassed[other.Digest] = true
@@ -447,7 +447,7 @@ func checkAggregates(t *testing.T, h *collecttest.NetflowHarness, fixtures []col
 		} {
 			for _, period := range []string{"1h", "24h", "7d", "30d"} {
 				if rows := collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM unmatched_record_aggregate_"+period+
-					" WHERE ingress_interface = ? AND egress_interface = ? AND reason = ?", key.ingress, key.egress,
+					" WHERE ingress_interface = $1 AND egress_interface = $2 AND reason = $3", key.ingress, key.egress,
 					key.reason); rows != 1 {
 					t.Errorf("at %s the unmatched family holds %d slots for %s -> %s %s, want 1", period, rows,
 						key.ingress, key.egress, key.reason)

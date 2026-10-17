@@ -25,7 +25,7 @@ func SetAvailabilityDetail(h *webtest.Harness, kind, providerKey string, state v
 // prevents and a screen still has to name.
 func DropAvailability(h *webtest.Harness, kind, providerKey string) {
 	h.T.Helper()
-	if _, err := h.Store.DB().Exec("DELETE FROM source_availability WHERE provider_id = ?",
+	if _, err := h.Store.DB().Exec("DELETE FROM source_availability WHERE provider_id = $1",
 		collectiontest.ProviderID(h, kind, providerKey)); err != nil {
 		h.T.Fatalf("deleting an availability row: %v", err)
 	}

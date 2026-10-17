@@ -142,7 +142,7 @@ func TestOwnersAreCreatedRenamedDeletedRestoredAndAssignedOverJSON(t *testing.T)
 		t.Errorf("the unassignment answered %+v", unassigned)
 	}
 	var laptopAt int64
-	if err := harness.Store.DB().QueryRow("SELECT owner_assigned_at FROM client WHERE id = ?", laptop).Scan(&laptopAt); err != nil {
+	if err := harness.Store.DB().QueryRow("SELECT owner_assigned_at FROM client WHERE id = $1", laptop).Scan(&laptopAt); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,7 +160,7 @@ func TestOwnersAreCreatedRenamedDeletedRestoredAndAssignedOverJSON(t *testing.T)
 		t.Errorf("the undo answered %+v", restored)
 	}
 	var restoredAt int64
-	if err := harness.Store.DB().QueryRow("SELECT owner_assigned_at FROM client WHERE id = ?", laptop).Scan(&restoredAt); err != nil {
+	if err := harness.Store.DB().QueryRow("SELECT owner_assigned_at FROM client WHERE id = $1", laptop).Scan(&restoredAt); err != nil {
 		t.Fatal(err)
 	}
 	if restoredAt != laptopAt {

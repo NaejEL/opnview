@@ -106,7 +106,7 @@ func TestTheTwoDirectionsOfOnePairCollapseToOneVolume(t *testing.T) {
 			`INSERT INTO pair_volume_observation (day_start_at, endpoint_low, endpoint_high,
 			     service_port, protocol, octets, packets, observed_direction,
 			     observed_interface_device, last_seen_at, ingested_at)
-			 VALUES (1749945600, ?, ?, 443, 'tcp', 1000, 10, ?, NULL, 1750000000, 1750000000)
+			 VALUES (1749945600, $1, $2, 443, 'tcp', 1000, 10, $3, NULL, 1750000000, 1750000000)
 			 ON CONFLICT (day_start_at, endpoint_low, endpoint_high, service_port, protocol)
 			 DO NOTHING`,
 			low, high, direction)
@@ -210,7 +210,7 @@ func TestOnlyTheDerivationWritesThePairVolumeTable(t *testing.T) {
 func TestThePairVolumeGuardHasTeeth(t *testing.T) {
 	t.Parallel()
 	for _, writer := range []string{
-		"_, err := db.ExecContext(ctx, `INSERT INTO\n\tpair_volume_observation (day_start_at) VALUES (?)`)",
+		"_, err := db.ExecContext(ctx, `INSERT INTO\n\tpair_volume_observation (day_start_at) VALUES ($1)`)",
 		`query := "REPLACE INTO " + "pair_volume_observation" + " VALUES (1)"`,
 		"UPDATE pair_volume_observation SET octets = 0",
 		"DELETE FROM main.pair_volume_observation",
@@ -289,7 +289,7 @@ func TestTrafficScopeIsDerivedFromInterfaceMembershipAlone(t *testing.T) {
 		}
 		var scope string
 		if err := database.DB().QueryRowContext(ctx,
-			"SELECT traffic_scope FROM flow WHERE log_digest = ?", flow.LogDigest).Scan(&scope); err != nil {
+			"SELECT traffic_scope FROM flow WHERE log_digest = $1", flow.LogDigest).Scan(&scope); err != nil {
 			t.Fatalf("%s: reading the scope back: %v", testCase.name, err)
 		}
 		if scope != testCase.wantScope {
@@ -326,7 +326,7 @@ func TestAFlowWhoseJoinKeysResolveToNothingIsStoredWithItsState(t *testing.T) {
 	)
 	if err := database.DB().QueryRowContext(ctx,
 		`SELECT interface_lookup_state, rule_lookup_state, rid, src_interface_id, rule_id
-		 FROM flow WHERE log_digest = ?`, unmapped.LogDigest).
+		 FROM flow WHERE log_digest = $1`, unmapped.LogDigest).
 		Scan(&interfaceState, &ruleState, &storedRid, &interfaceID, &ruleID); err != nil {
 		t.Fatalf("reading the row back: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestAMeasurementOfEachKindRoundTrips(t *testing.T) {
 		)
 		if err := database.DB().QueryRowContext(ctx,
 			`SELECT unit, value FROM measurement_sample
-			 WHERE subject_kind = ? AND subject_key = ? AND measure = ? AND sampled_at = ?`,
+			 WHERE subject_kind = $1 AND subject_key = $2 AND measure = $3 AND sampled_at = $4`,
 			string(sample.SubjectKind), sample.SubjectKey, string(sample.Measure),
 			sample.SampledAt).Scan(&unit, &value); err != nil {
 			t.Fatalf("reading the %s reading back: %v", sample.Measure, err)
@@ -569,7 +569,7 @@ func TestADiscoveryRefreshNeverOverwritesAUserLabel(t *testing.T) {
 		t.Fatalf("discovering an interface: %v", err)
 	}
 	if _, err := database.DB().ExecContext(ctx,
-		"UPDATE interface SET user_label = ? WHERE id = ?",
+		"UPDATE interface SET user_label = $1 WHERE id = $2",
 		"a label the maintainer chose", id); err != nil {
 		t.Fatalf("setting a label: %v", err)
 	}
@@ -584,7 +584,7 @@ func TestADiscoveryRefreshNeverOverwritesAUserLabel(t *testing.T) {
 	var label, description string
 	var firstSeen, lastSeen int64
 	if err := database.DB().QueryRowContext(ctx,
-		"SELECT user_label, description, first_seen_at, last_seen_at FROM interface WHERE id = ?", id).
+		"SELECT user_label, description, first_seen_at, last_seen_at FROM interface WHERE id = $1", id).
 		Scan(&label, &description, &firstSeen, &lastSeen); err != nil {
 		t.Fatalf("reading the interface back: %v", err)
 	}

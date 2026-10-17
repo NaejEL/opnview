@@ -32,6 +32,6 @@ func (s *Server) handleStylesheet(writer http.ResponseWriter, request *http.Requ
 	}
 }
 
-// Stylesheet returns the embedded stylesheet, for a test that reads what the pages are styled
-// with.
+// Stylesheet returns the embedded stylesheet: what the renderer serves, and what a test reads the
+// pages' styling from.
 func Stylesheet() ([]byte, error) { return files.ReadFile("asset/style.css") }

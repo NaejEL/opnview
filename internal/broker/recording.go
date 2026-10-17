@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -97,13 +98,13 @@ func (b *Broker) recordEvent(key string, endpoint opnsense.Endpoint, event Strea
 		return
 	}
 	columns := []string{`"#stream"`, `"#received_at"`}
-	values := []string{"?", "?"}
+	values := []string{"$1", "$2"}
 	arguments := []any{key, event.ReceivedAt}
 	numeric := map[string]string{}
 	for _, path := range fields {
 		value := valueAt(event.Value, path)
 		columns = append(columns, quoteName(path))
-		values = append(values, "CAST(? AS "+b.recorder.kindOf(table, path)+")")
+		values = append(values, "CAST($"+strconv.Itoa(len(values)+1)+" AS "+b.recorder.kindOf(table, path)+")")
 		if value == nil || value.Kind == answer.Null {
 			arguments = append(arguments, nil)
 			continue
@@ -137,7 +138,7 @@ func (b *Broker) recordEvent(key string, endpoint opnsense.Endpoint, event Strea
 		}
 		sort.Strings(paths)
 		insertColumns := []string{`"#stream"`, `"#bucket"`, `"#count"`, `"#last_at"`}
-		insertValues := []string{"?", "?", "1", "?"}
+		insertValues := []string{"$1", "$2", "1", "$3"}
 		updates := []string{`"#count" = ` + quotedTable(table+period.suffix) + `."#count" + 1`,
 			`"#last_at" = greatest(` + quotedTable(table+period.suffix) + `."#last_at", excluded."#last_at")`}
 		arguments := []any{key, bucket, event.ReceivedAt}
@@ -145,8 +146,8 @@ func (b *Broker) recordEvent(key string, endpoint opnsense.Endpoint, event Strea
 			for _, statistic := range []string{"min", "max", "sum", "last"} {
 				name := quoteName(path + "#" + statistic)
 				insertColumns = append(insertColumns, name)
-				insertValues = append(insertValues, "CAST(? AS numeric)")
 				arguments = append(arguments, numeric[path])
+				insertValues = append(insertValues, "CAST($"+strconv.Itoa(len(arguments))+" AS numeric)")
 				current := quotedTable(table+period.suffix) + "." + name
 				switch statistic {
 				case "min":
@@ -217,7 +218,7 @@ func (b *Broker) ensureStreamTables(ctx context.Context, table string, fields []
 	if !created {
 		statements := []string{
 			"CREATE TABLE IF NOT EXISTS " + quotedTable(table) + ` ("#stream" TEXT NOT NULL, "#received_at" BIGINT NOT NULL)`,
-			"SELECT create_hypertable(CAST(? AS regclass), by_range('#received_at', 86400), if_not_exists => true)",
+			"SELECT create_hypertable(CAST($1 AS regclass), by_range('#received_at', 86400), if_not_exists => true)",
 			"CREATE INDEX IF NOT EXISTS " + quoteName(table+"#stream") + " ON " + quotedTable(table) +
 				` ("#stream", "#received_at")`,
 		}
@@ -316,16 +317,16 @@ func (b *Broker) PurgeStreams(ctx context.Context, now, detailRetention, retenti
 	_ = rows.Close()
 	horizon := now - detailRetention
 	for _, table := range tables {
-		if _, err := b.mirror.Exec(ctx, "SELECT drop_chunks(CAST(? AS regclass), older_than => CAST(? AS bigint))",
+		if _, err := b.mirror.Exec(ctx, "SELECT drop_chunks(CAST($1 AS regclass), older_than => CAST($2 AS bigint))",
 			`"opnsense".`+quoteName(table), horizon); err != nil {
 			return fmt.Errorf("dropping the old chunks of %s: %w", table, err)
 		}
-		if _, err := b.mirror.Exec(ctx, "DELETE FROM "+quotedTable(table)+` WHERE "#received_at" < ?`, horizon); err != nil {
+		if _, err := b.mirror.Exec(ctx, "DELETE FROM "+quotedTable(table)+` WHERE "#received_at" < $1`, horizon); err != nil {
 			return err
 		}
 		if retention > 0 {
 			for _, suffix := range []string{"#minute", "#hour"} {
-				if _, err := b.mirror.Exec(ctx, "DELETE FROM "+quotedTable(table+suffix)+` WHERE "#bucket" < ?`,
+				if _, err := b.mirror.Exec(ctx, "DELETE FROM "+quotedTable(table+suffix)+` WHERE "#bucket" < $1`,
 					now-retention); err != nil {
 					return err
 				}
