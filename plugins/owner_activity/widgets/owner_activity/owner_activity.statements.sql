@@ -37,7 +37,7 @@ WHERE f.observed_at >= :from
 GROUP BY 1, 2, 3;
 
 
--- The same timeline in a declared measure, CAST(:measure AS TEXT),, run in its place when the answer is given in it
+-- The same timeline in a declared measure, the measure bound as a parameter, run in its place when the answer is given in it
 -- (host.query; docs/widget-api.md, "Volumes and the observation-point limit"): the measure's bytes for
 -- the connections, then the measure's parts, measure_parts, under the names
 -- summable figures carry them (host.figures).

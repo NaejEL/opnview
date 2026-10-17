@@ -1,0 +1,11 @@
+{
+  "language": "en",
+  "strings": {
+    "provider.example_report.example_reporter": "Example reports",
+    "collection.kind.example_report": "Example reports",
+    "plugin.example_reporter.measure.example_reported": "Reported",
+    "plugin.example_reporter.setting.lookback_seconds": "Reporting look-back, in seconds",
+    "plugin.example_reporter.page.reporting": "Reporting",
+    "plugin.example_reporter.page.reporting_help": "How far back the reporting device is taken to have been reporting. The reported volume is a second measure beside the logged one, never summed with it."
+  }
+}

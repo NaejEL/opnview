@@ -465,8 +465,12 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 
 	// Everything is valid: the side effects, in an order that leaves nothing behind on a
 	// failure but the one the store reports.
-	if refusal := registerMeasures(manifest); refusal != nil {
-		return nil, refusal
+	// A load given no store validates and serves nothing, so its measures reach no widget: a measure is
+	// registered for the process by the load that serves it, as it is registered in that load's store.
+	if options.Store != nil {
+		if refusal := registerMeasures(manifest); refusal != nil {
+			return nil, refusal
+		}
 	}
 	if options.Store != nil {
 		for _, table := range tables {

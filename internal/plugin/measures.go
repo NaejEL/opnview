@@ -11,7 +11,7 @@ import (
 // docs/plugins.md, "Measures"). A measure is checked whole at load: its own shape (vocab.DeclaredMeasure.Validate),
 // the kind it needs an active provider of -- one the plugin itself provides -- its label in the plugin's own
 // catalogue, and a name no other plugin's measure has. Once the plugin is accepted, its measures are
-// registered for the process and, by Load, in the store.
+// registered, by a load given a store, for the process and in that store.
 
 // checkMeasures checks the measures a manifest declares.
 func checkMeasures(manifest contract.Manifest) *contract.Refusal {

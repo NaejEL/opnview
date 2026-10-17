@@ -45,7 +45,7 @@ WHERE d.occurred_at >= :from
 GROUP BY d.engine_kind;
 
 
--- The composition by interface restricted to some clients in a declared measure, CAST(:measure AS TEXT),, run in its place
+-- The composition by interface restricted to some clients in a declared measure, the measure bound as a parameter, run in its place
 -- when the answer is given in it (host.query; docs/widget-api.md, "Volumes and the observation-point
 -- limit"): the measure's bytes for the connections, then the measure's
 -- parts, measure_parts, under the names summable figures carry them (host.figures).

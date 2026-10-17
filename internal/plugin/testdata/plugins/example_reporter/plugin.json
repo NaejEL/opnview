@@ -1,0 +1,66 @@
+{
+  "api_version": 2,
+  "name": "example_reporter",
+  "version": "0.1.0",
+  "display_name": "Example reporter",
+  "description": "A third party's plugin, written as files alone: a device sends datagrams reporting the bytes of connections it saw, the plugin decodes them in its script into its own table, and a derivation joins them to the logged connections and counts them as a measure of its own, served by every widget declaring volumes and by the widget it carries. Like every figure opnview draws, the measure is a lower bound: traffic between two clients behind one interface is in none of its figures.",
+  "script": "example_reporter.js",
+  "datasets": ["leg", "this_firewall_address", "interface"],
+  "kinds": [{"kind": "example_report", "push": true, "bindable": true}],
+  "providers": [{"kind": "example_report", "display_name": "Example reports", "source": "push"}],
+  "tables": [
+    {"name": "reports", "columns": [
+      {"name": "received_at", "type": "instant"},
+      {"name": "src_address", "type": "text"},
+      {"name": "src_port", "type": "integer"},
+      {"name": "dst_address", "type": "text"},
+      {"name": "dst_port", "type": "integer"},
+      {"name": "bytes", "type": "integer", "role": "measure", "unit": "byte"},
+      {"name": "packets", "type": "integer", "role": "measure", "unit": "packet"},
+      {"name": "estimated", "type": "integer"}
+    ], "retention": {"column": "received_at"}}
+  ],
+  "push": [
+    {"name": "reports", "protocol": "datagram", "filter": {"prefix": "REPORT "}, "decode": "report",
+     "output_table": "reports"}
+  ],
+  "derivations": [
+    {"name": "attribute", "after_push": ["reports"], "cadence_seconds": 300,
+     "datasets": ["leg", "this_firewall_address", "interface"],
+     "outputs": {"measures": ["example_reported"]}}
+  ],
+  "measures": [
+    {
+      "name": "example_reported",
+      "label": "plugin.example_reporter.measure.example_reported",
+      "description": "The bytes and packets the reporting device counted for each direction of a logged connection. A second measure beside the logged one, never summed with it; a lower bound, and traffic between two clients behind one interface is in none of its figures.",
+      "provider_kind": "example_report",
+      "states": [
+        {"name": "reported", "covered": true},
+        {"name": "unreported", "covered": false}
+      ],
+      "complete_state": "reported",
+      "refused_state": "unreported",
+      "markers": ["estimated"],
+      "classes": {"complete": "complete", "partial": "partial", "unmeasured": "unmeasured", "not_known": "not_known"},
+      "window_states": {
+        "covered": "reporting",
+        "unrecorded": "reporting_unknown",
+        "no_provider": "reporter_off",
+        "not_covering": "reporting_partial",
+        "not_served": "reporting_not_served"
+      },
+      "best_available": true
+    }
+  ],
+  "settings": [
+    {"key": "lookback_seconds", "type": "integer", "default": 86400, "min": 0, "max": 604800,
+     "label": "plugin.example_reporter.setting.lookback_seconds",
+     "note": "How long before its first report the device is taken to have been reporting: the start of the window the measure covers."}
+  ],
+  "pages": [
+    {"key": "reporting", "label": "plugin.example_reporter.page.reporting",
+     "help": "plugin.example_reporter.page.reporting_help", "settings": ["lookback_seconds"]}
+  ],
+  "widgets": ["example_reported_total"]
+}

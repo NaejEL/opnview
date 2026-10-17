@@ -26,7 +26,7 @@ GROUP BY f.local_client_id, f.traffic_direction, f.src_interface_id, f.dst_inter
          f.peer_address;
 
 
--- The same in a declared measure, CAST(:measure AS TEXT),, run in its place when the answer is given in it (host.query;
+-- The same in a declared measure, the measure bound as a parameter, run in its place when the answer is given in it (host.query;
 -- docs/widget-api.md, "Volumes and the observation-point limit"): the measure's bytes
 -- for the connections, then the measure's parts, measure_parts, under the names summable
 -- figures carry them (host.figures).

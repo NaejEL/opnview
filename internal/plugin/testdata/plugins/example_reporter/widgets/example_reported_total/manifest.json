@@ -1,0 +1,7 @@
+{
+  "manifest_version": 1, "type": "example_reported_total", "shape": "figure", "windowed": true,
+  "lower_bound": true, "volumes": true,
+  "providers": ["example_report"], "primary": "example_report",
+  "parameters": [{"key": "period", "kind": "enum", "values": ["1h", "24h"], "default": "1h"}],
+  "queries": ["total.statements.sql"], "script": "total.js"
+}

@@ -1402,6 +1402,13 @@ figures. This is documented, never printed on a screen.
 
 A refused declaration is `measure_invalid`.
 
+**A complete third-party example** is `internal/plugin/testdata/plugins/example_reporter`: JSON, JavaScript
+and SQL alone -- a `datagram` push entry decoded by its script, a derivation run after each stored batch
+and on a cadence that reads `leg`, `this_firewall_address` and `interface` and writes its measure's
+per-connection rows and window interval, a measure with one covered and one uncovered state and one
+marker, a settings page, and a widget declaring volumes whose statement declares its `_measured` twin.
+`internal/plugin/thirdparty_test.go` loads it from a data directory and checks every figure it serves.
+
 ### Testing a widget
 
 A plugin that carries widgets is tested against a PostgreSQL database of its own, as one that
