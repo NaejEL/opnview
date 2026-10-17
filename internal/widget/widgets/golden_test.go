@@ -98,6 +98,9 @@ func goldenRequests(t *testing.T, f *fixture) []goldenRequest {
 func TestEveryBuiltinWidgetAnswersByteForByteAsBefore(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, defaultSpec)
+	if target := os.Getenv("OPNVIEW_RECORD_FRONT_ANSWERS"); target != "" {
+		recordFrontAnswers(t, f, target)
+	}
 	path := filepath.Join("testdata", "golden_responses.json.gz")
 	if os.Getenv("OPNVIEW_WRITE_GOLDEN") == "1" {
 		record := map[string]json.RawMessage{}
@@ -212,4 +215,97 @@ func sameUpToClientIdentityOrder(want, got []byte) bool {
 	left, ok := canonical(want)
 	right, ok2 := canonical(got)
 	return ok && ok2 && left == right
+}
+
+// recordFrontAnswers writes the answers the front's renderers are drawn on in its tests
+// (internal/front/frontjs/testdata/widget_answers.json.gz, A9 of specs/SPEC-step-7-frontend.md):
+// the widget API's answer, as it is served today, to every request of the record above, on the
+// default fixture, keyed "<type> <parameters>". Unlike the record, nothing is taken away from them:
+// they are what a browser receives. It runs only when OPNVIEW_RECORD_FRONT_ANSWERS names the file,
+// which is the generator's explicit invocation:
+//
+//	docker compose run --rm -e OPNVIEW_RECORD_FRONT_ANSWERS=/workspace/internal/front/frontjs/testdata/widget_answers.json.gz \
+//	  dev go test -count=1 -run '^TestEveryBuiltinWidgetAnswersByteForByteAsBefore$' ./internal/widget/widgets/
+func recordFrontAnswers(t *testing.T, f *fixture, target string) {
+	t.Helper()
+	record := map[string]json.RawMessage{}
+	// The seed's answers ci/answerdrift recorded into the same file are kept: this fixture cannot
+	// give them, and only that program writes them.
+	if existing, err := os.Open(target); err == nil {
+		reader, err := gzip.NewReader(existing)
+		check(t, err)
+		raw, err := io.ReadAll(reader)
+		check(t, err)
+		check(t, existing.Close())
+		var previous map[string]json.RawMessage
+		check(t, json.Unmarshal(raw, &previous))
+		for key, body := range previous {
+			if strings.Contains(key, " seed:") {
+				record[key] = body
+			}
+		}
+	}
+	for _, request := range append(goldenRequests(t, f), defaultDashboardRequests(t, f)...) {
+		if _, recorded := record[request.Type+" "+request.Parameters]; recorded {
+			continue
+		}
+		response, err := f.service.Respond(context.Background(), request.Type, request.Parameters)
+		check(t, err)
+		encoded, err := json.Marshal(response)
+		check(t, err)
+		record[request.Type+" "+request.Parameters] = encoded
+	}
+	encoded, err := json.Marshal(record)
+	check(t, err)
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err = writer.Write(encoded)
+	check(t, err)
+	check(t, writer.Close())
+	check(t, os.WriteFile(target, compressed.Bytes(), 0o644))
+}
+
+// defaultDashboardRequests are the requests the front makes for the widgets of its default dashboard
+// (front/dashboards/default.json), as its request builder makes them with no canvas scope: each
+// widget's own parameters, and its canvas's period where the type takes one. Recorded beside the
+// others, they are the answers the default canvases draw, so the renderers are tested on them and a
+// review instance serves them.
+func defaultDashboardRequests(t *testing.T, f *fixture) []goldenRequest {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "front", "dashboards", "default.json"))
+	check(t, err)
+	var document struct {
+		Canvases []struct {
+			Period  string `json:"period"`
+			Widgets []struct {
+				Type       string         `json:"type"`
+				Parameters map[string]any `json:"parameters"`
+			} `json:"widgets"`
+		} `json:"canvases"`
+	}
+	check(t, json.Unmarshal(raw, &document))
+	var requests []goldenRequest
+	for _, canvas := range document.Canvases {
+		period := canvas.Period
+		if period == "" {
+			period = "24h"
+		}
+		for _, widget := range canvas.Widgets {
+			preset, served := f.service.Preset(widget.Type)
+			if !served {
+				continue
+			}
+			parameters := map[string]any{}
+			for key, value := range widget.Parameters {
+				parameters[key] = value
+			}
+			if _, own := parameters["period"]; !own && preset.Windowed {
+				parameters["period"] = period
+			}
+			encoded, err := json.Marshal(parameters)
+			check(t, err)
+			requests = append(requests, goldenRequest{Type: widget.Type, Parameters: string(encoded)})
+		}
+	}
+	return requests
 }

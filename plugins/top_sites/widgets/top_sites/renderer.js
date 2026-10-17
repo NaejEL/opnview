@@ -15,9 +15,9 @@
   var METHODS = ["resolver_cache_answer", "lookup_timing", "not_recorded_beyond_flow_horizon"];
 
   /* The methods of one row: each method that named a flow, with its count. */
-  function methodsCell(kit, tk, methods) {
+  function methodsCell(kit, t, tk, methods) {
     var present = METHODS.filter(function (method) { return methods && methods[method] > 0; });
-    if (present.length === 0) { return kit.none(input.t("figure.no_method")); }
+    if (present.length === 0) { return kit.none(t("figure.no_method")); }
     return kit.h("span", { "class": "methods" }, present.map(function (method) {
       return kit.h("span", { key: method, "class": "badge method method-" + method, "data-method": method },
         [tk("method.", method), " ", kit.text(methods[method])]);
@@ -33,11 +33,31 @@
           [t("column.flows"), kit.value(row.flows)],
           [t("column.bytes"), kit.value(row.bytes, "bytes")],
           [t("column.clients"), kit.text(row.clients)],
-          [t("column.methods"), methodsCell(kit, tk, row.methods)],
-          [t("column.mean_delay"), row.mean_delay_seconds === null ? kit.none() : kit.text(row.mean_delay_seconds, "seconds")],
+          [t("column.methods"), methodsCell(kit, t, tk, row.methods)],
+          [t("column.mean_delay"), row.mean_delay_seconds === null || row.mean_delay_seconds === undefined ? kit.none()
+            : kit.text(row.mean_delay_seconds, "seconds")],
           [t("column.operator"), row.operator || kit.none(t("figure.no_operator"))],
           [t("column.country"), row.country_code || kit.none(t("figure.no_country"))]
         ];
+        /* A destination no name was inferred for is ranked with the sites, and drawn as its address,
+         * with why it has no place where its geolocation did not answer (docs/widget-api.md,
+         * "Destinations with no name"). */
+        if (row.kind === "address") {
+          return {
+            key: "address:" + row.address,
+            subject: kit.subject("address", row.address, row.address, facts.filter(function (fact) {
+              return fact[0] !== t("column.methods") && fact[0] !== t("column.mean_delay");
+            })),
+            cells: [
+              h("span", { "class": "site-name mono" }, [row.address, row.lookup_state && row.lookup_state !== "resolved"
+                ? [" ", kit.badge(tk("reason.", row.lookup_state), "gap")] : null]),
+              kit.value(row.flows),
+              kit.value(row.bytes, "bytes"),
+              kit.text(row.clients),
+              kit.none(t("figure.no_method"))
+            ]
+          };
+        }
         return {
           key: row.name,
           subject: kit.subject("site", row.name, row.name, facts,
@@ -48,7 +68,7 @@
             kit.value(row.flows),
             kit.value(row.bytes, "bytes"),
             kit.text(row.clients),
-            methodsCell(kit, tk, row.methods)
+            methodsCell(kit, t, tk, row.methods)
           ]
         };
       });

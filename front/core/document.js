@@ -30,6 +30,14 @@
      canvas's `scope`: a parameter value, an object of a series list, a
      reference object it carries. */
   var MAX_CONTAINER_DEPTH = 3;
+  /* The deepest the two parsers read a text, in containers from its root: a
+     valid document is a dozen deep, and an unknown member it keeps may be
+     deeper, but a text nested past this is refused by name and line rather
+     than read until the interpreter runs out of stack. */
+  var MAX_PARSE_DEPTH = 256;
+  /* The byte-order mark an editor may write at the head of a UTF-8 file. It
+     is not part of the document, and is dropped before it is read. */
+  var BYTE_ORDER_MARK = "\uFEFF";
   var SLUG = /^[a-z0-9][a-z0-9_-]*$/;
   var PLACEMENT_KEYS = ["x", "y", "w", "h"];
 
@@ -91,6 +99,19 @@
 
   /* The length of a text in UTF-8 bytes, which is what the server bounds. */
   function utf8Length(text) {
+    /* encodeURIComponent writes each UTF-8 byte it escapes as three characters and leaves the
+     * others as one: the bytes are its length less two per escape. It is native, where the loop
+     * below is one interpreted step per character of a text that may be a mebibyte long. It
+     * refuses a lone surrogate, which the loop counts as three bytes, as the server does. */
+    try {
+      var encoded = encodeURIComponent(text);
+      return encoded.length - 2 * (encoded.split("%").length - 1);
+    } catch (error) {
+      return utf8Counted(text);
+    }
+  }
+
+  function utf8Counted(text) {
     var bytes = 0, index, code;
     for (index = 0; index < text.length; index += 1) {
       code = text.charCodeAt(index);
@@ -300,6 +321,8 @@
     yamlNonStringKey: "yaml_non_string_key",
     yamlDuplicateKey: "yaml_duplicate_key",
     yamlUnterminatedString: "yaml_unterminated_string",
+    documentTooDeep: "document_too_deep",
+    documentUnreadable: "document_unreadable",
     valueNotCoercible: "value_not_coercible"
   };
 
@@ -327,8 +350,14 @@
     return path === "" ? key : path + "." + key;
   }
 
+  /* A text without the byte-order mark an editor may have written first. */
+  function withoutMark(text) {
+    var written = String(text);
+    return written.charAt(0) === BYTE_ORDER_MARK ? written.slice(1) : written;
+  }
+
   function detect(text) {
-    var match = /^\s*(\S)/.exec(String(text));
+    var match = /^\s*(\S)/.exec(withoutMark(text));
     return match && match[1] === "{" ? "json" : "yaml";
   }
 
@@ -364,11 +393,12 @@
       return fail(PARSE_CONDITIONS.jsonSyntax, line);
     }
 
-    function value(path) {
+    function value(path, depth) {
       var c, result, key, index, start, token;
       whitespace();
       if (position >= length) { fail(PARSE_CONDITIONS.jsonSyntax, line); }
       c = text.charAt(position);
+      if ((c === "{" || c === "[") && depth >= MAX_PARSE_DEPTH) { fail(PARSE_CONDITIONS.documentTooDeep, line); }
       if (c === "{") {
         position += 1;
         result = {};
@@ -383,7 +413,7 @@
           if (text.charAt(position) !== ":") { fail(PARSE_CONDITIONS.jsonSyntax, line); }
           position += 1;
           paths[childPath(path, key)] = start - 1;
-          setMember(result, key, value(childPath(path, key)));
+          setMember(result, key, value(childPath(path, key), depth + 1));
           whitespace();
           c = text.charAt(position);
           position += 1;
@@ -399,7 +429,7 @@
         for (index = 0; ; index += 1) {
           whitespace();
           paths[path + "[" + index + "]"] = line - 1;
-          result.push(value(path + "[" + index + "]"));
+          result.push(value(path + "[" + index + "]", depth + 1));
           whitespace();
           c = text.charAt(position);
           position += 1;
@@ -421,7 +451,7 @@
     var document;
     whitespace();
     if (position >= length) { fail(PARSE_CONDITIONS.documentEmpty, null); }
-    document = value("");
+    document = value("", 0);
     whitespace();
     if (position < length) { fail(PARSE_CONDITIONS.jsonSyntax, line); }
     return document;
@@ -553,7 +583,7 @@
 
   /* One value written on a line: a quoted or plain scalar, or a flow
      collection on that one line. */
-  function inlineValue(text, line, path, paths) {
+  function inlineValue(text, line, path, paths, depth) {
     var position = 0;
 
     function spaces() {
@@ -592,12 +622,13 @@
       return key;
     }
 
-    function flow(at, inFlow) {
+    function flow(at, inFlow, level) {
       var c, result, key, index, token, seen;
       spaces();
       c = text.charAt(position);
       if (position >= text.length) { fail(PARSE_CONDITIONS.yamlSyntax, line); }
       refuseIndicator(c, line);
+      if ((c === "{" || c === "[") && level >= MAX_PARSE_DEPTH) { fail(PARSE_CONDITIONS.documentTooDeep, line); }
       if (c === "{") {
         position += 1;
         result = {};
@@ -613,7 +644,7 @@
           if (Object.prototype.hasOwnProperty.call(seen, key)) { fail(PARSE_CONDITIONS.yamlDuplicateKey, line); }
           seen[key] = true;
           paths[childPath(at, key)] = line - 1;
-          setMember(result, key, flow(childPath(at, key), true));
+          setMember(result, key, flow(childPath(at, key), true, level + 1));
           spaces();
           c = text.charAt(position);
           position += 1;
@@ -628,7 +659,7 @@
         if (text.charAt(position) === "]") { position += 1; return result; }
         for (index = 0; ; index += 1) {
           paths[at + "[" + index + "]"] = line - 1;
-          result.push(flow(at + "[" + index + "]", true));
+          result.push(flow(at + "[" + index + "]", true, level + 1));
           spaces();
           c = text.charAt(position);
           position += 1;
@@ -650,7 +681,7 @@
       return resolvePlain(plain(",]}"));
     }
 
-    var result = flow(path, false);
+    var result = flow(path, false, depth || 0);
     spaces();
     if (position < text.length) { fail(PARSE_CONDITIONS.yamlSyntax, line); }
     return result;
@@ -681,20 +712,32 @@
     if (lines.length === 0) { fail(PARSE_CONDITIONS.documentEmpty, null); }
     var position = 0;
 
+    /* How many block containers below the root the line being read sits in. */
+    var depth = 0;
+
     function block(indent, path) {
-      var line = lines[position];
-      if (isSequenceItem(line.text)) { return sequence(indent, path); }
-      return mapping(indent, path);
+      var line = lines[position], result;
+      if (depth + 1 >= MAX_PARSE_DEPTH) { fail(PARSE_CONDITIONS.documentTooDeep, line.n); }
+      depth += 1;
+      result = isSequenceItem(line.text) ? sequence(indent, path) : mapping(indent, path);
+      depth -= 1;
+      return result;
     }
 
     function entryValue(rest, indent, path, line) {
       var next;
       rest = rest.replace(/^ +/, "");
-      if (rest !== "") { return inlineValue(rest, line, path, paths); }
+      if (rest !== "") { return inlineValue(rest, line, path, paths, depth + 1); }
       if (position < lines.length) {
         next = lines[position];
         if (next.indent > indent) { return block(next.indent, path); }
-        if (next.indent === indent && isSequenceItem(next.text)) { return sequence(indent, path); }
+        if (next.indent === indent && isSequenceItem(next.text)) {
+          if (depth + 1 >= MAX_PARSE_DEPTH) { fail(PARSE_CONDITIONS.documentTooDeep, next.n); }
+          depth += 1;
+          next = sequence(indent, path);
+          depth -= 1;
+          return next;
+        }
       }
       return null;
     }
@@ -738,7 +781,7 @@
           result.push(block(column, at));
         } else {
           position += 1;
-          result.push(inlineValue(trimmed, line.n, at, paths));
+          result.push(inlineValue(trimmed, line.n, at, paths, depth + 1));
         }
       }
       return result;
@@ -760,11 +803,15 @@
 
   /* Parses a text in one syntax, detected when not given. */
   function parse(text, syntax) {
-    var paths = {}, report = { comments: false }, document, chosen = syntax || detect(text);
+    var paths = {}, report = { comments: false }, document, written = withoutMark(text);
+    var chosen = syntax || detect(written);
     try {
-      document = chosen === "json" ? parseJSON(String(text), paths) : parseYAML(String(text), paths, report);
+      document = chosen === "json" ? parseJSON(written, paths) : parseYAML(written, paths, report);
     } catch (error) {
       if (error instanceof ParseFailure) { return { error: { condition: error.condition, line: error.line } }; }
+      /* The depth bound above is what refuses a deep text; an interpreter whose stack is shorter
+         than it is still answered by name, never by a thrown error. */
+      if (error instanceof RangeError) { return { error: { condition: PARSE_CONDITIONS.documentTooDeep, line: null } }; }
       throw error;
     }
     return { document: document, syntax: chosen, comments: report.comments, paths: paths };
@@ -773,7 +820,7 @@
   function hasComments(text) {
     var raw, index;
     if (detect(text) === "json") { return false; }
-    raw = String(text).split("\n");
+    raw = withoutMark(text).split("\n");
     for (index = 0; index < raw.length; index += 1) {
       if (stripComment(raw[index]).comment) { return true; }
     }
@@ -1037,7 +1084,7 @@
 
   function load(text, rowFor) {
     var parsed, refused, migrated, coerced;
-    if (utf8Length(String(text)) > MAX_DOCUMENT_BYTES) {
+    if (utf8Length(withoutMark(text)) > MAX_DOCUMENT_BYTES) {
       return failure(refusal(CONDITIONS.documentTooLarge, -1, -1, ""), null);
     }
     parsed = parse(text);
@@ -1055,6 +1102,7 @@
     CURRENT_FORMAT_VERSION: CURRENT_FORMAT_VERSION,
     MINIMUM_FORMAT_VERSION: MINIMUM_FORMAT_VERSION,
     MAX_DOCUMENT_BYTES: MAX_DOCUMENT_BYTES,
+    MAX_PARSE_DEPTH: MAX_PARSE_DEPTH,
     CONDITIONS: CONDITIONS,
     PARSE_CONDITIONS: Object.keys(PARSE_CONDITIONS).map(function (name) { return PARSE_CONDITIONS[name]; }),
     validate: validate,

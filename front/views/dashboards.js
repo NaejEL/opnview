@@ -246,6 +246,7 @@
         h("button", { key: "new", type: "button", "class": "btn btn-small", id: "dashboard-new",
           on: { click: function () { create(context); } } }, t("dashboards.new")),
         h("button", { key: "undo", type: "button", "class": "btn btn-small", id: "dashboards-undo",
+          title: editing().undoTitle(),
           disabled: !editing().canUndo(), on: { click: function () { undo(context); } } }, t("action.undo"))
       ]),
       opnview.editChrome.notice(editing().notice(), function () { undo(context); },

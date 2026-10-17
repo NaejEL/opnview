@@ -330,3 +330,65 @@ func TestTheLadderAndTheStructureRefuseNamingTheirLine(t *testing.T) {
 		t.Error("hasComments does not tell a comment from a hash inside a value")
 	}
 }
+
+// TestAMarkedOrDeeplyNestedFileIsReadOrRefusedByName (F7-36): a byte-order mark an editor wrote
+// first is not part of the document, in either syntax; a text nested past the parsers' bound is
+// refused by name, with its line where it has one, in both syntaxes and in a flow collection; and
+// the import path answers a refusal for it, never a thrown error.
+func TestAMarkedOrDeeplyNestedFileIsReadOrRefusedByName(t *testing.T) {
+	t.Parallel()
+	page := frontjs.New(t, frontjs.Options{})
+	parse := `function (text, syntax) { return opnview.document.parse(text, syntax); }`
+	marked := map[string]string{
+		"json": "\uFEFF" + `{"format_version": 1, "canvases": [{"id": "a", "title": "A", "widgets": []}]}`,
+		"yaml": "\uFEFF" + "format_version: 1\ncanvases:\n  - id: a\n    title: A\n    widgets: []\n",
+	}
+	for syntax, text := range marked {
+		for _, given := range []any{syntax, nil} {
+			answer := documentCall(t, page, parse, text, given)
+			document, _ := answer["document"].(map[string]any)
+			if answer["error"] != nil || document == nil || document["format_version"] != float64(1) {
+				t.Errorf("%s with a byte-order mark, syntax %v, reads as %v", syntax, given, answer)
+			}
+		}
+		loaded := documentCall(t, page, `function (text) { return opnview.editing.read(text); }`, text)
+		if loaded["error"] != nil {
+			t.Errorf("%s with a byte-order mark is refused on import: %v", syntax, loaded["error"])
+		}
+	}
+
+	depth := 2000
+	deepJSON := strings.Repeat(`{"a":`, depth) + "1" + strings.Repeat("}", depth)
+	var deepYAML strings.Builder
+	// Block YAML spends a line per level, so it is nested less deep, to stay within the size bound.
+	for level := 0; level < 600; level++ {
+		deepYAML.WriteString(strings.Repeat(" ", level) + "a:\n")
+	}
+	deepYAML.WriteString(strings.Repeat(" ", 600) + "b: 1\n")
+	deepFlow := "format_version: 1\nx: " + strings.Repeat("[", depth) + strings.Repeat("]", depth) + "\n"
+	bound := int(page.Run(`opnview.document.MAX_PARSE_DEPTH`).ToInteger())
+	for _, deep := range []struct {
+		name, text, syntax string
+		line               float64
+	}{
+		{"JSON", deepJSON, "json", 1},
+		{"block YAML", deepYAML.String(), "yaml", float64(bound + 1)},
+		{"flow YAML", deepFlow, "yaml", 2},
+	} {
+		answer := documentCall(t, page, parse, deep.text, deep.syntax)
+		refused, _ := answer["error"].(map[string]any)
+		if refused == nil || refused["condition"] != "document_too_deep" || refused["line"] != deep.line {
+			t.Errorf("%s nested past %d reads as %v, not document_too_deep on line %v", deep.name, bound, answer["error"],
+				deep.line)
+		}
+		loaded := documentCall(t, page, `function (text) { return opnview.editing.read(text); }`, deep.text)
+		if refusal, _ := loaded["error"].(map[string]any); refusal == nil || refusal["condition"] != "document_too_deep" {
+			t.Errorf("the import of %s nested past %d answers %v", deep.name, bound, loaded)
+		}
+	}
+	// Nested to the bound and no deeper, a text is read.
+	shallow := strings.Repeat(`{"a":`, bound) + "1" + strings.Repeat("}", bound)
+	if answer := documentCall(t, page, parse, shallow, "json"); answer["error"] != nil {
+		t.Errorf("JSON nested to the bound, %d, is refused: %v", bound, answer["error"])
+	}
+}

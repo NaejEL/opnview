@@ -61,7 +61,8 @@
   function bar(widget, name, onStep, onRemove) {
     var p = widget.placement || {};
     return h("div", { key: "edit-bar", "class": "edit-bar", "data-edit-bar": widget.id }, [
-      h("span", { key: "where", "class": "grip mono" }, [String(p.x), ",", String(p.y), " ", String(p.w), "×", String(p.h)]),
+      h("span", { key: "where", "class": "grip" }, t("edit.position", { column: String((p.x || 0) + 1),
+        row: String((p.y || 0) + 1), width: String(p.w), height: String(p.h) })),
       MOVES.map(function (pair) {
         var label = pair[0] === "move" ? tk("edit.move.", pair[1], { name: name }) : tk("edit.size.", pair[1], { name: name });
         return h("button", { key: pair[1], type: "button", "class": "btn btn-small", "data-edit": pair[1],
@@ -81,10 +82,14 @@
     ];
   }
 
-  /* The parameters a new widget starts with: its manifest's defaults, and nothing else. */
+  /* The parameters a new widget starts with: its manifest's defaults, and nothing else -- but its
+   * period, which it takes from the canvas it is added to, as every widget without a range of its own
+   * does: a widget added to a canvas showing a week shows that week, and says "own range" only once
+   * somebody gives it one (the orchestrator's amendment of F7-AC31, 17 October 2026). */
   function defaults(row) {
     var parameters = {};
     (row.parameters || []).forEach(function (parameter) {
+      if (parameter.key === "period") { return; }
       if (parameter["default"] !== null && parameter["default"] !== undefined) {
         parameters[parameter.key] = JSON.parse(JSON.stringify(parameter["default"]));
       }
@@ -175,7 +180,15 @@
           h("span", { key: "id", "class": "ident mono" }, String(group.canvas_id))])
       ]));
       group.rows.forEach(function (row, index) {
-        var reference = [row.kind, row.by, typeof row.value === "string" ? row.value : JSON.stringify(row.value)].join(" · ");
+        /* What the row names, as the file wrote it: a reference's kind, key and value, each a value of
+         * its own; for a type or a key, the type or the key alone. */
+        var written = typeof row.value === "string" ? row.value : JSON.stringify(row.value);
+        var reference = row.condition === "unresolved_reference"
+          ? [String(row.kind), String(row.by), written].map(function (part, at) {
+            return [at ? h("span", { key: "s" + at, "class": "sep", "aria-hidden": "true" }, " · ") : null,
+              h("span", { key: "p" + at }, part)];
+          })
+          : written;
         var label = row.label === null || row.label === undefined ? "" : typeof row.label === "string" ? row.label : JSON.stringify(row.label);
         body.push(h("tr", { key: "r" + group.canvas_index + "-" + index, "data-report-path": row.path,
           "data-report-condition": row.condition }, [

@@ -15,6 +15,8 @@ mean; `docs/widget-api.md` says what every response carries.
 | a query file (`query.sql`) | one read-only `SELECT` | for a declarative widget |
 | `<name>.statements.sql` | named statements, which a widget's script runs by name | for a widget with a script |
 | `<name>.js` | the script: the logic a shape cannot express | only when the shape cannot express the widget |
+| the renderer (`renderer.js`, the file `renderer.entry` names) | the classic script the front runs to draw the widget (`docs/front-plugins.md`) | only when its shape's renderer cannot draw it, and always for a front-only widget |
+| `locale/<language>.json` | the widget's title, question, parameter labels and any string its renderer asks for (*Strings*, below) | for an operator or front-only widget; a plugin's widget keeps its strings in the plugin's `locale/` |
 
 There are two places a widget directory can be:
 
@@ -24,7 +26,9 @@ There are two places a widget directory can be:
   *Widgets*, is the reference for the script, its statements and its host. Adding one is adding the
   directory; nothing is compiled and no file of `opnview` is edited.
 * **`<data-dir>/widgets/<type>/`** — an operator widget, read when opnview starts. It is declarative:
-  a manifest and a query. Adding one is writing two files and restarting.
+  a manifest and a query, and nothing more when its shape's renderer draws it. It may also carry a
+  renderer of its own and a `locale/` directory of strings; a front-only widget is a manifest and a
+  renderer with no query (`docs/front-plugins.md`). Adding one is writing those files and restarting.
 
 A widget that breaks a rule below is **refused with a named reason, logged, and the service starts
 without it**; it never stops the service, and it never replaces a built-in. A built-in that breaks
@@ -33,9 +37,11 @@ one is a defect of the build: `widget.New` returns an error naming it and the te
 The directory name is the widget's type, and the manifest repeats it; a manifest whose type differs
 from its directory is refused (`type_mismatch_with_directory`).
 
-Everything a widget needs sits in its directory: its manifest, its SQL, its script when it has one.
-It reaches the core through exactly two doors: the manifest (read by the loader) and, for a widget
-with a script, the widget host (`docs/plugins.md`, *The widget host*).
+Everything a widget needs sits in its directory: its manifest, its SQL, its script when it has one,
+its renderer and its strings when it has them. It reaches the core through exactly two doors: the
+manifest (read by the loader) and, for a widget with a script, the widget host (`docs/plugins.md`,
+*The widget host*); its renderer reaches the page through the registration call of
+`docs/front-plugins.md`.
 
 ## The manifest
 

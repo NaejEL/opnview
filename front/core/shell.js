@@ -369,11 +369,15 @@
 
   function railCanvases(prefix) {
     var links = [];
+    /* "/" shows the first canvas, so the first canvas is the current one there. */
+    var first = true;
     state.dashboards.forEach(function (dashboard) {
       (dashboard.canvases || []).forEach(function (canvas) {
         var path = "/canvas/" + encodeURIComponent(dashboard.id) + "/" + encodeURIComponent(canvas.id);
+        var current = state.path === path || (first && state.path === "/");
+        first = false;
         links.push(routeLink(prefix + "-canvas-" + dashboard.id + "-" + canvas.id, path, canvas.title || canvas.id,
-          { "class": "rail-link", "aria-current": state.path === path ? "true" : "false" }));
+          { "class": "rail-link", "aria-current": current ? "true" : "false" }));
       });
     });
     if (links.length === 0) {

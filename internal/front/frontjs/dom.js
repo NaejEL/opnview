@@ -76,11 +76,19 @@
     this.checked = false;
     this.selected = false;
     this.disabled = false;
-    var style = {};
-    this.style = { setProperty: function (name, value) { style[name] = value; }, getPropertyValue: function (name) {
-      return style[name] || ""; } };
   }
   Element.prototype = Object.create(Node.prototype);
+  /* The style declaration, made the first time it is read: most elements never have one. */
+  Object.defineProperty(Element.prototype, "style", {
+    get: function () {
+      if (!this.__style) {
+        var style = {};
+        this.__style = { setProperty: function (name, value) { style[name] = value; },
+          getPropertyValue: function (name) { return style[name] || ""; } };
+      }
+      return this.__style;
+    }
+  });
   Element.prototype.setAttribute = function (name, value) {
     this.attributes[name] = String(value);
     if (name === "id") { this.id = String(value); }
@@ -138,6 +146,8 @@
   Element.prototype.querySelectorAll = function (selector) { return query(this, selector); };
   Element.prototype.querySelector = function (selector) { return queryFirst(this, selector); };
   Object.defineProperty(Element.prototype, "offsetHeight", { get: function () { return 0; } });
+  /* Nothing scrolls here: the element last brought into view is noted, for a test to read. */
+  Element.prototype.scrollIntoView = function () { root.__dom.revealed = this; };
 
   function makeEvent(type, options) {
     var settings = options || {};
@@ -151,8 +161,10 @@
 
   /* Selectors: compound parts -- a tag, #id, .class, [name] or [name="value"] -- joined by spaces
    * for descendants. That is every selector the tests use. */
+  var compounds = {};
   function compound(text) {
-    var parts = { tag: null, id: null, classes: [], attributes: [] };
+    if (Object.prototype.hasOwnProperty.call(compounds, text)) { return compounds[text]; }
+    var parts = compounds[text] = { tag: null, id: null, classes: [], attributes: [] };
     var pattern = /([a-zA-Z][a-zA-Z0-9-]*)|#([a-zA-Z0-9_-]+)|\.([a-zA-Z0-9_-]+)|\[([a-zA-Z0-9_-]+)(?:="([^"]*)")?\]/g;
     var found;
     while ((found = pattern.exec(text))) {
@@ -168,8 +180,10 @@
     if (element.nodeType !== 1) { return false; }
     if (parts.tag && element.tagName !== parts.tag) { return false; }
     if (parts.id && element.getAttribute("id") !== parts.id) { return false; }
-    var classes = (element.getAttribute("class") || "").split(/\s+/);
-    for (var i = 0; i < parts.classes.length; i++) { if (classes.indexOf(parts.classes[i]) < 0) { return false; } }
+    if (parts.classes.length) {
+      var classes = classList(element);
+      for (var i = 0; i < parts.classes.length; i++) { if (classes.indexOf(parts.classes[i]) < 0) { return false; } }
+    }
     for (var j = 0; j < parts.attributes.length; j++) {
       var name = parts.attributes[j][0], value = parts.attributes[j][1];
       if (!element.hasAttribute(name)) { return false; }
@@ -178,10 +192,21 @@
     return true;
   }
 
+  /* An element's classes, split once per value of its class attribute. */
+  function classList(element) {
+    var text = element.attributes["class"] || "";
+    if (element.__classText !== text) {
+      element.__classText = text;
+      element.__classList = text.split(/\s+/);
+    }
+    return element.__classList;
+  }
+
   function descendants(node, into) {
-    node.childNodes.forEach(function (child) {
-      if (child.nodeType === 1) { into.push(child); descendants(child, into); }
-    });
+    var children = node.childNodes;
+    for (var i = 0; i < children.length; i++) {
+      if (children[i].nodeType === 1) { into.push(children[i]); descendants(children[i], into); }
+    }
     return into;
   }
 
@@ -204,19 +229,29 @@
     return query(scope, selector)[0] || null;
   }
 
+  /* Every element below scope the selector matches, in document order, each once: the tree is
+   * walked once, and each element is matched against the last step, then its ancestors below scope
+   * against the earlier steps, right to left, as a browser does. */
   function query(scope, selector) {
     var steps = selector.trim().split(/\s+/).map(compound);
-    var current = [scope];
-    steps.forEach(function (step) {
-      var next = [];
-      current.forEach(function (node) {
-        descendants(node, []).forEach(function (candidate) {
-          if (matches(candidate, step) && next.indexOf(candidate) < 0) { next.push(candidate); }
-        });
-      });
-      current = next;
-    });
-    return current;
+    var last = steps[steps.length - 1];
+    var found = [];
+    var all = descendants(scope, []);
+    for (var i = 0; i < all.length; i++) {
+      if (matches(all[i], last) && ancestorsMatch(all[i], scope, steps, steps.length - 2)) { found.push(all[i]); }
+    }
+    return found;
+  }
+
+  function ancestorsMatch(element, scope, steps, step) {
+    var node = element.parentNode;
+    while (step >= 0) {
+      while (node && node !== scope && !matches(node, steps[step])) { node = node.parentNode; }
+      if (!node || node === scope) { return false; }
+      node = node.parentNode;
+      step -= 1;
+    }
+    return true;
   }
 
   var documentElement = new Element("html");
@@ -230,6 +265,7 @@
     documentElement: documentElement,
     body: body,
     activeElement: null,
+    currentScript: null,
     createElement: function (tag) { root.__dom.created += 1; return new Element(tag); },
     createElementNS: function (namespace, tag) { root.__dom.created += 1; return new Element(tag, namespace); },
     createTextNode: function (value) { root.__dom.created += 1; return new Text(value); },

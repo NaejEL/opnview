@@ -29,7 +29,14 @@
 #                    1 000 000 flow rows, the screen queries and every statement's
 #                    plan, the widget and data catalogue budgets, the backup round
 #                    trip (ReclassifyEverything's wall time only on request:
-#                    OPNVIEW_RECLASSIFY_COST=1, see sql/schema-checks.sh).
+#                    OPNVIEW_RECLASSIFY_COST=1, see sql/schema-checks.sh);
+#   answer drift     ci/answerdrift, once the schema checks have ended: every served widget
+#                    type answered again on the 100 000-row seed they keep, its member paths
+#                    compared with the front's recorded answers
+#                    (internal/front/frontjs/testdata/widget_answers.json.gz), failing on any
+#                    difference (A9 of specs/SPEC-step-7-frontend.md). With
+#                    OPNVIEW_RECORD_SEED_ANSWERS=1 it records the seed's answers into that file
+#                    of the working tree instead of comparing.
 #
 # THE STEPS THAT DO NOT DEPEND ON ONE ANOTHER RUN SIDE BY SIDE: go vet, the fuzz
 # targets, the budget self-test (most of which is its probe's sleep) and the schema
@@ -162,6 +169,8 @@ if [ "$copy_status" -ne 0 ]; then
   printf -- 'pre-deployment: FAILED, the working tree could not be copied\n' >&2
   exit 1
 fi
+# The working tree itself, before the copy: the one place a recording is written back to.
+SOURCE_ROOT="$REPO_ROOT"
 REPO_ROOT="$TREE_COPY"
 cd "$REPO_ROOT" || exit 1
 
@@ -272,6 +281,9 @@ else
     env OPNVIEW_TEST_DATABASE="$schema_test_database" bash "$REPO_ROOT/sql/schema-checks.sh"
 fi
 start_step selftest 'ci/budget-self-test.sh' bash "$REPO_ROOT/ci/budget-self-test.sh"
+# The answer drift's program is built now, beside the other steps, so that what runs after the schema
+# checks is the program alone.
+start_step answerdrift_build 'go build ./ci/answerdrift' go build -o "$STEPS_DIR/answerdrift" ./ci/answerdrift
 fuzz_ids=()
 for target in "FuzzHeader ./internal/push/protocols/syslog" "FuzzFraming ./internal/push/protocols/syslog" \
   "FuzzDecoder ./internal/push/protocols/netflow"; do
@@ -312,10 +324,32 @@ broker_budgets() {
 }
 run_step 'broker budgets (go test -tags brokerbudget -run Budget)' broker_budgets
 
-for id in vet "${fuzz_ids[@]}" selftest schema; do
+for id in vet "${fuzz_ids[@]}" selftest answerdrift_build schema; do
   [ -n "${step_pid[$id]:-}" ] || continue
   wait_step "$id"
 done
+
+# THE ANSWER DRIFT (A9 of specs/SPEC-step-7-frontend.md), on the 100 000-row seed the schema checks keep
+# (schema_checks_main_seed, read in place, as the widget budgets read the 1 000 000-row one: the store
+# only reads it). The seed's name and instant are the schema checks' own, read from where they are
+# written, never written twice.
+answer_drift() {
+  local seed_db seed_now answers mode
+  seed_db="$(sed -n 's/^MAIN_SEED_DB=//p' "$REPO_ROOT/sql/schema-checks.sh")"
+  seed_now="$(sed -n 's/^NOW=//p' "$REPO_ROOT/sql/schema-checks.sh")"
+  answers="$REPO_ROOT/internal/front/frontjs/testdata/widget_answers.json.gz"
+  mode=()
+  if [ "${OPNVIEW_RECORD_SEED_ANSWERS:-}" = 1 ]; then
+    answers="$SOURCE_ROOT/internal/front/frontjs/testdata/widget_answers.json.gz"
+    mode=(-record)
+  fi
+  if [ -z "$seed_db" ] || [ -z "$seed_now" ] || [ -z "$schema_test_database" ]; then
+    printf -- 'the seed of the answer drift is not named: MAIN_SEED_DB and NOW of sql/schema-checks.sh, and its instance\n' >&2
+    return 1
+  fi
+  "$STEPS_DIR/answerdrift" -database "$schema_test_database dbname=$seed_db" -now "$seed_now" -answers "$answers" "${mode[@]}"
+}
+run_step 'answer drift (ci/answerdrift on the 100 000-row seed)' answer_drift
 
 elapsed_ms=$(( ( $(date +%s%N) - started ) / 1000000 ))
 cpus="$(nproc)"

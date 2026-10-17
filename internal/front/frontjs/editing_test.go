@@ -506,14 +506,22 @@ func TestThePickerListsTheServedTypesAndANewWidgetStartsAtItsDefaults(t *testing
 		if widget.Volumes {
 			want["volume_measure"] = "best_available"
 		}
+		// Its period excepted: a new widget follows the canvas's range (the orchestrator's amendment of
+		// F7-AC31, 17 October 2026), so it carries none of its own.
 		for _, parameter := range widget.Parameters {
-			if parameter.Default != nil {
+			if parameter.Default != nil && parameter.Key != "period" {
 				want[parameter.Key] = parameter.Default
 			}
 		}
 	}
 	if fmt.Sprint(added["parameters"]) != fmt.Sprint(want) {
 		t.Errorf("a new widget starts at %v, not at its manifest's defaults %v", added["parameters"], want)
+	}
+	if page.Count(`section[data-widget-card="connection-tree"] span[data-chip="own_range"]`) != 0 {
+		t.Error("a new widget says it has a range of its own")
+	}
+	if revealed := page.Run(`__dom.revealed ? __dom.revealed.getAttribute("data-widget-card") : ""`).String(); revealed != "connection-tree" {
+		t.Errorf("the new widget was not scrolled into view (%q was)", revealed)
 	}
 }
 
@@ -1014,5 +1022,123 @@ func TestABrokenImportStoresNothingAndNamesWhereItBreaks(t *testing.T) {
 	if shown := page.Text("#import-refusal"); !strings.Contains(shown, "2") || !strings.Contains(shown, "1") ||
 		page.Attribute("#import-refusal", "data-condition") != "format_version_too_new" {
 		t.Errorf("a format_version 2 file is refused as %q", shown)
+	}
+}
+
+// TestImportingTheWorkedExampleReportsMarksAndExportsUnchanged (F7-AC35, for the corrected worked
+// example of docs/dashboard-format.md): on an installation lacking the interface it names, it is
+// stored, the report lists that reference under its canvas and widget, the card keeps its footprint
+// with the unresolved panel, the code view marks that line with a notice naming kind, by, value and
+// label, and an export without repair writes its members and references back unchanged.
+func TestImportingTheWorkedExampleReportsMarksAndExportsUnchanged(t *testing.T) {
+	t.Parallel()
+	f := newEditFixture(t, oneCanvas)
+	worked := fencedBlock(t, string(repositoryFile(t, "docs", "dashboard-format.md")), "json")
+	var document struct {
+		Canvases []struct {
+			Widgets []struct {
+				ID         string         `json:"id"`
+				Parameters map[string]any `json:"parameters"`
+			} `json:"widgets"`
+		} `json:"canvases"`
+	}
+	if err := json.Unmarshal([]byte(worked), &document); err != nil {
+		t.Fatal(err)
+	}
+	// The interface the example names is taken away from the installation, and every parameter
+	// naming it is what the report must list.
+	missing := map[string]bool{}
+	var want []string
+	var cards, labels []string
+	for canvasIndex, canvas := range document.Canvases {
+		for widgetIndex, widget := range canvas.Widgets {
+			for key, value := range widget.Parameters {
+				list, _ := value.([]any)
+				for index, item := range list {
+					reference, _ := item.(map[string]any)
+					if reference == nil || reference["kind"] != "interface" {
+						continue
+					}
+					missing[reference["value"].(string)] = true
+					if label, _ := reference["label"].(string); label != "" {
+						labels = append(labels, label)
+					}
+					want = append(want, fmt.Sprintf("unresolved_reference canvases[%d].widgets[%d].parameters.%s[%d]",
+						canvasIndex, widgetIndex, key, index))
+					cards = append(cards, widget.ID)
+				}
+			}
+		}
+	}
+	if len(want) == 0 {
+		t.Fatal("the worked example names no interface: this test checks nothing")
+	}
+	for identifier := range missing {
+		delete(f.interfaces, identifier)
+	}
+	page := f.editPage(t, "/canvas/1/main")
+	id := importText(t, f, page, worked)
+	if id == 0 {
+		t.Fatalf("the worked example was not stored:\n%s", page.Outline())
+	}
+	setGridWidth(page, 1600)
+	var rows []string
+	if err := json.Unmarshal([]byte(page.Run(`JSON.stringify(document.querySelectorAll("tr[data-report-path]").map(function (row) {
+  return row.getAttribute("data-report-condition") + " " + row.getAttribute("data-report-path"); }))`).String()), &rows); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(rows)
+	sort.Strings(want)
+	if strings.Join(rows, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the import report lists\n%s\nnot\n%s", strings.Join(rows, "\n"), strings.Join(want, "\n"))
+	}
+	if page.Count("tr.group-row") < 1 {
+		t.Errorf("the report is not grouped by canvas")
+	}
+	for _, card := range cards {
+		if page.Count(fmt.Sprintf(`section[data-widget-card="%s"] div[data-condition="unresolved_reference"]`, card)) != 1 {
+			t.Errorf("%s does not keep its card with the unresolved panel", card)
+		}
+	}
+	page.Click("#rail-editor")
+	page.Click("#dock-tab-document")
+	page.Click("#syntax-yaml")
+	marked := page.Run(`JSON.stringify(document.querySelectorAll("#dock-ghost .code-line").filter(function (line) {
+  return line.getAttribute("class").indexOf("is-unresolved") >= 0;
+}).map(function (line) { return Number(line.getAttribute("data-line")) - 1; }))`).String()
+	paths := make([]string, len(want))
+	for index, row := range want {
+		paths[index] = strings.TrimPrefix(row, "unresolved_reference ")
+	}
+	encodedPaths, _ := json.Marshal(paths)
+	expected := page.Run(`(function () {
+  var lines = opnview.document.serialise(opnview.editing.document(` + fmt.Sprint(id) + `), "yaml").lines;
+  return JSON.stringify(` + string(encodedPaths) + `.map(function (path) { return opnview.document.lineOf(lines, path); })
+    .sort(function (a, b) { return a - b; }));
+})()`).String()
+	if marked != expected {
+		t.Errorf("the code view marks lines %s, the unresolved references are on %s", marked, expected)
+	}
+	notices := page.Run(`JSON.stringify(document.querySelectorAll("#dock-ghost .code-notice").map(function (n) { return n.textContent; }))`).String()
+	for identifier := range missing {
+		for _, part := range []string{"interface", "identifier", identifier} {
+			if !strings.Contains(notices, part) {
+				t.Errorf("the line notices do not name %s: %s", part, notices)
+			}
+		}
+	}
+	for _, label := range labels {
+		if !strings.Contains(notices, label) {
+			t.Errorf("the line notices do not name the exported label %s: %s", label, notices)
+		}
+	}
+	for _, syntax := range []string{"json", "yaml"} {
+		back := page.Run(fmt.Sprintf(`(function () {
+  var file = opnview.editing.exported(opnview.editing.document(%d), %q);
+  return JSON.stringify(opnview.document.parse(file.text, %q).document);
+})()`, id, syntax, syntax)).String()
+		if compactJSON(t, back) != compactJSON(t, worked) {
+			t.Errorf("exporting the worked example in %s changed it:\n%s", syntax, back)
+		}
 	}
 }

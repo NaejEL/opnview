@@ -823,7 +823,11 @@
       ]),
       tab !== "document" && model.widget ? h("p", { key: "subject", "class": "dock-subject" }, [
         h("span", { key: "name" }, title),
-        h("span", { key: "id", "class": "dock-subject-id" }, String(model.widget.id) + " · " + String(model.widget.type || model.widget.shape || ""))
+        h("span", { key: "id", "class": "dock-subject-id" }, [
+          h("span", { key: "widget-id" }, String(model.widget.id)),
+          h("span", { key: "sep", "class": "sep", "aria-hidden": "true" }, " · "),
+          h("span", { key: "widget-type" }, String(model.widget.type || model.widget.shape || ""))
+        ])
       ]) : null,
       h("div", { key: "body", "class": "doc-dock-body" + (tab === "form" ? "" : " is-code") }, body),
       pane.confirmComments ? h("p", { key: "comments", "class": "code-warning", role: "alert" }, t("dock.comments_lost")) : null,

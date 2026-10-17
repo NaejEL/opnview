@@ -5,6 +5,14 @@
     "plugin.connection_tree.widget.connection_tree.question": "Where does a chosen subject — an interface, a machine or a person — go preferentially?",
     "plugin.connection_tree.widget.connection_tree.root.client": "From each client",
     "plugin.connection_tree.widget.connection_tree.root.interface": "From each interface",
-    "plugin.connection_tree.widget.connection_tree.root.owner": "From each person"
+    "plugin.connection_tree.widget.connection_tree.root.owner": "From each person",
+    "plugin.connection_tree.widget.connection_tree.root_node": "firewall",
+    "plugin.connection_tree.widget.connection_tree.more.one": "+{count} more",
+    "plugin.connection_tree.widget.connection_tree.more.other": "+{count} more",
+    "plugin.connection_tree.widget.connection_tree.not_listed.one": "{count} more branch, not listed at this size",
+    "plugin.connection_tree.widget.connection_tree.not_listed.other": "{count} more branches, not listed at this size",
+    "plugin.connection_tree.widget.connection_tree.port_not_recorded": "port not recorded",
+    "plugin.connection_tree.widget.connection_tree.legend.blocked": "Blocked share of a node",
+    "plugin.connection_tree.widget.connection_tree.legend.remainder": "The rest of a cut level"
   }
 }

@@ -43,28 +43,36 @@
     return fixed;
   }
 
-  var BYTE_UNITS = ["byte", "kilobyte", "megabyte", "gigabyte", "terabyte", "petabyte"];
+  /* THE MOCKUP'S UNITS (docs/mockups/canvas-mockup.html, fmtBytes and fmtBits): a volume in the
+   * binary unit that holds it, whole bytes, two decimals under ten of a larger unit and one above; a
+   * rate in the decimal unit that holds it, one decimal under ten and none above. */
+  var BYTE_UNITS = ["byte", "kibibyte", "mebibyte", "gibibyte", "tebibyte", "pebibyte"];
   var BIT_RATE_UNITS = ["bit-per-second", "kilobit-per-second", "megabit-per-second", "gigabit-per-second",
     "terabit-per-second"];
 
-  function scaled(value, units) {
+  function scaled(value, units, step) {
     var index = 0, magnitude = Math.abs(value);
-    while (magnitude >= 1000 && index < units.length - 1) {
-      magnitude /= 1000;
-      value /= 1000;
+    while (magnitude >= step && index < units.length - 1) {
+      magnitude /= step;
+      value /= step;
       index++;
     }
     return { value: value, unit: units[index] };
   }
 
+  /* A figure and its unit's symbol. The figure is the language's number; the symbol is always the
+   * catalogue's, never the engine's unit formatting, which writes "0 byte" beside "0 B" and "kb/s"
+   * beside "bit/s" -- one family of units reads one way everywhere. */
   function unitFormat(value, unit, fractionDigits) {
+    return fixedNumber(value, fractionDigits) + " " + opnview.strings.tk("unit.symbol.", unit);
+  }
+
+  /* A number written with exactly so many decimals, in the language's digits: "8.00", never "8". */
+  function fixedNumber(value, fractionDigits) {
     if (hasIntl) {
-      try {
-        return cached("number", { style: "unit", unit: unit, unitDisplay: "short",
-          maximumFractionDigits: fractionDigits }).format(value);
-      } catch (e) { /* an engine without unit formatting falls through */ }
+      return cached("number", { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits }).format(value);
     }
-    return plainNumber(value, fractionDigits) + " " + opnview.strings.tk("unit.symbol.", unit);
+    return fractionDigits > 0 ? Number(value).toFixed(fractionDigits) : String(Math.round(value));
   }
 
   var DURATION_UNITS = [["day", 86400], ["hour", 3600], ["minute", 60], ["second", 1]];
@@ -92,23 +100,29 @@
       }
       return note(plainNumber(value, digits));
     },
-    /* A volume in bytes, in the decimal unit that holds it. */
+    /* A volume in bytes, in the binary unit that holds it. */
     bytes: function (value) {
-      var at = scaled(value, BYTE_UNITS);
-      return note(unitFormat(at.value, at.unit, at.unit === "byte" ? 0 : 1));
+      var at = scaled(value, BYTE_UNITS, 1024);
+      var digits = at.unit === "byte" ? 0 : Math.abs(at.value) < 10 ? 2 : 1;
+      return note(unitFormat(at.value, at.unit, digits));
+    },
+    /* A volume or a rate as its two parts, the figure and the unit's symbol, for a drawing that sets
+     * them apart -- a ring's hole carries the figure over its unit. */
+    parts: function (kind, value) {
+      var at = kind === "rate" ? scaled(value, BIT_RATE_UNITS, 1000) : scaled(value, BYTE_UNITS, 1024);
+      var digits = kind === "rate" ? (Math.abs(at.value) < 10 ? 1 : 0)
+        : at.unit === "byte" ? 0 : Math.abs(at.value) < 10 ? 2 : 1;
+      return { figure: note(fixedNumber(at.value, digits)), unit: note(opnview.strings.tk("unit.symbol.", at.unit)) };
     },
     /* A rate in bits per second, in the decimal unit that holds it. */
     rate: function (bitsPerSecond) {
-      var at = scaled(bitsPerSecond, BIT_RATE_UNITS);
-      return note(unitFormat(at.value, at.unit, at.unit === "bit-per-second" ? 0 : 1));
+      var at = scaled(bitsPerSecond, BIT_RATE_UNITS, 1000);
+      return note(unitFormat(at.value, at.unit, Math.abs(at.value) < 10 ? 1 : 0));
     },
-    /* A share, 0 to 1, as a percentage. */
+    /* A share, 0 to 1, as a percentage: the figure, a space and the sign, as the mockup writes it. */
     percent: function (share, fractionDigits) {
       var digits = fractionDigits === undefined ? 1 : fractionDigits;
-      if (hasIntl) {
-        return note(cached("number", { style: "percent", maximumFractionDigits: digits }).format(share));
-      }
-      return note(plainNumber(share * 100, digits) + " " + opnview.strings.t("unit.symbol.percent"));
+      return note(fixedNumber(share * 100, digits) + " " + opnview.strings.t("unit.symbol.percent"));
     },
     /* An instant given in UTC epoch seconds, in the reader's own time zone. */
     instant: function (epochSeconds) {
@@ -125,8 +139,10 @@
       if (epochSeconds === null || epochSeconds === undefined) { return ""; }
       var date = new Date(epochSeconds * 1000);
       if (hasIntl && typeof Intl.DateTimeFormat === "function") {
-        var options = spanSeconds <= 86400 ? { hour: "2-digit", minute: "2-digit" }
-          : spanSeconds <= 7 * 86400 ? { weekday: "short", hour: "2-digit" } : { month: "short", day: "numeric" };
+        /* A clock of twenty-four hours, as the mockup's axes read: 13:00, never 01:00 PM. */
+        var options = spanSeconds <= 86400 ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }
+          : spanSeconds <= 7 * 86400 ? { weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }
+          : { month: "short", day: "numeric" };
         return note(cached("date", options).format(date));
       }
       var iso = date.toISOString();

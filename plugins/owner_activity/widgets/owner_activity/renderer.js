@@ -43,8 +43,11 @@
         var chips = (group.chips || []).map(function (chip) {
           var client = chip.client || {};
           var silent = chip.state !== "measured";
+          /* The mockup's chip: the machine's name, its address and MAC in small type, its figure. */
+          var ident = [client.last_address, client.mac].filter(function (part) { return part && part !== kit.clientLabel(client); });
           return {
-            key: String(client.id), label: kit.clientLabel(client), className: silent ? "chip-silent" : null,
+            key: String(client.id), className: silent ? "chip-silent" : null,
+            label: [kit.clientLabel(client), ident.length ? [" ", h("span", { key: "id", "class": "chip-id mono" }, kit.join(ident))] : null],
             value: silent ? t("plugin.owner_activity.widget.owner_activity.no_data_in_period") : kit.text(chip.volume ? chip.volume[field] : null, "bytes"),
             subject: kit.clientSubject(client, [[t("column.bytes"), kit.value(chip.volume, "bytes", { field: "bytes" })],
               [t("plugin.owner_activity.widget.owner_activity.now"), rate(chip.current_rate)]])
@@ -61,7 +64,9 @@
             blocked > 0 ? kit.badge(tp("plugin.owner_activity.widget.owner_activity.blocked", blocked), "blocked") : null,
             h("span", { "class": "owner-rate" }, kit.value(volume, "bytes", { field: field }))
           ]),
-          h("div", { "class": "owner-line" }, [h("span", { "class": "line-label" }, t("plugin.owner_activity.widget.owner_activity.now")), rate(group.current_rate)]),
+          /* The rate now, where a sample exists, beside the period: the mockup's head figure. */
+          group.current_rate && group.current_rate.state !== "no_current_sample"
+            ? h("div", { "class": "owner-line" }, [h("span", { "class": "line-label" }, t("plugin.owner_activity.widget.owner_activity.now")), rate(group.current_rate)]) : null,
           h("div", { "class": "owner-line" }, [h("span", { "class": "line-label" }, t("plugin.owner_activity.widget.owner_activity.machines_label")),
             kit.chips(chips, remainder.members, remainder.members ? kit.text(remainder.volume ? remainder.volume[field] : null, "bytes") : null)]),
           showTimeline && group.timeline ? h("div", { "class": "owner-line" }, [h("span", { "class": "line-label" }, t("plugin.owner_activity.widget.owner_activity.timeline")),

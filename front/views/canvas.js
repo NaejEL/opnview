@@ -88,6 +88,7 @@
       state.answers = state.answers || {};
       state.sizes = state.sizes || {};
       state.drawings = state.drawings || {};
+      state.focus = state.focus || {};
       if (!state.chosen) { return null; }
       return context.api.get("/api/dashboards/" + encodeURIComponent(state.chosen.dashboard.id)).then(function (result) {
         if (result.status !== 200 || !result.body) {
@@ -206,7 +207,7 @@
     // The form's pending values are drawn on the card they preview, never written until Apply.
     var asked = state.pending && state.pending.id === id
       ? { id: widget.id, type: widget.type, placement: widget.placement, parameters: state.pending.parameters } : widget;
-    var built = model.request(row, asked, currentCanvas(state));
+    var built = focused(state, id, model.request(row, asked, currentCanvas(state)));
     var settle = function (record) {
       if (state.generation !== generation) { return; }
       record.notes = built.notes;
@@ -228,6 +229,48 @@
         settle({ condition: condition, failure: result.body });
       }
     }, function () { settle({ condition: "read_failed" }); });
+  }
+
+  /* A CARD FOCUSED ON ONE SUBJECT. Picking "show only this here" in a detail asks the card again with
+   * its reference parameter of that kind set to that one subject -- the connection tree's outside side
+   * shows where one interface goes, a ranking ranks within one person -- and the card says so with a
+   * chip that clears it. It is inspecting, not editing: it lives in this view's memory and the document
+   * is never written (A5). */
+  function focused(state, id, built) {
+    var focus = state.focus && state.focus[id];
+    if (!focus) { return built; }
+    var parameters = {};
+    Object.keys(built.parameters).forEach(function (key) { parameters[key] = built.parameters[key]; });
+    parameters[focus.key] = focus.value;
+    return { parameters: parameters, notes: built.notes };
+  }
+
+  /* The parameter a widget takes subjects of a kind by: the first reference parameter of that kind its
+   * manifest declares, or null. */
+  function focusParameter(row, kind) {
+    var found = null;
+    ((row && row.parameters) || []).forEach(function (parameter) {
+      if (!found && (parameter.kind === "reference" || parameter.kind === "reference_list") && parameter.reference === kind) {
+        found = parameter;
+      }
+    });
+    return found;
+  }
+
+  function setFocus(context, widgetId, subject) {
+    var state = context.state;
+    var widget = findWidget(state, widgetId);
+    var row = widget && widget.type ? opnview.widgets.row(widget.type) : null;
+    var parameter = subject && subject.reference ? focusParameter(row, subject.reference.kind) : null;
+    if (parameter) {
+      state.focus[widgetId] = { key: parameter.key, label: subject.title,
+        value: parameter.kind === "reference" ? subject.reference : [subject.reference] };
+    } else {
+      delete state.focus[widgetId];
+    }
+    state.detail = null;
+    fetchWidget(context, widgetId);
+    context.rerender();
   }
 
   function fetchFrontOnly(context, row, parameters) {
@@ -335,8 +378,39 @@
     }, "scope");
   }
 
+  /* The widget "add a widget about it" adds for a reference, chosen from the loaded manifests and
+   * never from a list of types (docs/front-plugins.md, "Add a widget about it"): a widget whose one
+   * reference parameter is of the reference's kind; among several, a single reference before a
+   * list, a required parameter before an optional one, the fewest parameters, then the type. */
+  function aboutWidget(reference) {
+    if (!reference || !reference.kind) { return null; }
+    var best = null;
+    opnview.widgets.rows().forEach(function (row) {
+      var references = (row.parameters || []).filter(function (parameter) {
+        return parameter.kind === "reference" || parameter.kind === "reference_list";
+      });
+      if (references.length !== 1 || references[0].reference !== reference.kind) { return; }
+      var parameter = references[0];
+      var rank = [parameter.kind === "reference" ? 0 : 1, parameter.required ? 0 : 1, (row.parameters || []).length];
+      var candidate = { row: row, parameter: parameter, rank: rank };
+      if (!best || better(candidate, best)) { best = candidate; }
+    });
+    if (!best) { return null; }
+    var parameters = {};
+    parameters[best.parameter.key] = best.parameter.kind === "reference" ? reference : [reference];
+    return { type: best.row.type, parameters: parameters };
+  }
+
+  function better(one, other) {
+    for (var i = 0; i < one.rank.length; i++) {
+      if (one.rank[i] !== other.rank[i]) { return one.rank[i] < other.rank[i]; }
+    }
+    return one.row.type < other.row.type;
+  }
+
   function addWidgetAbout(context, subject) {
-    var about = subject.about;
+    var about = aboutWidget(subject.reference);
+    if (!about) { return Promise.resolve({ ok: false }); }
     return edit(context, function (canvas) {
       if (!Array.isArray(canvas.widgets)) { canvas.widgets = []; }
       canvas.widgets.push({ id: model.freshWidgetId(canvas, about.type), type: about.type,
@@ -358,7 +432,8 @@
           var selected = !!chosen && chosen.dashboard.id === dashboard.id && chosen.canvas.id === canvas.id;
           var path = canvasPath(dashboard, canvas);
           return h("a", { key: "tab-" + dashboard.id + "-" + canvas.id, "class": "tab", role: "tab", href: path,
-            "data-route": path, "aria-selected": selected ? "true" : "false" }, canvas.title || canvas.id);
+            "data-route": path, "aria-selected": selected ? "true" : "false", title: canvas.title || canvas.id },
+            canvas.title || canvas.id);
         });
         if (!grouped) { return links; }
         return h("div", { key: "group-" + dashboard.id, "class": "tab-group", role: "group",
@@ -434,6 +509,7 @@
       ]));
       REFERENCE_KINDS.forEach(function (kind) { controls.push(scopeControl(context, kind)); });
       controls.push(h("button", { key: "undo", type: "button", "class": "btn", id: "canvas-undo",
+        title: opnview.editing.undoTitle(),
         disabled: !opnview.editing.canUndo(), on: { click: function () { undo(context); } } }, t("action.undo")));
       if (state.editFailed) {
         controls.push(h("span", { key: "failed", "class": "field-error", role: "status" }, tk("error.", state.editFailed)));
@@ -502,6 +578,7 @@
       if (outcome && outcome.ok && added) {
         opnview.editing.dock().widget = added.id;
         context.rerender();
+        revealCard(added.id);
       }
     });
   }
@@ -665,6 +742,17 @@
     return out;
   }
 
+  /* The chip of a focused card, and its control back to the whole answer. */
+  function focusChip(context, widget) {
+    var focus = context.state.focus && context.state.focus[widget.id];
+    if (!focus) { return null; }
+    return h("span", { key: "focus", "class": "card-chip card-period", "data-chip": "focus" }, [
+      t("card.focus", { name: String(focus.label) }), " ",
+      h("button", { key: "clear", type: "button", "class": "link-button", "data-focus-clear": widget.id,
+        on: { click: function () { setFocus(context, widget.id, null); } } }, t("card.focus_clear"))
+    ]);
+  }
+
   /* The volume measures an answer's figures are given in. */
   function volumeMeasures(answer) {
     var seen = {};
@@ -731,6 +819,7 @@
       h("header", { key: "head", "class": "card-head" }, [
         h("h2", { "class": "card-title" }, title),
         chips(record, widget, row),
+        focusChip(context, widget),
         pending ? h("span", { key: "pending", "class": "card-pending", "data-chip": "unapplied" }, t("card.unapplied")) : null,
         h("button", { key: "gear", type: "button", "class": "card-gear", "data-configure": widget.id,
           "aria-label": t("card.configure", { name: title }), title: t("card.configure", { name: title }),
@@ -747,6 +836,14 @@
     if (dock.widget !== id) { clearPending(context); }
     opnview.editing.openDock(tab || dock.tab || "form", id);
     context.rerender();
+    revealCard(id);
+  }
+
+  /* Brings a card into view: the one the dock is editing, or one just added. */
+  function revealCard(id) {
+    var document = root.document;
+    var card = document && document.querySelector ? document.querySelector('[data-widget-card="' + id + '"]') : null;
+    if (card && typeof card.scrollIntoView === "function") { card.scrollIntoView({ block: "nearest", inline: "nearest" }); }
   }
 
   /* The form's pending values, drawn on their card and asked for with them. */
@@ -789,23 +886,42 @@
     context.rerender();
   }
 
+  /* The subject of a detail as the latest drawings hold it: the drawing of the card it was opened
+   * on first, then any other card of the canvas. */
+  function subjectIn(state, detail) {
+    var drawing = state.drawings[detail.widget];
+    if (drawing && drawing.subjects && drawing.subjects[detail.id]) { return drawing.subjects[detail.id]; }
+    var ids = Object.keys(state.drawings);
+    for (var i = 0; i < ids.length; i++) {
+      var other = state.drawings[ids[i]];
+      if (other && other.subjects && other.subjects[detail.id]) { return other.subjects[detail.id]; }
+    }
+    return null;
+  }
+
   function detailLayer(context) {
     var state = context.state;
     var detail = state.detail;
     if (!detail) { return h("div", { key: "detail-layer", "class": "detail-layer", hidden: true }); }
-    var drawing = state.drawings[detail.widget];
-    var fresh = drawing && drawing.subjects ? drawing.subjects[detail.id] : null;
+    var fresh = subjectIn(state, detail);
     var subject = fresh || detail.subject;
-    if (fresh) { detail.subject = fresh; }
+    /* A detail is stale only once an answer that held its subject no longer does: a subject opened
+     * from the related list of another detail, which no drawing marks, is not. */
+    if (fresh) { detail.subject = fresh; detail.seen = true; }
     var reference = subject.reference;
     var canScope = !!reference && REFERENCE_KINDS.indexOf(reference.kind) >= 0 && !!opnview.editing.document(state.dashboardId);
-    var canAdd = !!subject.about && !!opnview.widgets.row(subject.about.type) && !!opnview.editing.document(state.dashboardId);
+    var canAdd = !!aboutWidget(reference) && !!opnview.editing.document(state.dashboardId);
+    var focusWidget = findWidget(state, detail.widget);
+    var focusRow = focusWidget && focusWidget.type ? opnview.widgets.row(focusWidget.type) : null;
+    var canFocus = !!reference && !!focusParameter(focusRow, reference.kind);
     return h("div", { key: "detail-layer", "class": "detail-layer" }, opnview.detail.render({
-      subject: subject, stale: !fresh && subject.kind !== "widget", canScope: canScope, canAdd: canAdd,
+      subject: subject, stale: !fresh && !!detail.seen && subject.kind !== "widget", canScope: canScope, canAdd: canAdd,
       onClose: function () { closeDetail(context); },
       onOpen: function (other) { openDetail(context, detail.widget, other, null); },
       onScope: function (picked) { setScope(context, picked.reference.kind, [picked.reference]); },
-      onAdd: function (picked) { addWidgetAbout(context, picked); }
+      onAdd: function (picked) { addWidgetAbout(context, picked); },
+      canFocus: canFocus,
+      onFocus: function (picked) { setFocus(context, detail.widget, picked); }
     }));
   }
 
@@ -849,15 +965,222 @@
     }
   }
 
-  /* Delegated listeners of the canvas: a click or a key opens a detail, a pointer or a focus shows a
-   * tooltip. Attached once to the canvas's root element. */
-  function listeners(context) {
+  /* ---------------------------------------------------------------------------------------------
+   * The map's view: a scale and an offset per map card, kept across refreshes and written onto the
+   * drawing after each render, as the mockup keeps it (docs/mockups/canvas-mockup.html, "THE VIEW ON
+   * THE BASEMAP"). The marks move with the view and keep their size. Nothing here is the document.
+   * ------------------------------------------------------------------------------------------- */
+  var MAP_ZOOM_MIN = 1, MAP_ZOOM_MAX = 16;
+
+  function mapSize(svg) {
+    var box = (svg.getAttribute("viewBox") || "0 0 720 360").split(/\s+/).map(Number);
+    return { width: box[2] || 720, height: box[3] || 360 };
+  }
+
+  function mapView(state, id) {
+    state.mapViews = state.mapViews || {};
+    if (!state.mapViews[id]) { state.mapViews[id] = { k: 1, tx: 0, ty: 0 }; }
+    return state.mapViews[id];
+  }
+
+  function clampMapView(view, size) {
+    view.k = Math.min(MAP_ZOOM_MAX, Math.max(MAP_ZOOM_MIN, view.k));
+    view.tx = Math.min(0, Math.max(-(view.k - 1) * size.width, view.tx));
+    view.ty = Math.min(0, Math.max(-(view.k - 1) * size.height, view.ty));
+    return view;
+  }
+
+  function applyMapView(state, svg) {
+    var view = clampMapView(mapView(state, svg.getAttribute("data-map-svg")), mapSize(svg));
+    var pan = svg.querySelector(".map-pan");
+    if (pan) { pan.setAttribute("transform", "translate(" + view.tx.toFixed(2) + " " + view.ty.toFixed(2) + ") scale(" + view.k.toFixed(4) + ")"); }
+    var marks = svg.querySelectorAll(".map-mark-at");
+    for (var i = 0; i < marks.length; i++) {
+      var x = Number(marks[i].getAttribute("data-x")), y = Number(marks[i].getAttribute("data-y"));
+      marks[i].setAttribute("transform", "translate(" + (view.tx + x * view.k).toFixed(2) + " " + (view.ty + y * view.k).toFixed(2) + ")");
+    }
+  }
+
+  /* THE MOCKUP'S FLOOR ON A DRAWING'S TEXT (docs/mockups/canvas-mockup.html, enforceChartTextFloor): a
+   * drawing scaled from its viewBox has its text held at the size the stylesheet declares, enlarged no
+   * further than the drawing's data-boost-cap allows; below nine pixels the drawing drops its labels and
+   * the text under it, which nothing scales, says the same thing. Measured after layout, in a browser
+   * only. */
+  var TEXT_FLOOR = 9;
+  function enforceTextFloor(grid) {
+    var svgs = grid.querySelectorAll ? grid.querySelectorAll("svg.chart-svg, svg.tree-svg") : [];
+    for (var i = 0; i < svgs.length; i++) {
+      var svg = svgs[i];
+      var text = svg.querySelector("text");
+      var viewBox = svg.viewBox && svg.viewBox.baseVal;
+      if (!text || !viewBox || !viewBox.width || !svg.getBoundingClientRect || !root.getComputedStyle) { continue; }
+      var fallback = svg.nextElementSibling;
+      if (fallback && (fallback.getAttribute("class") || "").indexOf("chart-fallback") < 0) { fallback = null; }
+      svg.style.setProperty("--text-boost", "1");
+      var box = svg.getBoundingClientRect();
+      var declared = parseFloat(root.getComputedStyle(text).fontSize) || 0;
+      if (!box.width || !declared) { continue; }
+      var scale = box.width / viewBox.width;
+      var cap = parseFloat(svg.getAttribute("data-boost-cap")) || 1;
+      var boost = scale > 1 ? 1 / scale : Math.min(cap, 1 / scale);
+      var below = declared * boost * scale < TEXT_FLOOR - 0.01;
+      if (below) {
+        svg.classList.add("labels-dropped");
+      } else {
+        svg.classList.remove("labels-dropped");
+        if (boost !== 1) { svg.style.setProperty("--text-boost", boost.toFixed(3)); }
+      }
+      if (fallback) { fallback.hidden = !below; }
+    }
+  }
+
+  function applyMapViews(state, grid) {
+    var maps = grid.querySelectorAll ? grid.querySelectorAll("[data-map-svg]") : [];
+    for (var i = 0; i < maps.length; i++) { applyMapView(state, maps[i]); }
+  }
+
+  /* A client point in viewBox units, through the drawing's own matrix; the centre when there is none. */
+  function mapPoint(svg, clientX, clientY) {
+    var size = mapSize(svg);
+    var matrix = svg.getScreenCTM ? svg.getScreenCTM() : null;
+    if (!matrix || !svg.createSVGPoint) { return { x: size.width / 2, y: size.height / 2 }; }
+    var point = svg.createSVGPoint();
+    point.x = clientX;
+    point.y = clientY;
+    point = point.matrixTransform(matrix.inverse());
+    return { x: point.x, y: point.y };
+  }
+
+  function mapScale(svg) {
+    var matrix = svg.getScreenCTM ? svg.getScreenCTM() : null;
+    return matrix && matrix.a ? matrix.a : 1;
+  }
+
+  /* Zoom about a point: the place under it stays under it. */
+  function zoomMapAt(state, svg, factor, x, y) {
+    var view = mapView(state, svg.getAttribute("data-map-svg"));
+    var k0 = view.k, k1 = Math.min(MAP_ZOOM_MAX, Math.max(MAP_ZOOM_MIN, k0 * factor));
+    if (k1 === k0) { return; }
+    var wx = (x - view.tx) / k0, wy = (y - view.ty) / k0;
+    view.k = k1;
+    view.tx = x - wx * k1;
+    view.ty = y - wy * k1;
+    applyMapView(state, svg);
+  }
+
+  function mapOf(target) {
+    for (var node = target; node && node.getAttribute; node = node.parentNode) {
+      if (node.getAttribute("data-map-svg") !== null) { return node; }
+      if (node.getAttribute("data-widget-card") !== null) { return null; }
+    }
+    return null;
+  }
+
+  function mapEvents(context) {
+    var state = context.state;
+    var grid = function () { return root.document.getElementById("canvas-grid"); };
     return {
+      wheel: function (event) {
+        var svg = mapOf(event.target);
+        if (!svg) { return; }
+        if (event.preventDefault) { event.preventDefault(); }
+        var point = mapPoint(svg, event.clientX, event.clientY);
+        zoomMapAt(state, svg, event.deltaY < 0 ? 1.2 : 1 / 1.2, point.x, point.y);
+      },
+      pointerdown: function (event) {
+        var svg = mapOf(event.target);
+        if (!svg || (event.button !== undefined && event.button > 0)) { return false; }
+        state.mapPanEnded = null;
+        state.mapPan = { svg: svg, id: event.pointerId, x: event.clientX, y: event.clientY, ox: event.clientX, oy: event.clientY, dragged: false };
+        return true;
+      },
+      pointermove: function (event) {
+        var pan = state.mapPan;
+        if (!pan || event.pointerId !== pan.id) { return; }
+        var scale = mapScale(pan.svg);
+        var view = mapView(state, pan.svg.getAttribute("data-map-svg"));
+        view.tx += (event.clientX - pan.x) / scale;
+        view.ty += (event.clientY - pan.y) / scale;
+        pan.x = event.clientX;
+        pan.y = event.clientY;
+        applyMapView(state, pan.svg);
+        var dx = event.clientX - pan.ox, dy = event.clientY - pan.oy;
+        if (!pan.dragged && Math.sqrt(dx * dx + dy * dy) > 6) {
+          pan.dragged = true;
+          pan.svg.setAttribute("class", (pan.svg.getAttribute("class") || "") + " is-panning");
+          if (pan.svg.setPointerCapture) { pan.svg.setPointerCapture(event.pointerId); }
+        }
+      },
+      pointerup: function () {
+        var pan = state.mapPan;
+        if (!pan) { return; }
+        pan.svg.setAttribute("class", (pan.svg.getAttribute("class") || "").replace(/ is-panning/g, ""));
+        // The click a drag ends with lands on the map it panned, and is swallowed there only.
+        state.mapPanEnded = pan.dragged ? pan.svg : null;
+        state.mapPan = null;
+      },
+      /* A click on a zoom control, or the click a pan ends with, which is swallowed. */
       click: function (event) {
+        var ended = state.mapPanEnded;
+        state.mapPanEnded = null;
+        if (ended && mapOf(event.target) === ended) { return true; }
+        var button = event.target;
+        while (button && button.getAttribute && button.getAttribute("data-map-zoom") === null) {
+          if (button.getAttribute("data-widget-card") !== null) { return false; }
+          button = button.parentNode;
+        }
+        if (!button || !button.getAttribute) { return false; }
+        var host = grid();
+        var svg = host ? host.querySelector('[data-map-svg="' + button.getAttribute("data-map-for") + '"]') : null;
+        if (!svg) { return true; }
+        var size = mapSize(svg);
+        var how = button.getAttribute("data-map-zoom");
+        if (how === "reset") {
+          state.mapViews[svg.getAttribute("data-map-svg")] = { k: 1, tx: 0, ty: 0 };
+          applyMapView(state, svg);
+        } else {
+          zoomMapAt(state, svg, how === "in" ? 1.6 : 1 / 1.6, size.width / 2, size.height / 2);
+        }
+        return true;
+      },
+      keydown: function (event) {
+        var svg = event.target && event.target.getAttribute && event.target.getAttribute("data-map-svg") !== null ? event.target : null;
+        if (!svg) { return false; }
+        var view = mapView(state, svg.getAttribute("data-map-svg")), size = mapSize(svg), step = 40;
+        switch (event.key) {
+          case "ArrowLeft": view.tx += step; break;
+          case "ArrowRight": view.tx -= step; break;
+          case "ArrowUp": view.ty += step; break;
+          case "ArrowDown": view.ty -= step; break;
+          case "+": case "=": zoomMapAt(state, svg, 1.2, size.width / 2, size.height / 2); break;
+          case "-": case "_": zoomMapAt(state, svg, 1 / 1.2, size.width / 2, size.height / 2); break;
+          case "0": view.k = 1; view.tx = 0; view.ty = 0; break;
+          default: return false;
+        }
+        if (event.preventDefault) { event.preventDefault(); }
+        applyMapView(state, svg);
+        return true;
+      }
+    };
+  }
+
+  /* Delegated listeners of the canvas: a click or a key opens a detail, a pointer or a focus shows a
+   * tooltip, and a map takes its wheel, its drag, its zoom controls and its keys. Attached once to the
+   * canvas's root element. */
+  function listeners(context) {
+    var maps = mapEvents(context);
+    return {
+      wheel: maps.wheel,
+      pointermove: maps.pointermove,
+      pointerup: maps.pointerup,
+      pointercancel: maps.pointerup,
+      click: function (event) {
+        if (maps.click(event)) { return; }
         var found = subjectAt(context.state, event.target);
         if (found) { openDetail(context, found.widget, found.subject, { currentTarget: found.node }); }
       },
       keydown: function (event) {
+        if (maps.keydown(event)) { return; }
         if ((event.key === "Enter" || event.key === " ") && event.target && event.target.getAttribute &&
             event.target.getAttribute("data-subject")) {
           var found = subjectAt(context.state, event.target);
@@ -867,7 +1190,11 @@
           }
         }
       },
-      pointerdown: function (event) { beginDrag(context, event); },
+      pointerdown: function (event) {
+        // Panning a map is not moving its card.
+        if (maps.pointerdown(event)) { return; }
+        beginDrag(context, event);
+      },
       mouseover: function (event) { showTip(tipAt(context.state, event.target)); },
       focusin: function (event) { showTip(tipAt(context.state, event.target)); },
       mouseleave: function () { showTip(null); }
@@ -886,6 +1213,8 @@
     var document = root.document;
     var grid = document && document.getElementById ? document.getElementById("canvas-grid") : null;
     if (!grid) { return false; }
+    applyMapViews(state, grid);
+    enforceTextFloor(grid);
     var redraw = false;
     var slot = document.getElementById("add-widget-slot");
     if (slot && slot.style) {
@@ -894,17 +1223,30 @@
       slot.style.gridRow = slotCell[2] + " / span " + slotCell[3];
     }
     var cards = grid.querySelectorAll ? grid.querySelectorAll("[data-widget-card]") : [];
+    /* THE MOCKUP'S PLACEMENT (docs/mockups/canvas-mockup.html, applyGridLayoutOnce): on twelve columns
+     * a card takes its authored column and width and spans its authored rows, on eight it spans its
+     * width snapped to quarters, on one it takes the whole row; the grid flows them in document order
+     * and packs them densely, and the authored height is a floor -- a card whose content needs more
+     * takes it. */
     for (var i = 0; i < cards.length; i++) {
       var element = cards[i];
       var cell = (element.getAttribute("data-cell") || "").split(",").map(Number);
       if (cell.length === 4 && element.style) {
-        element.style.gridColumn = state.columns === 1 ? "1 / -1" : cell[0] + " / span " + cell[1];
-        element.style.gridRow = cell[2] + " / span " + cell[3];
+        if (state.columns === 1) {
+          element.style.gridColumn = "1 / -1";
+          element.style.gridRow = "auto";
+        } else {
+          element.style.gridColumn = state.columns === 12 ? cell[0] + " / span " + cell[1] : "span " + cell[1];
+          element.style.gridRow = "span " + cell[3];
+        }
       }
       var bodyElement = element.querySelector ? element.querySelector("[data-widget-body]") : null;
       if (bodyElement && bodyElement.clientWidth > 0) {
         var id = element.getAttribute("data-widget-card");
-        var size = { width: bodyElement.clientWidth, height: bodyElement.clientHeight };
+        /* A drawing is sized by the card's measured width and its authored height: the card grows to
+         * hold what it draws, so its measured height would only feed back into the drawing. */
+        var authored = sizeOf(state, { id: null }, cell.length === 4 ? { span: cell[1], rows: cell[3] } : null, state.columns);
+        var size = { width: bodyElement.clientWidth, height: authored.height };
         var known = state.sizes[id];
         if (!known || Math.abs(known.width - size.width) > 8 || Math.abs(known.height - size.height) > 8) {
           state.sizes[id] = size;

@@ -53,8 +53,11 @@
       function breakdown(rows, key) {
         return h("ul", { key: key, "class": "counter-list" }, rows.map(function (row) {
           return h("li", { key: row.reason, "data-reason": row.reason }, [
-            h("span", {}, [(kit.placeReason(row.reason) || tk("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.", row.reason)), " · ", tp("column.address_count", row.addresses || 0)]),
-            kit.value(row.volume, unit, { field: field })
+            /* Why, then how many addresses where there are any, then the figure with what it counts. */
+            h("span", {}, [(kit.placeReason(row.reason) || tk("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.", row.reason)),
+              row.addresses ? [" · ", tp("column.address_count", row.addresses)] : null]),
+            h("span", { "class": "counter-figure" }, [kit.value(row.volume, unit, { field: field }),
+              field === "connections" ? [" ", t("column.figure.connections")] : null])
           ]);
         }));
       }

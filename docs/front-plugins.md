@@ -129,6 +129,16 @@ a class of the stylesheet, a token.
 })(this);
 ```
 
+**What a file may register is taken from the URL the core loaded it from, never from what it
+says.** The core publishes a widget's renderer at `/front/widgets/<type>/<entry>` and a shape's at
+`/front/shapes/<shape>.js`: a widget's renderer registers its own `type` and nothing else, and never a
+`shape`; a shape's renderer registers its own `shape` and nothing else. A registration naming anything
+else, one made after the file has run (from a timer, say), and a second registration of a type or a
+shape already drawn are refused, listed by `opnview.widgets.refusedRegistrations()` with their reason
+(`not_its_own_type`, `not_its_own_shape`, `already_registered`, `not_loaded_by_the_core`) and reported
+in the browser's console. The first registration wins, as the built-in wins every collision on the
+server.
+
 `input` holds:
 
 | Member | What it is |
@@ -160,13 +170,24 @@ withheld answer, a failed read or script -- are panels the core draws, never the
 | `kit.chart(spec)` | a time series at the card's size: linear by default, `smooth` through every sample, every series element with `data-sample-count`, an area only when stacked, gaps labelled, `single` or `all_series` tooltips, an aggregation to fit the pixels stated |
 | `kit.spark(values, cls)` | a line of samples in a cell, one mark per sample |
 | `kit.donut(slices, options)`, `kit.map(points, {cluster})`, `kit.matrix(rows, columns, cell)`, `kit.sankey(spec)`, `kit.feed(columns, entries, {sources, remainder})`, `kit.chips(chips, remainder)` | the other shapes' drawings |
-| `kit.pick(subject)` | marks a node as opening a detail about a subject: `{kind, key, title, facts, related, reference, about}`; `reference` offers "scope this canvas to it", `about` "add a widget about it" |
+| `kit.pick(subject)` | marks a node as opening a detail about a subject: `{kind, key, title, facts, related, reference}`; `reference` offers "scope this canvas to it" and "add a widget about it": the core picks that widget from the loaded manifests, never from a list of types (*Add a widget about it*, below) |
 | `kit.tip(nodes)` | gives a node a tooltip |
 | `kit.join(items)`, `kit.expand(key, summary, content)`, `kit.legend(items)`, `kit.note(text)`, `kit.remainder(members, value)` | values side by side, a row the reader expands, a legend, a note, a remainder |
 
 Colours are the stylesheet's classes only: `s1`..`s6` strokes, `f1`..`f6` fills, `sw-1`..`sw-6`
 swatches, `fallowed`, `fblocked`, `fother`. A renderer that needs a word adds it to its own catalogue
 file (*Strings of a widget*) and asks for it by its literal key.
+
+### Add a widget about it
+
+A detail whose subject carries a `reference` offers "add a widget about it". The widget added is
+chosen from the loaded widgets' manifests, never from a list in the core: a widget **whose one
+reference parameter** (`reference` or `reference_list`) **is of the subject's kind**. Where several
+qualify, the first by these rules, in order: a single `reference` before a `reference_list`; a
+required parameter before an optional one; the fewest parameters; the type, in alphabetical order.
+The widget starts at its manifest defaults, with that parameter set to the subject's reference (a
+list of one for a `reference_list`). Where no loaded widget qualifies, the pivot is not offered. A
+third-party widget qualifies by its manifest alone.
 
 A renderer runs in the signed-in reader's page, with that reader's privileges. The page's policy stops
 it reaching any other origin, but not calling a write route of this server: a front plugin is trusted
@@ -187,7 +208,9 @@ renderer asks the core for what it draws, limited to `GET /api/widget/{type}`, `
 Its renderer registers a `requests` function beside `render`. `requests({parameters})` answers the
 list of paths to read, each one of the four routes above with its query string; the core reads
 them on this server, on the canvas's schedule, and calls `render` with `input.data` holding one
-`{path, status, body}` per path, in the order asked. A path outside the four routes, a `requests`
+`{path, status, body}` per path, in the order asked. A path is matched as written: a `.` or `..`
+component, or any escape (`%`) in the route, is outside the four routes whatever it would resolve to,
+and a dataset's name is dot-separated words. A path outside the four routes, a `requests`
 that throws or answers something other than a list, and the card draws its failure panel without
 reading anything. The parameters are the widget's manifest parameters, the canvas's period and
 scope applied as for any widget.

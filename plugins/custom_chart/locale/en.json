@@ -9,6 +9,27 @@
     "plugin.custom_chart.widget.custom_chart.column.series": "Series",
     "plugin.custom_chart.widget.custom_chart.column.measure": "Measure",
     "plugin.custom_chart.widget.custom_chart.column.aggregation": "Aggregation",
-    "plugin.custom_chart.widget.custom_chart.series_label": "{source} {measure}"
+    "plugin.custom_chart.widget.custom_chart.series_label": "{source}: {measure}",
+    "plugin.custom_chart.widget.custom_chart.figure.allowed": "allowed",
+    "plugin.custom_chart.widget.custom_chart.figure.blocked": "blocked",
+    "plugin.custom_chart.widget.custom_chart.figure.netflow_bytes": "NetFlow bytes",
+    "plugin.custom_chart.widget.custom_chart.figure.netflow_packets": "NetFlow packets",
+    "plugin.custom_chart.widget.custom_chart.figure.uptime": "uptime",
+    "plugin.custom_chart.widget.custom_chart.figure.cpu": "CPU",
+    "plugin.custom_chart.widget.custom_chart.figure.memory": "memory",
+    "plugin.custom_chart.widget.custom_chart.figure.swap": "swap",
+    "plugin.custom_chart.widget.custom_chart.figure.disk": "disk",
+    "plugin.custom_chart.widget.custom_chart.figure.temperature": "temperature",
+    "plugin.custom_chart.widget.custom_chart.figure.gateway_latency": "gateway latency",
+    "plugin.custom_chart.widget.custom_chart.figure.gateway_loss": "gateway loss",
+    "plugin.custom_chart.widget.custom_chart.figure.bits_per_second": "throughput",
+    "plugin.custom_chart.widget.custom_chart.figure.packets": "packets",
+    "plugin.custom_chart.widget.custom_chart.figure.errors": "errors",
+    "plugin.custom_chart.widget.custom_chart.figure.lookups": "lookups",
+    "plugin.custom_chart.widget.custom_chart.figure.events": "events",
+    "plugin.custom_chart.widget.custom_chart.unit.bits_per_second": "bits per second",
+    "plugin.custom_chart.widget.custom_chart.unit.ratio": "share",
+    "plugin.custom_chart.widget.custom_chart.annotation.blocked_spikes": "Blocked spikes",
+    "plugin.custom_chart.widget.custom_chart.no_axis": "No axis for {unit}"
   }
 }
