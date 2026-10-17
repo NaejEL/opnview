@@ -21,19 +21,15 @@
 
       function reasonOf(reason) {
         switch (reason) {
-          case "miss": return t("plugin.destination_countries.widget.destination_countries.unresolved.miss");
-          case "pending": return t("plugin.destination_countries.widget.destination_countries.unresolved.pending");
-          case "no_row": return t("plugin.destination_countries.widget.destination_countries.unresolved.no_row");
-          case "no_coordinates": return t("plugin.destination_countries.widget.destination_countries.unresolved.no_coordinates");
-          case "east_west": return t("plugin.destination_countries.widget.destination_countries.unresolved.east_west");
-          case "this_firewall": return t("plugin.destination_countries.widget.destination_countries.unresolved.this_firewall");
+          case "miss": case "pending": case "no_row": case "no_coordinates":
+          case "east_west": case "this_firewall": return kit.placeReason(reason);
           default: return String(reason);
         }
       }
       var columns = [{ key: "country", label: t("column.country") }, { key: "bytes", label: t("column.bytes"), num: true }];
       if (showAllowed) { columns.push({ key: "allowed", label: t("column.allowed"), num: true }); }
       if (showBlocked) { columns.push({ key: "blocked", label: t("column.blocked"), num: true }); }
-      columns.push({ key: "peers", label: t("plugin.destination_countries.widget.destination_countries.addresses"), num: true });
+      columns.push({ key: "peers", label: t("column.addresses"), num: true });
 
       function cellsOf(first, bytes, allowed, blocked, peers) {
         var cells = [first, bytes];
@@ -49,7 +45,7 @@
           [t("column.allowed"), row.allowed ? kit.value(row.allowed, "bytes", { field: "bytes" }) : kit.none()],
           [t("column.blocked"), row.blocked ? kit.value(row.blocked, "bytes", { field: "bytes" }) : kit.none()],
           [t("column.connections"), row.allowed && row.blocked ? kit.text(kit.add(row.allowed, row.blocked, "connections")) : kit.none()],
-          [t("plugin.destination_countries.widget.destination_countries.addresses"), kit.text(row.peers)]
+          [t("column.addresses"), kit.text(row.peers)]
         ];
         return {
           key: row.key,
@@ -66,9 +62,9 @@
         rows.push({ key: "unresolved-" + unresolved.reason, className: "is-flagged",
           subject: kit.subject("unplaced", unresolved.reason, reasonOf(unresolved.reason), [
             [t("column.bytes"), kit.value(volume, "bytes", { field: "bytes" })],
-            [t("plugin.destination_countries.widget.destination_countries.addresses"), kit.text(unresolved.addresses)]]),
+            [t("column.addresses"), kit.text(unresolved.addresses)]]),
           cells: cellsOf(h("span", {}, [reasonOf(unresolved.reason), " ", h("span", { "class": "ident" },
-            tp("plugin.destination_countries.widget.destination_countries.address_count", unresolved.addresses || 0))]),
+            tp("column.address_count", unresolved.addresses || 0))]),
           kit.value(volume, "bytes", { field: "bytes" }),
           kit.value(volume, "bytes", { field: "allowed_bytes" }),
           kit.value(volume, "bytes", { field: "blocked_bytes" }),

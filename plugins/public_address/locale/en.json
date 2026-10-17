@@ -10,8 +10,6 @@
     "plugin.public_address.widget.public_address.only_one_address_seen": "Only one address seen, no change recorded",
     "plugin.public_address.widget.public_address.column.family": "Family",
     "plugin.public_address.widget.public_address.column.reach": "Reach",
-    "plugin.public_address.widget.public_address.column.first_seen": "First seen",
-    "plugin.public_address.widget.public_address.column.last_seen": "Last seen",
     "plugin.public_address.widget.public_address.column.prefix": "Prefix length",
     "plugin.public_address.widget.public_address.column.address": "Address",
     "plugin.public_address.widget.public_address.column.changed": "Changed",

@@ -28,7 +28,7 @@
         if (point.volume) { placed += part(point.volume); }
         var operator = geo.asn ? kit.subject("operator", geo.asn, geo.operator || String(geo.asn), [[t("column.asn"), kit.text(geo.asn)]]) : null;
         var facts = [
-          [t("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.engine"), tk("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.engine.", point.engine)],
+          [t("column.engine"), tk("column.engine.", point.engine)],
           [t("column.country"), geo.country_code ? (geo.country_name || geo.country_code) : kit.none(t("figure.no_country"))],
           [t("column.operator"), geo.operator || kit.none(t("figure.no_operator"))]
         ];
@@ -53,14 +53,14 @@
       function breakdown(rows, key) {
         return h("ul", { key: key, "class": "counter-list" }, rows.map(function (row) {
           return h("li", { key: row.reason, "data-reason": row.reason }, [
-            h("span", {}, [tk("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.", row.reason), " · ", tp("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.addresses", row.addresses || 0)]),
+            h("span", {}, [(kit.placeReason(row.reason) || tk("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.", row.reason)), " · ", tp("column.address_count", row.addresses || 0)]),
             kit.value(row.volume, unit, { field: field })
           ]);
         }));
       }
       var counter = h("div", { "class": "counter", "data-unplaced": String(unplaced) }, [
         h("span", { "class": "counter-value" }, figure(unplaced)),
-        h("span", { "class": "counter-second" }, tp("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.unplaced", addresses)),
+        h("span", { "class": "counter-second" }, tp("column.map.not_placed_addresses", addresses)),
         parameters.show_unplaced === false ? null : breakdown(unplacedRows, "volume"),
         parameters.show_unplaced === false || !(data.security_unplaced || []).length ? null : [
           h("span", { key: "security-head", "class": "counter-second" }, t("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.security_unplaced")),
@@ -69,21 +69,21 @@
       var reconcile = h("div", { "class": "map-reconcile", "data-placed": String(placed), "data-unplaced": String(unplaced),
         "data-below-minimum": String(below), "data-below": String(below), "data-total": String(data.total ? part(data.total) : 0) },
         kit.table([{ key: "what", label: t("sankey.column.what") }, { key: "value", label: t("sankey.column.value"), num: true }], [
-          { key: "placed", cells: [t("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.placed"), figure(placed)] },
-          { key: "unplaced", cells: [t("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.unplaced_row"), figure(unplaced)] },
-          { key: "below", cells: [tp("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.below_minimum", data.below_minimum ? data.below_minimum.members : 0), figure(below)] }
+          { key: "placed", cells: [t("column.map.placed"), figure(placed)] },
+          { key: "unplaced", cells: [t("column.map.not_placed"), figure(unplaced)] },
+          { key: "below", cells: [tp("column.below_minimum", data.below_minimum ? data.below_minimum.members : 0), figure(below)] }
         ], { total: data.total ? { label: t("shape.total"), cells: [kit.value(data.total, unit, { field: field })] } : null, compact: true }));
       var others = kit.table([{ key: "what", label: t("sankey.column.what") }, { key: "value", label: t("sankey.column.value"), num: true }], [
         { key: "events", cells: [t("collection.kind.security_event"), kit.value(data.security_events)] },
-        { key: "lookups", cells: [t("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.dns_blocked_lookups"), kit.value(data.dns_blocked_lookups)] },
+        { key: "lookups", cells: [t("column.refused_lookups"), kit.value(data.dns_blocked_lookups)] },
         { key: "refusals", cells: [t("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.total_refusals"), kit.value(data.total_refusals)] }
       ], { compact: true });
       return h("div", { "class": "map-layout" }, [
         h("div", { "class": "map-frame" }, [
           kit.map(points, { cluster: parameters.cluster !== false }),
-          parameters.cluster !== false ? h("p", { "class": "table-foot", "data-cluster": "true" }, t("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.clustered")) : null,
-          kit.legend([{ key: "rule", cls: "blocked", label: tk("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.engine.", "firewall_rule") },
-            { key: "security", cls: "5", label: tk("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.engine.", "security_engine") }])
+          parameters.cluster !== false ? h("p", { "class": "table-foot", "data-cluster": "true" }, t("column.map.clustered")) : null,
+          kit.legend([{ key: "rule", cls: "blocked", label: tk("column.engine.", "firewall_rule") },
+            { key: "security", cls: "5", label: tk("column.engine.", "security_engine") }])
         ]),
         h("div", { "class": "map-side" }, [counter, reconcile, others])
       ]);

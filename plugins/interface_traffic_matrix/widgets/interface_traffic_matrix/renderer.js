@@ -23,8 +23,8 @@
         return (entries || []).map(function (entry) {
           var iface = entry.interface || {};
           labels[entry.key] = entry.interface ? kit.interfaceLabel(iface)
-            : entry.key === "this_firewall" ? t("plugin.interface_traffic_matrix.widget.interface_traffic_matrix.this_firewall")
-            : t("plugin.interface_traffic_matrix.widget.interface_traffic_matrix.north_south");
+            : entry.key === "this_firewall" ? t("column.scope.this_firewall")
+            : t("column.scope.north_south");
           subjects[entry.key] = entry.interface ? kit.interfaceSubject(iface) : null;
           return { key: String(entry.key), label: labels[entry.key] };
         });
@@ -37,8 +37,8 @@
         cells[cell.row + "\u0000" + cell.column] = cell;
         if (pseudo[cell.column] !== undefined) { pseudo[cell.column] = true; }
       });
-      if (pseudo.north_south) { labels.north_south = t("plugin.interface_traffic_matrix.widget.interface_traffic_matrix.north_south"); columns.push({ key: "north_south", label: labels.north_south }); }
-      if (pseudo.this_firewall) { labels.this_firewall = t("plugin.interface_traffic_matrix.widget.interface_traffic_matrix.this_firewall"); columns.push({ key: "this_firewall", label: labels.this_firewall }); }
+      if (pseudo.north_south) { labels.north_south = t("column.scope.north_south"); columns.push({ key: "north_south", label: labels.north_south }); }
+      if (pseudo.this_firewall) { labels.this_firewall = t("column.scope.this_firewall"); columns.push({ key: "this_firewall", label: labels.this_firewall }); }
       function ruleText(rule) {
         if (rule.state === "rule_not_found") { return t("plugin.interface_traffic_matrix.widget.interface_traffic_matrix.rule_not_found", { rid: String(rule.rid) }); }
         return rule.description || String(rule.rid);

@@ -3,9 +3,6 @@
   "strings": {
     "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.title": "Traffic over time by scope",
     "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.question": "How much traffic left the network, entered it, and stayed between interfaces, over time?",
-    "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.scope.outbound": "Outbound",
-    "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.scope.inbound": "Inbound",
-    "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.scope.inter_interface": "Between interfaces",
     "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.fact.total": "Period total"
   }
 }

@@ -65,7 +65,7 @@
       var extraRows = [];
       if (below.members) {
         extraRows.push({ key: "below-min-flows", className: "is-remainder", cells: [
-          input.tp("plugin.top_sites.widget.top_sites.below_min_flows", below.members), kit.value(below.count), kit.none(), kit.none(), ""] });
+          input.tp("column.sites_below_minimum", below.members), kit.value(below.count), kit.none(), kit.none(), ""] });
       }
       var attribution = data.attribution;
       return h("div", { "class": "top-sites" }, [

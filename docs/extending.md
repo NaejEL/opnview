@@ -2,14 +2,17 @@
 
 opnview is modular at every layer. **A kind of thing is a seam, and an implementation is
 a directory behind it**, discovered at start: nothing that ships with the product is edited to add
-one. This document is the whole procedure for the three things a third party adds most often. It is
-written to be followed by somebody who has never read the source.
+one. This document is the whole procedure for the three things a third party adds most often on the
+server side; the parts of the interface -- a theme, a language, a widget renderer, a front-only
+widget -- have their own procedure in `docs/front-plugins.md`. It is written to be followed by
+somebody who has never read the source.
 
 | You add | You create | You edit |
 |---|---|---|
 | a provider (a lease source, a lookup source, a log source...) | one directory under its kind | nothing |
-| a widget | one directory holding `manifest.json` and a query | nothing |
-| a web surface | one directory holding a handler, a template and its catalogue keys | nothing |
+| a widget | one directory holding `manifest.json` and a query, and its renderer when it draws itself | nothing |
+| a theme, a language, or a widget drawn by the front alone | one file, or one widget directory, in the data directory (`docs/front-plugins.md`) | nothing |
+| a web surface | one directory holding its Go handlers, which answer JSON only, and its catalogue keys | nothing |
 
 "Nothing" is literal for the source tree; the two places a Go build needs a regenerated file are
 named where they occur (`go generate ./...`), and a test fails, naming the command, when the generated

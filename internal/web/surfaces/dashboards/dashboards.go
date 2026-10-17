@@ -274,6 +274,13 @@ func validOrigin(origin string) bool {
 
 // DefaultDashboardFile is the default dashboard of the built-in front (F7-28): the step-3 mockup's
 // three canvases, restricted to portable references.
+//
+// ITS TITLES ARE THE DOCUMENT'S DATA, NOT CATALOGUE STRINGS, deliberately. From the moment it is
+// stored the default is an ordinary dashboard the reader renames, edits and exports
+// (docs/dashboard-format.md): a canvas `title` is a string the file carries, the format has no key
+// indirection for it, and an export must not read differently by the language of whoever exports it.
+// The catalogue holds the interface's words; the titles are the reader's, written in English once,
+// as a new canvas's or a new dashboard's are written in the reader's language when they are made.
 const DefaultDashboardFile = "dashboards/default.json"
 
 // DefaultDashboard reads the default dashboard and checks it as any document is checked: a default

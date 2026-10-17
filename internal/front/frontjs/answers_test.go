@@ -131,6 +131,9 @@ type manifestParameter struct {
 	Default   any      `json:"default"`
 	Class     string   `json:"class"`
 	Reference string   `json:"reference"`
+	Min       *float64 `json:"min,omitempty"`
+	Max       *float64 `json:"max,omitempty"`
+	Required  bool     `json:"required,omitempty"`
 }
 
 // builtinWidget is one built-in widget's manifest and its renderer's text.
@@ -138,6 +141,7 @@ type builtinWidget struct {
 	Type       string              `json:"type"`
 	Shape      string              `json:"shape"`
 	Windowed   bool                `json:"windowed"`
+	Volumes    bool                `json:"volumes"`
 	Parameters []manifestParameter `json:"parameters"`
 	Renderer   *struct {
 		Entry string `json:"entry"`

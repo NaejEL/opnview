@@ -8,7 +8,6 @@
     "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.column.named": "Named flows",
     "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.column.eligible": "Eligible flows",
     "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.eligible_bytes": "Eligible bytes",
-    "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.unstable": "unstable identity",
     "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.resolver_not_covered": "Resolver lookups not read over the whole window",
     "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.cache_not_covered": "Resolver cache not read over the whole window"
   }

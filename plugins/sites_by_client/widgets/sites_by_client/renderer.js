@@ -48,10 +48,10 @@
         var remainder = row.remainder || { members: 0 };
         var below = row.below_min_flows || { members: 0 };
         var cell = [
-          row.state === "named" ? null : kit.badge(t("plugin.sites_by_client.widget.sites_by_client.no_site_name_inferred"), "gap"),
+          row.state === "named" ? null : kit.badge(t("reason.no_site_name"), "gap"),
           kit.chips(chips, remainder.members, remainder.members ? kit.value(remainder.count) : null),
           below.members ? h("span", { "class": "muted", "data-below-min-flows": String(below.members) },
-            [" ", tp("plugin.sites_by_client.widget.sites_by_client.below_min_flows", below.members), " ", kit.value(below.count)]) : null
+            [" ", tp("column.sites_below_minimum", below.members), " ", kit.value(below.count)]) : null
         ];
         var attribution = row.attribution;
         var cells = [kit.clientLabel(client), cell];

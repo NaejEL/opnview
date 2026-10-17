@@ -18,13 +18,17 @@
 
   var state = { token: "", onUnauthorized: null };
 
+  /* A body already written as JSON text. */
+  function Raw(text) { this.text = text; }
+
   function answer(response) {
     return response.text().then(function (text) {
       var body = null;
       if (text) {
         try { body = JSON.parse(text); } catch (e) { body = null; }
       }
-      return { status: response.status, body: body };
+      // The text as the server sent it, beside its parse: a stored document is kept as its bytes.
+      return { status: response.status, body: body, text: text };
     });
   }
 
@@ -33,6 +37,8 @@
     return result;
   }
 
+  /* body is an object, written as JSON, or a body api.raw made, already written: a stored document
+   * is sent back as the bytes it was read as, so an undo restores it byte for byte. */
   function send(method, path, body) {
     if (path.indexOf("/api/") !== 0) {
       return Promise.reject(new Error("api: only this server's /api/ routes are reached"));
@@ -41,7 +47,7 @@
     if (method === "POST") {
       init.headers["Content-Type"] = "application/json";
       init.headers["X-CSRF-Token"] = state.token;
-      init.body = JSON.stringify(body === undefined ? {} : body);
+      init.body = body instanceof Raw ? body.text : JSON.stringify(body === undefined ? {} : body);
     }
     return root.fetch(path, init).then(answer);
   }
@@ -67,6 +73,8 @@
         return result;
       });
     },
+    /* A body already written as JSON text, sent as it is. */
+    raw: function (text) { return new Raw(text); },
     /* Keeps the form token a setup or a sign-in answered. */
     useToken: function (token) { state.token = token || ""; },
     onUnauthorized: function (handler) { state.onUnauthorized = handler; }

@@ -1,0 +1,14 @@
+{
+  "manifest_version": 1,
+  "type": "example_latency_targets",
+  "shape": "ranked_bars",
+  "windowed": true,
+  "lower_bound": false,
+  "parameters": [
+    {"key": "period", "kind": "enum", "values": ["1h", "24h"], "default": "24h"},
+    {"key": "show_samples", "kind": "boolean", "default": true, "class": "rendering"}
+  ],
+  "queries": ["targets.statements.sql"],
+  "script": "targets.js",
+  "renderer": {"entry": "renderer.js"}
+}

@@ -41,8 +41,8 @@
         var facts = [
           [t("plugin.public_address.widget.public_address.column.family"), familyOf(address.family)],
           [t("plugin.public_address.widget.public_address.column.reach"), reach(address)],
-          [t("plugin.public_address.widget.public_address.column.first_seen"), address.first_seen_at ? format.instant(address.first_seen_at) : kit.none()],
-          [t("plugin.public_address.widget.public_address.column.last_seen"), address.last_seen_at ? format.instant(address.last_seen_at) : kit.none()]
+          [t("column.first_seen"), address.first_seen_at ? format.instant(address.first_seen_at) : kit.none()],
+          [t("column.last_seen"), address.last_seen_at ? format.instant(address.last_seen_at) : kit.none()]
         ];
         if (address.prefix_length !== null && address.prefix_length !== undefined) {
           facts.push([t("plugin.public_address.widget.public_address.column.prefix"), kit.text(address.prefix_length)]);
@@ -55,7 +55,7 @@
         { key: "family", label: t("plugin.public_address.widget.public_address.column.family") },
         { key: "reach", label: t("plugin.public_address.widget.public_address.column.reach") },
         { key: "since", label: t("plugin.public_address.widget.public_address.column.changed") },
-        { key: "last", label: t("plugin.public_address.widget.public_address.column.last_seen") }
+        { key: "last", label: t("column.last_seen") }
       ];
       function rowsOf(addresses, iface, prefix, withChange) {
         return (addresses || []).map(function (address, index) {

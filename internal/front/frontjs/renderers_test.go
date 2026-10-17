@@ -546,3 +546,104 @@ func spread(answers []recordedAnswer, n int) []recordedAnswer {
 	}
 	return out
 }
+
+// TestALogAxisChangesTheDrawingAndCountsEveryPoint: custom_chart's axes.<side>.scale is drawn, not
+// stated -- the same recorded answer drawn on a log axis gives other series geometry, still of M and L
+// only with every drawn point counted -- and a value a log axis cannot place, at or below zero, is not
+// drawn and is counted under the chart, never moved to a made-up floor.
+func TestALogAxisChangesTheDrawingAndCountsEveryPoint(t *testing.T) {
+	t.Parallel()
+	page := drawingPage(t)
+	var chart builtinWidget
+	for _, widget := range builtinWidgets(t) {
+		if widget.Type == "custom_chart" {
+			chart = widget
+		}
+	}
+	setJSON(t, page, "__row", rowOf(t, chart))
+	setJSON(t, page, "__answer", string(firstDrawable(t, "custom_chart").Raw))
+	report := page.Run(`(function () {
+  function draw(scale) {
+    var parameters = JSON.parse(JSON.stringify(__answer.parameters || {}));
+    parameters.axes = { left: { scale: scale }, right: { scale: scale } };
+    __render(__row, __answer, parameters);
+    var lines = [];
+    __host.querySelectorAll("path").forEach(function (path) {
+      if ((path.getAttribute("class") || "").indexOf("series-line") >= 0) {
+        lines.push([path.getAttribute("d"), path.getAttribute("data-sample-count")]);
+      }
+    });
+    var svg = __host.querySelector("svg.chart-svg");
+    return { lines: lines, scale: svg ? svg.getAttribute("data-scale-left") : null };
+  }
+  return JSON.stringify({ linear: draw("linear"), log: draw("log") });
+})()`).String()
+	var drawn struct {
+		Linear, Log struct {
+			Lines [][2]string `json:"lines"`
+			Scale string      `json:"scale"`
+		}
+	}
+	if err := json.Unmarshal([]byte(report), &drawn); err != nil {
+		t.Fatal(err)
+	}
+	if drawn.Linear.Scale != "linear" || drawn.Log.Scale != "log" {
+		t.Errorf("the chart is drawn on %q and %q, not linear then log", drawn.Linear.Scale, drawn.Log.Scale)
+	}
+	if fmt.Sprint(drawn.Linear.Lines) == fmt.Sprint(drawn.Log.Lines) {
+		t.Errorf("a log axis draws the same series as a linear one: %v", drawn.Log.Lines)
+	}
+	for _, line := range drawn.Log.Lines {
+		commands := pathCommands.FindAllString(line[0], -1)
+		for _, command := range commands {
+			if command != "M" && command != "L" {
+				t.Errorf("a series line on a log axis holds %s", command)
+			}
+		}
+		if count, _ := strconv.Atoi(line[1]); count != len(commands) {
+			t.Errorf("a series line on a log axis draws %d points and says %d", len(commands), count)
+		}
+	}
+
+	// A series crossing zero: 1, 10, 100, 0, 1000, -5. The log axis draws 1, 10 and 100 as one line and
+	// 1000 alone, and counts the two it cannot place.
+	result := page.Run(`(function () {
+  var kit = opnview.kit.create({ t: opnview.strings.t, tp: opnview.strings.tp, tk: opnview.strings.tk,
+    td: opnview.strings.td, format: opnview.format, size: { width: 600, height: 200 }, prefix: "x" });
+  var values = [1, 10, 100, 0, 1000, -5];
+  var tree = kit.chart({ from: 0, to: 600, scale: { left: "log" }, width: 600, height: 200, series: [{ key: "s", label: "s",
+    points: values.map(function (value, index) { return { from: index * 100, to: index * 100 + 100, value: value }; }) }] });
+  opnview.view.render(__host, [tree]);
+  var counted = 0, marks = 0, ys = [];
+  __host.querySelectorAll("g").forEach(function (g) {
+    if ((g.getAttribute("class") || "").indexOf("sample-dots") >= 0) {
+      counted += Number(g.getAttribute("data-sample-count"));
+      marks += g.childNodes.length;
+      g.childNodes.forEach(function (dot) { ys.push(Number(dot.getAttribute("cy"))); });
+    }
+  });
+  return JSON.stringify({ counted: counted, marks: marks, ys: ys, note: __host.textContent.indexOf("2 values at or below zero") >= 0 });
+})()`).String()
+	var crossing struct {
+		Counted, Marks int
+		Ys             []float64
+		Note           bool
+	}
+	if err := json.Unmarshal([]byte(result), &crossing); err != nil {
+		t.Fatal(err)
+	}
+	if crossing.Counted != 4 || crossing.Marks != 4 {
+		t.Errorf("a log axis over 1, 10, 100, 0, 1000, -5 draws %d marks and counts %d, not the 4 it can place",
+			crossing.Marks, crossing.Counted)
+	}
+	if len(crossing.Ys) == 4 {
+		// A decade is the same height wherever it is: 1 to 10, 10 to 100 and 100 to 1000 are equal steps.
+		first, second := crossing.Ys[0]-crossing.Ys[1], crossing.Ys[1]-crossing.Ys[2]
+		if first <= 0 || first-second > 0.5 || second-first > 0.5 {
+			t.Errorf("the decades are not equal steps up a log axis: %v", crossing.Ys)
+		}
+	}
+	if !crossing.Note {
+		t.Errorf("the two values a log axis cannot place are not counted under the chart")
+	}
+}

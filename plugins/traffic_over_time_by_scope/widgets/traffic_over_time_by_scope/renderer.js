@@ -26,9 +26,11 @@
       var requested = (input.answer && input.answer.window && input.answer.window.requested) || {};
       var series = data.series || [];
       var unitOf = function (one) { return one.unit === "bytes" ? "bytes" : null; };
+      /* A scope's name in the core's words; a key outside them is shown as the answer gives it. */
+      var scopeName = function (key) { return kit.direction(key) || String(key); };
 
       var figures = series.map(function (one, index) {
-        var label = tk("plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.scope.", one.key);
+        var label = scopeName(one.key);
         var total = DRAWN[one.condition] && one.total !== null && one.total !== undefined
           ? { measure: one.measure, lower_bound: one.lower_bound, value: one.total } : null;
         var subject = kit.subject("scope", one.key, label, [
@@ -45,7 +47,7 @@
 
       var drawn = [], gaps = [];
       series.forEach(function (one, index) {
-        var label = tk("plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.scope.", one.key);
+        var label = scopeName(one.key);
         if (!DRAWN[one.condition] || !one.buckets || one.buckets.length === 0) {
           gaps.push(h("div", { key: one.key, "class": "series-gap-row", "data-series": one.key, "data-condition": one.condition }, [
             h("span", { "class": "swatch swatch-none" }),

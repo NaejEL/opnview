@@ -2,14 +2,6 @@
   "language": "en",
   "strings": {
     "plugin.traffic_sankey.widget.traffic_sankey.title": "Traffic Sankey",
-    "plugin.traffic_sankey.widget.traffic_sankey.question": "Who talks to whom, at a glance — which interfaces send their volume to which other interfaces, and to which operators outside?",
-    "plugin.traffic_sankey.widget.traffic_sankey.addresses.one": "{count} address",
-    "plugin.traffic_sankey.widget.traffic_sankey.addresses.other": "{count} addresses",
-    "plugin.traffic_sankey.widget.traffic_sankey.outside": "Outside",
-    "plugin.traffic_sankey.widget.traffic_sankey.this_firewall": "The firewall itself",
-    "plugin.traffic_sankey.widget.traffic_sankey.unnamed.miss": "unnamed: no geolocation answer",
-    "plugin.traffic_sankey.widget.traffic_sankey.unnamed.pending": "unnamed: not looked up yet",
-    "plugin.traffic_sankey.widget.traffic_sankey.unnamed.no_row": "unnamed: never looked up",
-    "plugin.traffic_sankey.widget.traffic_sankey.unnamed.no_coordinates": "unnamed: no coordinates"
+    "plugin.traffic_sankey.widget.traffic_sankey.question": "Who talks to whom, at a glance — which interfaces send their volume to which other interfaces, and to which operators outside?"
   }
 }

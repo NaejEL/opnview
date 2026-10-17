@@ -20,13 +20,13 @@
       var showTimeline = input.parameters.show_timeline !== false;
 
       function rate(figure) {
-        if (!figure || figure.state === "no_current_sample") { return kit.none(t("plugin.owner_activity.widget.owner_activity.no_current_sample")); }
+        if (!figure || figure.state === "no_current_sample") { return kit.none(t("reason.no_current_sample")); }
         return h("span", { "class": "rate" }, [
           kit.value({ measure: figure.measure, lower_bound: figure.lower_bound, value: figure.in_bits_per_second }, "bits_per_second"),
           " / ",
           figure.out_measured ? kit.value({ measure: figure.measure, lower_bound: figure.lower_bound, value: figure.out_bits_per_second },
             "bits_per_second") : kit.none(t("plugin.owner_activity.widget.owner_activity.out_not_measured")),
-          figure.state === "stale_sample" ? kit.badge(t("plugin.owner_activity.widget.owner_activity.stale_sample"), "gap") : null
+          figure.state === "stale_sample" ? kit.badge(t("reason.stale_sample"), "gap") : null
         ]);
       }
 

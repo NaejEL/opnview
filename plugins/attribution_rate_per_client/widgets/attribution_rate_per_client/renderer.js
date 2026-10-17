@@ -50,7 +50,7 @@
           ]),
           cells: [
             h("span", {}, [kit.clientLabel(client), client.unstable_identity
-              ? kit.badge(t("plugin.attribution_rate_per_client.widget.attribution_rate_per_client.unstable")) : null]),
+              ? kit.badge(t("column.unstable_identity")) : null]),
             rateCell(row),
             kit.value(row.named_flows),
             kit.value(row.eligible_flows),

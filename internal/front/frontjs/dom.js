@@ -136,7 +136,7 @@
     }
   };
   Element.prototype.querySelectorAll = function (selector) { return query(this, selector); };
-  Element.prototype.querySelector = function (selector) { return query(this, selector)[0] || null; };
+  Element.prototype.querySelector = function (selector) { return queryFirst(this, selector); };
   Object.defineProperty(Element.prototype, "offsetHeight", { get: function () { return 0; } });
 
   function makeEvent(type, options) {
@@ -185,6 +185,25 @@
     return into;
   }
 
+  /* The first element below scope a single compound selector matches, in document order, the walk
+   * stopping there: what getElementById and a one-step querySelector need, without listing the tree. */
+  function first(scope, parts) {
+    var stack = scope.childNodes.slice().reverse();
+    while (stack.length) {
+      var node = stack.pop();
+      if (node.nodeType !== 1) { continue; }
+      if (matches(node, parts)) { return node; }
+      for (var i = node.childNodes.length - 1; i >= 0; i--) { stack.push(node.childNodes[i]); }
+    }
+    return null;
+  }
+
+  function queryFirst(scope, selector) {
+    var trimmed = selector.trim();
+    if (!/\s/.test(trimmed)) { return first(scope, compound(trimmed)); }
+    return query(scope, selector)[0] || null;
+  }
+
   function query(scope, selector) {
     var steps = selector.trim().split(/\s+/).map(compound);
     var current = [scope];
@@ -215,12 +234,12 @@
     createElementNS: function (namespace, tag) { root.__dom.created += 1; return new Element(tag, namespace); },
     createTextNode: function (value) { root.__dom.created += 1; return new Text(value); },
     getElementById: function (id) {
-      return query(documentElement, "#" + id)[0] || null;
+      return first(documentElement, { tag: null, id: String(id), classes: [], attributes: [] });
     },
     addEventListener: function (type, handler) { (documentListeners[type] || (documentListeners[type] = [])).push(handler); },
     removeEventListener: function () {},
     querySelectorAll: function (selector) { return query(documentElement, selector); },
-    querySelector: function (selector) { return query(documentElement, selector)[0] || null; }
+    querySelector: function (selector) { return queryFirst(documentElement, selector); }
   };
   // Nodes made before the document existed take it now.
   documentElement.ownerDocument = root.document;

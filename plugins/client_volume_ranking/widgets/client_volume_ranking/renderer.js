@@ -29,7 +29,7 @@
         ];
         return {
           key: String(client.id),
-          label: [kit.clientLabel(client), client.unstable_identity ? kit.badge(t("plugin.client_volume_ranking.widget.client_volume_ranking.unstable"), "gap") : null],
+          label: [kit.clientLabel(client), client.unstable_identity ? kit.badge(t("column.unstable_identity"), "gap") : null],
           sub: [iface ? kit.interfaceLabel(iface) : t("plugin.client_volume_ranking.widget.client_volume_ranking.no_interface"), " · ",
             tp("plugin.client_volume_ranking.widget.client_volume_ranking.destinations", bar.destinations || 0)],
           value: bar.value,

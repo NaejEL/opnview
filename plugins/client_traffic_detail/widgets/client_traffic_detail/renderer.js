@@ -44,22 +44,20 @@
         }
       }
       function actionOf(action) {
-        if (action === "pass") { return t("plugin.client_traffic_detail.widget.client_traffic_detail.action.pass"); }
+        if (action === "pass") { return t("column.allowed"); }
         if (action === "block") {
-          return kit.badge(t("plugin.client_traffic_detail.widget.client_traffic_detail.action.block"), "blocked");
+          return kit.badge(t("column.blocked"), "blocked");
         }
         return action ? String(action) : kit.none();
       }
       function scopeOf(scope) {
-        if (scope === "north_south") { return t("plugin.client_traffic_detail.widget.client_traffic_detail.scope.north_south"); }
-        if (scope === "east_west") { return t("plugin.client_traffic_detail.widget.client_traffic_detail.scope.east_west"); }
-        if (scope === "this_firewall") { return t("plugin.client_traffic_detail.widget.client_traffic_detail.scope.this_firewall"); }
+        if (scope === "north_south" || scope === "east_west" || scope === "this_firewall") { return tk("column.scope.", scope); }
         return scope ? String(scope) : kit.none();
       }
       /* A live figure: its rate in, and out where it was measured; a dash where no sample holds one. */
       function rateOf(rate) {
         if (!rate || rate.state === "no_current_sample" || rate.in_bits_per_second === null || rate.in_bits_per_second === undefined) {
-          return kit.none(t("plugin.client_traffic_detail.widget.client_traffic_detail.no_current_sample"));
+          return kit.none(t("reason.no_current_sample"));
         }
         var parts = [h("span", { key: "in", "class": "fig", "data-measure": rate.measure },
           t("plugin.client_traffic_detail.widget.client_traffic_detail.rate_in", { rate: format.rate(rate.in_bits_per_second) }))];
@@ -69,7 +67,7 @@
             t("plugin.client_traffic_detail.widget.client_traffic_detail.rate_out", { rate: format.rate(rate.out_bits_per_second) }))
           : kit.none(t("plugin.client_traffic_detail.widget.client_traffic_detail.out_not_measured")));
         if (rate.state === "stale_sample") {
-          parts.push(kit.badge(t("plugin.client_traffic_detail.widget.client_traffic_detail.stale_sample"), "unavailable"));
+          parts.push(kit.badge(t("reason.stale_sample"), "unavailable"));
         }
         return h("span", { "class": "live-rate", "data-rate-state": rate.state }, parts);
       }
@@ -83,11 +81,13 @@
         if (!record.forward && !record.reverse) { return figure; }
         var direction = function (part, key) {
           if (!part) { return null; }
-          var values = { bytes: part.bytes === null || part.bytes === undefined ? t("figure.dash") : format.bytes(part.bytes),
-            state: part.state ? String(part.state) : t("figure.dash") };
-          return h("span", { key: key, "class": "ident", "data-direction-state": part.state || "" },
+          var values = { bytes: part.bytes === null || part.bytes === undefined ? t("figure.dash") : format.bytes(part.bytes) };
+          /* The direction's NetFlow state, named: a direction NetFlow could not measure says why. */
+          var state = part.state ? kit.directionState(part.state) || String(part.state) : null;
+          return h("span", { key: key, "class": "ident", "data-direction-state": part.state || "" }, [
             key === "forward" ? t("plugin.client_traffic_detail.widget.client_traffic_detail.forward", values)
-              : t("plugin.client_traffic_detail.widget.client_traffic_detail.reverse", values));
+              : t("plugin.client_traffic_detail.widget.client_traffic_detail.reverse", values),
+            state ? [" ", h("span", { "class": "direction-state" }, state)] : null]);
         };
         return h("span", {}, [figure, direction(record.forward, "forward"), direction(record.reverse, "reverse")]);
       }
@@ -105,7 +105,7 @@
           case "bytes": return bytesOf(record);
           case "country": return geo.country_code || kit.none(t("figure.no_country"));
           case "operator": return geo.operator || kit.none(t("figure.no_operator"));
-          case "site_name": return record.site_name || kit.none(t("plugin.client_traffic_detail.widget.client_traffic_detail.no_site_name"));
+          case "site_name": return record.site_name || kit.none(t("reason.no_site_name"));
           case "method":
             return record.method ? h("span", { "class": "badge method method-" + record.method, "data-method": record.method },
               tk("method.", record.method)) : kit.none(t("figure.no_method"));

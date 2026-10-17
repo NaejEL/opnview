@@ -7,7 +7,6 @@
     "plugin.client_volume_ranking.widget.client_volume_ranking.destinations.other": "{count} destinations",
     "plugin.client_volume_ranking.widget.client_volume_ranking.excluded.one": "{count} client left out by the identity filter",
     "plugin.client_volume_ranking.widget.client_volume_ranking.excluded.other": "{count} clients left out by the identity filter",
-    "plugin.client_volume_ranking.widget.client_volume_ranking.unstable": "unstable identity",
     "plugin.client_volume_ranking.widget.client_volume_ranking.no_interface": "no interface known"
   }
 }

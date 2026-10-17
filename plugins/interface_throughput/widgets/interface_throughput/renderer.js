@@ -54,7 +54,7 @@
         var key = String(iface.id);
         if (!byInterface[key]) { byInterface[key] = { iface: iface, series: [] }; order.push(key); }
         var label = t("plugin.interface_throughput.widget.interface_throughput.series_label", { interface: kit.interfaceLabel(iface),
-          direction: tk("plugin.interface_throughput.widget.interface_throughput.direction.", one.direction) });
+          direction: tk("column.direction.", one.direction) });
         var cls = kit.seriesClass(drawnCount);
         drawnCount += 1;
         var entry = { key: one.key, label: label, cls: cls, measure: one.measure, one: one,

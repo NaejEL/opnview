@@ -184,6 +184,148 @@ answers it: `GET /api/widget/{type}` answers `404` `{"condition": "front_only_wi
 renderer asks the core for what it draws, limited to `GET /api/widget/{type}`, `/api/datasets`,
 `/api/datasets/{name}/query` and `/api/live/strip`.
 
+Its renderer registers a `requests` function beside `render`. `requests({parameters})` answers the
+list of paths to read, each one of the four routes above with its query string; the core reads
+them on this server, on the canvas's schedule, and calls `render` with `input.data` holding one
+`{path, status, body}` per path, in the order asked. A path outside the four routes, a `requests`
+that throws or answers something other than a list, and the card draws its failure panel without
+reading anything. The parameters are the widget's manifest parameters, the canvas's period and
+scope applied as for any widget.
+
+## Worked examples
+
+Four complete parts, one of each kind. Each is a set of files under `testdata/front-plugins/` in the
+repository, and a test copies each one where this section says, starts a server over that data
+directory and reaches it (`internal/web/surfaces/frontend/workedexamples_test.go`). Adding any of
+them is copying files and restarting `opnview`: nothing is compiled and no file of `opnview` is
+edited.
+
+### A theme
+
+Copy `example-sepia.json` to `<data-dir>/themes/example-sepia.json`. It is the industrial theme's
+file with its `id`, its `name` and a few colours changed: every token of the set is still mapped,
+in both modes, since a theme that leaves one out is refused.
+
+```json
+{
+  "format_version": 1,
+  "id": "example-sepia",
+  "name": { "en": "Example sepia" },
+  "modes": {
+    "light": { "bg-app": "#f4ecd8", "accent": "#7a4b1e", "...": "every token of the set" },
+    "dark":  { "bg-app": "#231c14", "accent": "#d9a066", "...": "every token of the set" }
+  }
+}
+```
+
+After the restart, `GET /api/front` lists `example-sepia`, the palette picker offers *Example
+sepia*, and `/front/palettes.css` holds its two blocks.
+
+### A language
+
+Copy `en-GB.json` to `<data-dir>/languages/en-GB.json`:
+
+```json
+{
+  "language": "en-GB",
+  "strings": {
+    "language.name": "English (United Kingdom)",
+    "appearance.palette": "Colour palette",
+    "canvas.range": "Time range"
+  }
+}
+```
+
+After the restart, `GET /api/front` and the appearance's `languages` list `en-GB`, so the header
+shows the language picker -- two languages are installed -- and `GET /api/strings/en-GB` answers the
+three keys. Every key the file leaves out is drawn in English, and is listed on the language's row
+of `GET /api/widgets` under `missing_strings`.
+
+### A front-only widget on the data catalogue
+
+Copy the directory `example_lookups_by_hour/` to `<data-dir>/widgets/example_lookups_by_hour`. It
+holds three files and no query or script:
+
+```text
+example_lookups_by_hour/
+  manifest.json        {"manifest_version": 1, "type": "example_lookups_by_hour", "shape": "table",
+                        "windowed": true, "parameters": [{"key": "period", ...}],
+                        "renderer": {"entry": "renderer.js"}}
+  renderer.js          requests and render
+  locale/en.json       widget.example_lookups_by_hour.title, .question, .column.*, .parameter.period
+```
+
+The renderer asks for one read of the core's `dns` dataset, summed per hour over the widget's
+period, and draws one table row per bucket -- the hour and its lookups, a bucket the collection did
+not cover being a dash and never a zero:
+
+```js
+opnview.widgets.register({
+  type: "example_lookups_by_hour",
+  requests: function (input) {
+    var query = { period: input.parameters.period || "24h",
+      x: { column: "looked_up_at", bucket: 3600 }, y: [{ column: "lookups", aggregation: "sum" }] };
+    return ["/api/datasets/dns/query?parameters=" + encodeURIComponent(JSON.stringify(query))];
+  },
+  render: function (input) {
+    var kit = input.kit, t = input.t, format = input.format;
+    var read = (input.data || [])[0] || {};
+    var series = read.body && read.body.data && read.body.data.series ? read.body.data.series : [];
+    var rows = (series.length ? series[0].buckets : []).map(function (bucket) {
+      return { key: String(bucket.from), cells: [format.instant(bucket.from),
+        bucket.value === null ? kit.none() : kit.value(bucket.value, "count")] };
+    });
+    return kit.table([
+      { key: "hour", label: t("widget.example_lookups_by_hour.column.hour") },
+      { key: "lookups", label: t("widget.example_lookups_by_hour.column.lookups"), num: true }
+    ], rows, { empty: t("table.no_rows") });
+  }
+});
+```
+
+After the restart, `GET /api/widgets` lists it with `backend: false` and its `renderer_url`, the
+picker offers it, and `GET /api/widget/example_lookups_by_hour` answers `404` `front_only_widget`.
+
+### A renderer carried by a plugin widget
+
+Copy the directory `example_latency/` to `<data-dir>/plugins/example_latency`. It is a widget plugin
+(`docs/plugins.md`, *Widgets*): a table of probe latencies, and one widget whose script answers the
+slowest sample per target and whose own renderer draws it as ranked bars.
+
+```text
+example_latency/
+  plugin.json                           the table "probe", "widgets": ["example_latency_targets"]
+  locale/en.json                        plugin.example_latency.widget.example_latency_targets.*
+  widgets/example_latency_targets/
+    manifest.json                       "queries", "script" and "renderer": {"entry": "renderer.js"}
+    targets.statements.sql              the slowest sample per target in the window
+    targets.js                          the script: {data: {targets: [...]}}
+    renderer.js                         ranked bars; show_samples, a rendering parameter
+```
+
+The manifest's `renderer` is what this section adds to a widget plugin; everything else is the
+plugin contract. The renderer reads `input.data.targets` and `input.parameters.show_samples`, and
+asks its plugin's catalogue for its one word, the samples line, by its literal key:
+
+```js
+opnview.widgets.register({
+  type: "example_latency_targets",
+  render: function (input) {
+    var kit = input.kit, tp = input.tp;
+    var showSamples = input.parameters.show_samples !== false;
+    return kit.bars(((input.data && input.data.targets) || []).map(function (row) {
+      return { key: row.target, label: row.target, value: row.worst_ms,
+        valueNode: kit.value(row.worst_ms / 1000, "seconds"),
+        sub: showSamples ? tp("plugin.example_latency.widget.example_latency_targets.samples", row.samples) : null };
+    }));
+  }
+});
+```
+
+After the restart, `GET /api/widget/example_latency_targets` answers the plugin's data, `GET
+/api/widgets` lists the type with `renderer_url` `/front/widgets/example_latency_targets/renderer.js`,
+and the card is drawn by this renderer rather than by the `ranked_bars` shape's.
+
 ## Strings of a widget
 
 - A plugin widget's strings are its plugin's `locale/<lang>.json`, under

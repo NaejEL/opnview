@@ -1,0 +1,20 @@
+{
+  "api_version": 1,
+  "name": "example_latency",
+  "version": "0.1.0",
+  "display_name": "Example latency",
+  "description": "A third party's widget plugin, as docs/front-plugins.md adds one: a table of probe latencies and a widget whose own renderer draws the slowest targets. Copied into a scratch data directory by its test, never shipped.",
+  "tables": [
+    {
+      "name": "probe",
+      "nature": "sample",
+      "columns": [
+        {"name": "measured_at", "type": "integer", "role": "time"},
+        {"name": "target", "type": "text"},
+        {"name": "latency_ms", "type": "real", "role": "measure", "unit": "millisecond"}
+      ],
+      "retention": {"column": "measured_at"}
+    }
+  ],
+  "widgets": ["example_latency_targets"]
+}

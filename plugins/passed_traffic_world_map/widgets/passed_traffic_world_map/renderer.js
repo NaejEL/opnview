@@ -46,10 +46,10 @@
       function figure(value) { return kit.value({ measure: measure, lower_bound: true, value: value }, unit); }
       var counter = h("div", { "class": "counter", "data-unplaced": String(unplaced) }, [
         h("span", { "class": "counter-value" }, figure(unplaced)),
-        h("span", { "class": "counter-second" }, tp("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.unplaced", addresses)),
+        h("span", { "class": "counter-second" }, tp("column.map.not_placed_addresses", addresses)),
         parameters.show_unplaced === false ? null : h("ul", { "class": "counter-list" }, unplacedRows.map(function (row) {
           return h("li", { key: row.reason, "data-reason": row.reason }, [
-            h("span", {}, [tk("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.", row.reason), " · ", tp("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.addresses", row.addresses || 0)]),
+            h("span", {}, [(kit.placeReason(row.reason) || tk("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.", row.reason)), " · ", tp("column.address_count", row.addresses || 0)]),
             kit.value(row.volume, unit, { field: field })
           ]);
         }))
@@ -57,13 +57,13 @@
       var reconcile = h("div", { "class": "map-reconcile", "data-placed": String(placed), "data-unplaced": String(unplaced),
         "data-below-minimum": String(below), "data-below": String(below), "data-total": String(data.total ? part(data.total) : 0) },
         kit.table([{ key: "what", label: t("sankey.column.what") }, { key: "value", label: t("sankey.column.value"), num: true }], [
-          { key: "placed", cells: [t("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.placed"), figure(placed)] },
-          { key: "unplaced", cells: [t("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.unplaced_row"), figure(unplaced)] },
-          { key: "below", cells: [tp("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.below_minimum", data.below_minimum ? data.below_minimum.members : 0), figure(below)] }
+          { key: "placed", cells: [t("column.map.placed"), figure(placed)] },
+          { key: "unplaced", cells: [t("column.map.not_placed"), figure(unplaced)] },
+          { key: "below", cells: [tp("column.below_minimum", data.below_minimum ? data.below_minimum.members : 0), figure(below)] }
         ], { total: data.total ? { label: t("shape.total"), cells: [kit.value(data.total, unit, { field: field })] } : null, compact: true }));
       return h("div", { "class": "map-layout" }, [
         h("div", { "class": "map-frame" }, [kit.map(points, { cluster: parameters.cluster !== false }),
-          parameters.cluster !== false ? h("p", { "class": "table-foot", "data-cluster": "true" }, t("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.clustered")) : null]),
+          parameters.cluster !== false ? h("p", { "class": "table-foot", "data-cluster": "true" }, t("column.map.clustered")) : null]),
         h("div", { "class": "map-side" }, [counter, reconcile])
       ]);
     }

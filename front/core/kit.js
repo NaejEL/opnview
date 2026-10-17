@@ -37,6 +37,14 @@
   var MEASURES = VOLUME_MEASURES.concat(["refusals", "dns_lookups", "security_events", "clients", "addresses", "sampled_gauge",
     "dns", "security_event"]);
 
+  /* The vocabularies of the shared words (placeReason, direction, directionState below). */
+  var GEO_REASONS = ["miss", "pending", "no_row", "no_coordinates"];
+  var SCOPES = ["north_south", "east_west", "this_firewall"];
+  var DIRECTIONS = ["in", "out", "inbound", "outbound"];
+  var DIRECTION_STATES = ["measured", "in_progress", "awaiting_export", "missing", "export_gap", "not_exported_when_refused",
+    "forwarding_export_unsettled", "ingress_not_captured", "parent_copies_only", "interface_not_exported",
+    "interface_not_captured", "capture_configuration_unknown"];
+
   /* How many series classes the stylesheet carries. */
   var SERIES_CLASSES = 6;
 
@@ -60,6 +68,13 @@
     var fraction = value / magnitude;
     var step = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 2.5 ? 2.5 : fraction <= 5 ? 5 : 10;
     return step * magnitude;
+  }
+
+  /* The base-ten logarithm, exact at a power of ten. */
+  function log10(value) {
+    var exact = Math.log(value) / Math.LN10;
+    var whole = Math.round(exact);
+    return Math.abs(exact - whole) < 1e-9 ? whole : exact;
   }
 
   function fixed(number) {
@@ -193,6 +208,29 @@
 
       badge: function (text, kind, title) {
         return h("span", { "class": "badge" + (kind ? " badge-" + kind : ""), title: title || null }, text);
+      },
+
+      /* THE SHARED WORDS OF THE RENDERERS. Where an answer says where traffic went or why an address
+       * could not be placed, every renderer says it in the core's words, so two widgets on one canvas
+       * never name one thing two ways. Each answers null for a value outside its vocabulary, which the
+       * renderer then names in its own words. */
+
+      /* A scope or a geolocation reason: the four lookup states of an address, and the three places
+       * traffic can be relative to the firewall. */
+      placeReason: function (reason) {
+        if (GEO_REASONS.indexOf(reason) >= 0) { return tk("reason.", reason); }
+        if (SCOPES.indexOf(reason) >= 0) { return tk("column.scope.", reason); }
+        return null;
+      },
+      /* A direction: in, out, inbound, outbound, or between interfaces. */
+      direction: function (key) {
+        if (DIRECTIONS.indexOf(key) >= 0) { return tk("column.direction.", key); }
+        if (key === "inter_interface") { return tk("column.scope.", "east_west"); }
+        return null;
+      },
+      /* The state of one direction of a NetFlow-measured connection (docs/widget-api.md, "Volumes"). */
+      directionState: function (state) {
+        return DIRECTION_STATES.indexOf(state) >= 0 ? tk("column.direction_state.", state) : null;
       },
 
       /* A named state of one series, one source or one row: never a zero, never an error. */
@@ -588,6 +626,10 @@
        *   tooltip                        "single" (each sample its own) | "all_series" (each instant
        *                                  lists the whole stack);
        *   format: {left, right}          the axis formatters;
+       *   scale: {left, right}           "linear" (default) | "log": a logarithmic axis, ticked at the
+       *                                  powers of ten its values span; nothing stacks on it, and a
+       *                                  value at or below zero, which it cannot place, is not drawn
+       *                                  and is counted in a note under the chart;
        *   width, height                  the drawing's size in CSS pixels.
        * }
        * Answers a node: the drawing, its stated aggregation and its labelled gaps. */
@@ -603,6 +645,11 @@
         var padL = 56, padR = hasRight ? 56 : 12, padT = 8, padB = 22;
         var innerW = width - padL - padR, innerH = height - padT - padB;
         var span = Math.max(1, (spec.to || 1) - (spec.from || 0));
+        var scales = spec.scale || {};
+        var isLog = function (axis) { return scales[axis || "left"] === "log"; };
+        /* The values a log axis cannot place: at or below zero. Never drawn, never moved to a made-up
+         * floor, and counted under the chart. */
+        var notPlaced = 0;
 
         /* AGGREGATION TO FIT THE PIXELS, STATED. One point per pixel at most: past that, consecutive
          * buckets are folded into one point by their maximum -- a spike survives it -- and the note
@@ -632,42 +679,77 @@
         var stackAll = !!spec.stacked;
         var running = { left: {}, right: {} };
         drawn.forEach(function (one) {
-          var stacks = stackAll || one.render === "area";
+          var logAxis = isLog(one.axis);
+          var stacks = !logAxis && (stackAll || one.render === "area");
           one.lower = [];
           one.upper = [];
           one.points.forEach(function (point, index) {
             var base = stacks ? (running[one.axis || "left"][index] || 0) : 0;
             var value = point.value === null || point.value === undefined ? null : point.value;
+            if (logAxis && value !== null && !(value > 0)) {
+              notPlaced += 1;
+              value = null;
+            }
             one.lower.push(stacks ? base : 0);
             one.upper.push(value === null ? null : base + value);
             if (stacks && value !== null) { running[one.axis || "left"][index] = base + value; }
           });
           one.stacked = stacks;
         });
-        function peak(axis) {
-          var most = 0;
+        /* Each axis's domain: from zero to a nice ceiling, or on a log axis the decades its positive
+         * values span, whole powers of ten at both ends. */
+        function domain(axis) {
+          var most = 0, least = null;
           drawn.forEach(function (one) {
             if ((one.axis || "left") !== axis) { return; }
-            one.upper.forEach(function (value) { if (value !== null && value > most) { most = value; } });
+            one.upper.forEach(function (value) {
+              if (value === null) { return; }
+              if (value > most) { most = value; }
+              if (value > 0 && (least === null || value < least)) { least = value; }
+            });
           });
-          return niceCeil(most);
+          if (!isLog(axis)) { return { log: false, top: niceCeil(most) }; }
+          var low = least === null ? 0 : Math.floor(log10(least));
+          var high = least === null ? 1 : Math.ceil(log10(most));
+          if (high <= low) { high = low + 1; }
+          return { log: true, low: low, high: high };
         }
-        var tops = { left: peak("left"), right: peak("right") };
+        var domains = { left: domain("left"), right: domain("right") };
+        /* Where a value sits up an axis, as a fraction of the plot's height. */
+        function fraction(value, axis) {
+          var d = domains[axis || "left"];
+          return d.log ? (log10(value) - d.low) / (d.high - d.low) : value / d.top;
+        }
+        /* The ticks of an axis: five even steps, or one per power of ten, at most seven. */
+        function ticksOf(axis) {
+          var d = domains[axis];
+          if (!d.log) {
+            return [0, 1, 2, 3, 4].map(function (step) { return { at: step / 4, value: d.top * step / 4 }; });
+          }
+          var stride = Math.max(1, Math.ceil((d.high - d.low) / 6));
+          var out = [];
+          for (var k = d.low; k <= d.high; k += stride) { out.push({ at: (k - d.low) / (d.high - d.low), value: Math.pow(10, k) }); }
+          return out;
+        }
         var xAt = function (time) { return padL + innerW * Math.max(0, Math.min(1, (time - spec.from) / span)); };
-        var yAt = function (value, axis) { return padT + innerH - innerH * (value / tops[axis || "left"]); };
+        var yAt = function (value, axis) { return padT + innerH - innerH * fraction(value, axis); };
+        var baseY = padT + innerH;
         var mid = function (point) { return (point.from + point.to) / 2; };
 
         var children = [];
-        [0, 1, 2, 3, 4].forEach(function (step) {
-          var y = padT + innerH - innerH * step / 4;
+        ticksOf("left").forEach(function (tick, step) {
+          var y = padT + innerH - innerH * tick.at;
           children.push(h("line", { key: "grid-" + step, "class": "grid-line", x1: padL, y1: fixed(y), x2: width - padR, y2: fixed(y) }));
           children.push(h("text", { key: "tl-" + step, "class": "tick", x: padL - 4, y: fixed(y + 3), "text-anchor": "end" },
-            leftFormat(tops.left * step / 4)));
-          if (hasRight) {
-            children.push(h("text", { key: "tr-" + step, "class": "tick", x: width - padR + 4, y: fixed(y + 3),
-              "text-anchor": "start" }, rightFormat(tops.right * step / 4)));
-          }
+            leftFormat(tick.value)));
         });
+        if (hasRight) {
+          ticksOf("right").forEach(function (tick, step) {
+            var y = padT + innerH - innerH * tick.at;
+            children.push(h("text", { key: "tr-" + step, "class": "tick", x: width - padR + 4, y: fixed(y + 3),
+              "text-anchor": "start" }, rightFormat(tick.value)));
+          });
+        }
         children.push(h("line", { key: "axis", "class": "axis-line", x1: padL, y1: padT + innerH, x2: width - padR, y2: padT + innerH }));
         var tickCount = Math.max(2, Math.min(6, Math.floor(innerW / 90)));
         for (var tick = 0; tick <= tickCount; tick++) {
@@ -711,7 +793,8 @@
               if (current.length) { segments.push(current); current = []; }
               return;
             }
-            current.push({ x: xAt(mid(point)), y: yAt(one.upper[index], axis), low: yAt(one.lower[index], axis),
+            current.push({ x: xAt(mid(point)), y: yAt(one.upper[index], axis),
+              low: isLog(axis) ? baseY : yAt(one.lower[index], axis),
               point: point, value: point.value });
           });
           if (current.length) { segments.push(current); }
@@ -783,9 +866,13 @@
         if (fold > 1) {
           notes.push(kit.note(t("chart.aggregated", { count: format.number(fold) }), "aggregated"));
         }
+        if (notPlaced > 0) {
+          notes.push(kit.note(tp("chart.log_not_placed", notPlaced), "log-not-placed"));
+        }
         return h("div", { "class": "chart-wrap" }, [
           h("svg", { key: "svg", "class": "chart-svg", viewBox: "0 0 " + width + " " + height, width: String(width),
-            height: String(height), role: "img", "aria-label": spec.label || t("chart.label") }, children),
+            height: String(height), role: "img", "aria-label": spec.label || t("chart.label"),
+            "data-scale-left": isLog("left") ? "log" : "linear", "data-scale-right": isLog("right") ? "log" : "linear" }, children),
           notes
         ]);
       },

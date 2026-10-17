@@ -3,20 +3,6 @@
   "strings": {
     "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.title": "Passed-traffic world map",
     "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.question": "Where in the world did the traffic that was allowed actually go?",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.addresses.one": "{count} address",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.addresses.other": "{count} addresses",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.below_minimum.one": "{count} destination under the minimum",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.below_minimum.other": "{count} destinations under the minimum",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.placed": "Placed on the map",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.unplaced_row": "Not placed",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.unplaced.one": "not placed: {count} address",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.unplaced.other": "not placed: {count} addresses",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.miss": "no geolocation answer",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.pending": "not looked up yet",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.no_row": "never looked up",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.no_coordinates": "no coordinates",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.east_west": "between interfaces",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.this_firewall_without_outside_end": "to the firewall, no outside end",
-    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.clustered": "Nearby marks are merged, each carrying its count"
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.this_firewall_without_outside_end": "to the firewall, no outside end"
   }
 }

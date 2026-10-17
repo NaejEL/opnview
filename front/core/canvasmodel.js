@@ -12,8 +12,8 @@
  * inferred: an owner is never turned into client references.
  *
  * AN EDIT IS EXPLICIT AND UNDOABLE. The period, the scope, a pivot that scopes the canvas or adds a
- * widget: each is a whole new document saved at the next revision, the previous text kept on an undo
- * stack for the session. Opening or closing a detail is never an edit.
+ * widget: each is one edit of front/core/editing.js, saved whole at the next revision and undoable for
+ * the session. Opening or closing a detail is never an edit.
  */
 (function (root) {
   "use strict";
@@ -107,73 +107,6 @@
     return shortest;
   }
 
-  /* -----------------------------------------------------------------------------------------------
-   * Editing a dashboard's document.
-   * --------------------------------------------------------------------------------------------- */
-
-  /* An editor of one stored dashboard. options: {api, id, revision, document (text or object),
-   * onChange(document, revision)}. */
-  function editor(options) {
-    var state = {
-      id: options.id,
-      revision: options.revision,
-      text: typeof options.document === "string" ? options.document : JSON.stringify(options.document),
-      undo: [],
-      saving: null
-    };
-
-    function current() { return JSON.parse(state.text); }
-
-    function save(text) {
-      return options.api.post("/api/dashboards/" + encodeURIComponent(state.id),
-        { revision: state.revision, document: JSON.parse(text) }).then(function (result) {
-        if (result.status === 200 && result.body) {
-          state.revision = result.body.revision;
-          state.text = text;
-          if (options.onChange) { options.onChange(JSON.parse(text), state.revision); }
-          return { ok: true };
-        }
-        return { ok: false, status: result.status, condition: result.body ? result.body.condition : null,
-          revision: result.body ? result.body.revision : null };
-      });
-    }
-
-    return {
-      document: current,
-      revision: function () { return state.revision; },
-      canUndo: function () { return state.undo.length > 0; },
-      /* Applies an edit: mutate(document) changes a copy, which is saved at the next revision, and
-       * the text before it goes on the undo stack. */
-      edit: function (mutate) {
-        var before = state.text;
-        var next = current();
-        mutate(next);
-        var text = JSON.stringify(next);
-        if (text === before) { return Promise.resolve({ ok: true, unchanged: true }); }
-        return save(text).then(function (outcome) {
-          if (outcome.ok) { state.undo.push(before); }
-          return outcome;
-        });
-      },
-      /* Puts back the document as it was before the last edit, as a save of its own. */
-      undo: function () {
-        if (state.undo.length === 0) { return Promise.resolve({ ok: false }); }
-        var previous = state.undo.pop();
-        return save(previous).then(function (outcome) {
-          if (!outcome.ok) { state.undo.push(previous); }
-          return outcome;
-        });
-      },
-      /* Adopts a document saved elsewhere: the undo stack no longer describes it. */
-      adopt: function (document, revision) {
-        var text = typeof document === "string" ? document : JSON.stringify(document);
-        if (text !== state.text || revision !== state.revision) { state.undo = []; }
-        state.text = text;
-        state.revision = revision;
-      }
-    };
-  }
-
   /* The canvas of a document by its id. */
   function canvasIn(document, id) {
     var canvases = document && Array.isArray(document.canvases) ? document.canvases : [];
@@ -211,7 +144,6 @@
     request: request,
     query: query,
     liveCadence: liveCadence,
-    editor: editor,
     canvasIn: canvasIn,
     freshWidgetId: freshWidgetId,
     bottomRow: bottomRow

@@ -38,7 +38,7 @@
           [t("plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.list"), row.list ? row.list
             : kit.none(t("plugin.blocked_dns_lookups.widget.blocked_dns_lookups.no_list"))],
           [t("plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.purpose"), purposeOf(row.purpose)],
-          [t("plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.lookups"), kit.value(row.lookups)],
+          [t("column.refused_lookups"), kit.value(row.lookups)],
           [t("column.clients"), kit.text(clientCount)],
           [t("plugin.blocked_dns_lookups.widget.blocked_dns_lookups.unmatched"), unmatched
             ? h("span", { "class": "mono" }, kit.join(row.unmatched_client_addresses, ", ")) : kit.text(0)],
@@ -62,7 +62,7 @@
         { key: "domain", label: t("plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.domain") },
         { key: "list", label: t("plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.list") },
         { key: "purpose", label: t("plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.purpose") },
-        { key: "lookups", label: t("plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.lookups"), num: true },
+        { key: "lookups", label: t("column.refused_lookups"), num: true },
         { key: "clients", label: t("column.clients"), num: true },
         { key: "last", label: t("column.last_seen") }
       ];

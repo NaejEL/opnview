@@ -27,8 +27,8 @@
         if (node.client) { return kit.clientLabel(node.client); }
         if (node.operator || node.asn) { return node.operator || String(node.asn); }
         if (node.country_code) { return node.country_code; }
-        if (key === "this_firewall") { return t("plugin.traffic_sankey.widget.traffic_sankey.this_firewall"); }
-        if (key === "outside") { return t("plugin.traffic_sankey.widget.traffic_sankey.outside"); }
+        if (key === "this_firewall") { return t("column.scope.this_firewall"); }
+        if (key === "outside") { return t("column.scope.north_south"); }
         return key;
       }
       function subject(key) {
@@ -56,7 +56,7 @@
         }),
         unnamed.length ? h("ul", { key: "unnamed", "class": "counter-list" }, unnamed.map(function (row) {
           return h("li", { key: row.reason, "data-reason": row.reason }, [
-            h("span", {}, [tk("plugin.traffic_sankey.widget.traffic_sankey.unnamed.", row.reason), " · ", tp("plugin.traffic_sankey.widget.traffic_sankey.addresses", row.addresses)]),
+            h("span", {}, [t("reason.unnamed", { reason: tk("reason.", row.reason) }), " · ", tp("column.address_count", row.addresses)]),
             kit.value(row.volume, unit, { field: field })
           ]);
         })) : null,

@@ -29,10 +29,10 @@
         }
       }
       var entries = (data.entries || []).map(function (entry) {
-        var target = entry.target_is_this_firewall ? t("plugin.unified_blocked_feed.widget.unified_blocked_feed.this_firewall") : String(entry.target);
+        var target = entry.target_is_this_firewall ? t("column.scope.this_firewall") : String(entry.target);
         var facts = [
           [t("feed.column.time"), input.format.instant(entry.occurred_at)],
-          [t("plugin.unified_blocked_feed.widget.unified_blocked_feed.engine"), tk("plugin.unified_blocked_feed.widget.unified_blocked_feed.engine.", entry.engine_kind)],
+          [t("column.engine"), tk("column.engine.", entry.engine_kind)],
           [t("plugin.unified_blocked_feed.widget.unified_blocked_feed.decided_by"), decidedBy(entry.decided_by)],
           [t("plugin.unified_blocked_feed.widget.unified_blocked_feed.target"), target],
           [t("column.interface"), entry.interface ? kit.interfaceLabel(entry.interface) : kit.none()]
@@ -40,7 +40,7 @@
         return {
           key: entry.source_table + ":" + entry.source_id,
           time: input.format.tick(entry.occurred_at, span),
-          kind: tk("plugin.unified_blocked_feed.widget.unified_blocked_feed.engine.", entry.engine_kind),
+          kind: tk("column.engine.", entry.engine_kind),
           what: [h("span", { "class": entry.target_kind === "domain" ? "site-name" : "mono" }, target),
             entry.interface ? h("span", { "class": "muted" }, [" · ", kit.interfaceLabel(entry.interface)]) : null],
           by: decidedBy(entry.decided_by),
@@ -55,10 +55,10 @@
       var groups = data.group_by && data.group_by !== "none" && data.groups ? data.groups : null;
       return h("div", { "class": "unified-blocked-feed" }, [
         groups ? kit.chips(groups.map(function (group) {
-          return { key: String(group.key), label: data.group_by === "engine" ? tk("plugin.unified_blocked_feed.widget.unified_blocked_feed.engine.", group.key) : String(group.key),
+          return { key: String(group.key), label: data.group_by === "engine" ? tk("column.engine.", group.key) : String(group.key),
             value: kit.value(group.count) };
         })) : null,
-        kit.feed([{ label: t("feed.column.time") }, { label: t("plugin.unified_blocked_feed.widget.unified_blocked_feed.engine"), className: "engine" },
+        kit.feed([{ label: t("feed.column.time") }, { label: t("column.engine"), className: "engine" },
           { label: t("feed.column.what") }, { label: t("plugin.unified_blocked_feed.widget.unified_blocked_feed.decided_by"), className: "num" }], entries,
           { sources: sources, remainder: data.remainder ? data.remainder.members : 0 }),
         data.total ? h("div", { key: "total", "class": "remainder-row is-total", "data-total": String(kit.amount(data.total)) }, [

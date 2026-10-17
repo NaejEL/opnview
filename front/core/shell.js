@@ -10,8 +10,12 @@
  * stay on screen however tall the page is. No view is reachable only through a menu inside a menu.
  *
  * VIEWS REGISTER THEMSELVES (opnview.views.register): a view names its path, whether it is reached
- * without a session, where the rail lists it, how it loads its data and how it draws. The shell holds
- * no list of them.
+ * without a session, where the rail lists it, how it loads its data and how it draws -- and, when it
+ * has them, the controls it adds to the header and the panel it docks beside the main area (the
+ * canvas's edit mode and its dock). The shell holds no list of them.
+ *
+ * THE RAIL'S DASHBOARD SECTION holds the editor -- the dock, opened beside the canvas -- and the
+ * views that register under it: import and export.
  *
  * WITHOUT A SESSION ONLY THE SESSION VIEWS ARE SHOWN: setup while the installation has no account,
  * sign-in and the reset afterwards. Any other path sends the reader to the one that applies, and
@@ -193,6 +197,8 @@
   function afterSignOut() {
     stopPolling();
     state.defaultOffer = null;
+    // What one session edited and can undo is not the next one's.
+    opnview.editing.reset();
     state.session.signed_in = false;
     state.sources = null;
     state.dashboards = [];
@@ -354,6 +360,7 @@
           on: { click: function () { state.sheetOpen = true; render(); } }
         }, t("rail.sheet.open")),
         appearanceControls(),
+        state.view && state.view.headerControls ? state.view.headerControls(viewContext()) : null,
         h("button", { key: "sign-out", type: "button", "class": "btn",
           on: { click: function () { signOut(); } } }, t("action.sign_out"))
       ]) : null
@@ -375,6 +382,30 @@
     return links;
   }
 
+  /* The dashboard section: the editor, which opens the dock beside the canvas, then the views
+   * registered under it. */
+  function railDashboard(prefix) {
+    var dock = opnview.editing.dock();
+    var onCanvas = !!state.view && state.view.id === "canvas";
+    var editor = h("button", { key: prefix + "-editor", type: "button", "class": "rail-link", id: prefix + "-editor",
+      "aria-pressed": onCanvas && dock.open ? "true" : "false", on: { click: function () {
+        state.sheetOpen = false;
+        if (onCanvas && dock.open) { opnview.editing.closeDock(); render(); return; }
+        opnview.editing.openDock(dock.tab || "document");
+        if (onCanvas) { render(); } else { go("/"); }
+      } } }, t("rail.editor"));
+    return [editor].concat(railViews(prefix, "dashboard"));
+  }
+
+  function railViews(prefix, section) {
+    return opnview.views.all().filter(function (view) { return view.rail === section; })
+      .sort(function (a, b) { return a.order - b.order; })
+      .map(function (view) {
+        return routeLink(prefix + "-" + view.id, view.path, view.railTitle ? view.railTitle() : view.title(),
+          { "class": "rail-link", "aria-current": state.view === view ? "true" : "false" });
+      });
+  }
+
   function railInstallation(prefix) {
     return opnview.views.all().filter(function (view) { return view.rail === "installation"; })
       .sort(function (a, b) { return a.order - b.order; })
@@ -389,6 +420,10 @@
       h("div", { key: prefix + "-canvases", "class": "rail-section" }, [
         h("div", { "class": "rail-section-title" }, t("rail.section.canvases")),
         railCanvases(prefix)
+      ]),
+      h("div", { key: prefix + "-dashboard", "class": "rail-section" }, [
+        h("div", { "class": "rail-section-title" }, t("rail.section.dashboard")),
+        railDashboard(prefix)
       ]),
       h("div", { key: prefix + "-installation", "class": "rail-section" }, [
         h("div", { "class": "rail-section-title" }, t("rail.section.installation")),
@@ -430,7 +465,8 @@
     if (!state.session.signed_in) {
       return [header(), h("div", { key: "body", "class": "app-body app-body-session" }, [main()])];
     }
-    return [header(), h("div", { key: "body", "class": "app-body" }, [rail(), main()]), sheet()];
+    var aside = state.view && state.view.aside ? state.view.aside(viewContext()) : null;
+    return [header(), h("div", { key: "body", "class": "app-body" }, [rail(), main(), aside]), sheet()];
   }
 
   function render(options) {

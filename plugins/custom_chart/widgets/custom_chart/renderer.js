@@ -7,8 +7,8 @@
  * named -- a chart of four series with one missing never looks like a chart of three. Two measures are
  * never added: series rendered as areas stack only with areas of their own measure.
  *
- * The rendering parameters: `axes` (per axis its unit and its scale, stated under the chart, the unit
- * choosing the axis's formatter), `legend` (`table` | `inline` | `hidden`) and `tooltip` (`single` |
+ * The rendering parameters: `axes` (per axis its unit, choosing the axis's formatter and named under
+ * the chart, and its scale, `linear` or `log`, which the axis is drawn on), `legend` (`table` | `inline` | `hidden`) and `tooltip` (`single` |
  * `all_series`, Grafana's whole stack at the hovered instant). Annotations are a strip of bars under
  * the chart, one per bucket that holds any.
  *
@@ -85,16 +85,25 @@
           }) });
       });
 
-      var chart = kit.chart({ from: requested.from, to: requested.to, series: drawn, tooltip: tooltip,
+      /* The scale of each axis: log where the axes parameter asks for it, linear otherwise. */
+      var scale = { left: "linear", right: "linear" };
+      if (axes) {
+        ["left", "right"].forEach(function (side) {
+          if (axes[side] && axes[side].scale === "log") { scale[side] = "log"; }
+        });
+      }
+
+      var chart = kit.chart({ from: requested.from, to: requested.to, series: drawn, tooltip: tooltip, scale: scale,
         format: { left: formatter(kit, format, axisUnit.left), right: formatter(kit, format, axisUnit.right) },
         width: input.size.width, height: Math.max(140, Math.min(300, input.size.height - 90)), label: t("plugin.custom_chart.widget.custom_chart.title") });
 
       var axisNotes = axes ? h("div", { key: "axes", "class": "legend custom-axes", "data-axes": "true" },
         ["left", "right"].filter(function (side) { return axes[side]; }).map(function (side) {
-          var words = { unit: String(axes[side].unit || axisUnit[side] || ""), scale: String(axes[side].scale || "linear") };
-          return h("span", { key: side, "class": "legend-item", "data-axis": side }, side === "left"
-            ? t("plugin.custom_chart.widget.custom_chart.axis.left", words)
-            : t("plugin.custom_chart.widget.custom_chart.axis.right", words));
+          var words = { unit: String(axes[side].unit || axisUnit[side] || "") };
+          return h("span", { key: side, "class": "legend-item", "data-axis": side, "data-scale": scale[side] }, [
+            side === "left" ? t("plugin.custom_chart.widget.custom_chart.axis.left", words)
+              : t("plugin.custom_chart.widget.custom_chart.axis.right", words),
+            scale[side] === "log" ? [" ", kit.badge(t("chart.scale.log"))] : null]);
         })) : null;
 
       var annotations = (data.annotations || []).filter(function (annotation) { return annotation.buckets && annotation.buckets.length; });
@@ -124,12 +133,12 @@
           { key: "series", label: t("plugin.custom_chart.widget.custom_chart.column.series") },
           { key: "measure", label: t("plugin.custom_chart.widget.custom_chart.column.measure") },
           { key: "aggregation", label: t("plugin.custom_chart.widget.custom_chart.column.aggregation") },
-          { key: "total", label: t("plugin.custom_chart.widget.custom_chart.column.total"), num: true }
+          { key: "total", label: t("shape.total"), num: true }
         ], series.map(function (entry) {
           return { key: entry.key, subject: kit.subject("series", entry.key, entry.label, [
             [t("plugin.custom_chart.widget.custom_chart.column.measure"), measureNode(entry.measure)],
             [t("plugin.custom_chart.widget.custom_chart.column.aggregation"), entry.one.aggregation || kit.none()],
-            [t("plugin.custom_chart.widget.custom_chart.column.total"), totalOf(entry)]
+            [t("shape.total"), totalOf(entry)]
           ]), cells: [
             h("span", {}, [h("span", { "class": "swatch sw-" + entry.cls }), " ", entry.label]),
             measureNode(entry.measure),

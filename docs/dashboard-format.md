@@ -1,10 +1,15 @@
-# Dashboard file format — first draft
+# Dashboard file format
 
-A dashboard in `opnview` is a **file**. This document is the first draft of what
-that file contains, how it is versioned, and what happens when it is carried to
-an installation that does not have everything it mentions. It is a draft for
-arbitration: the *Open choices* section at the end lists what is genuinely
-undecided, with the cost of each option, and the maintainer decides.
+A dashboard in `opnview` is a **file**. This document defines what that file
+contains, how it is versioned, and what happens when it is carried to an
+installation that does not have everything it mentions. It began as a draft for
+arbitration; the questions it left open are now decided, and *Decided choices*
+at the end records each decision with its reason. Format version 1 is
+implemented: the server validates every document it stores
+(`internal/dashboard`), and the front's document module (`front/core/document.js`)
+validates, migrates and serialises it in the editor; both are held to the same
+conformance fixtures (`testdata/dashboards/conformance`), so the two cannot
+disagree without a test failing.
 
 It is informed by prior art rather than invented. `docs/ui-references.md`,
 *Family A*, sets out how eight products actually do this — Grafana's 24-column
@@ -54,7 +59,33 @@ placed widgets. The whole document is one object with the following fields.
 | `title` | **yes** | string | The tab label. |
 | `description` | no | string | Free text shown when the canvas is empty or on hover. |
 | `grid` | no | object | Layout parameters for this canvas: `columns` (integer, default `12`) and `row_height` (integer, the height of one row unit in CSS pixels, default `40`). Present so a canvas can be denser or airier than the default without a global setting. |
+| `period` | no | string | The canvas's range: one of the widget API's periods, `1h`, `24h`, `7d` or `30d`; default `24h`. Every widget whose manifest takes a `period` inherits it unless it carries a `period` of its own, and its card then says "own range". |
+| `scope` | no | object | The canvas's scope: up to three lists of reference objects, `interfaces`, `clients` and `owners`, each optional. See *The canvas period and scope* below. |
 | `widgets` | **yes** | array | The placed widgets. **May be empty** — an empty canvas is a legitimate, useful state (a tab the user is about to fill), and is rendered with an invitation rather than an error. |
+
+#### The canvas period and scope
+
+`period` and `scope` were added to format version 1 in place, without a version
+bump, because no released reader of the format existed (decision D7 of
+`specs/SPEC-step-7-frontend.md`): a file written before them is still a valid
+version-1 file, and a reader that does not know them keeps them as unknown keys.
+
+- **A widget inherits them unless it carries its own value.** A widget whose
+  `parameters` hold a `period` keeps it; a widget whose `parameters` already hold
+  a reference list of a kind keeps it for that kind. Its card says "own range" or
+  "own scope".
+- **A scope applies only where the widget's manifest declares a parameter of that
+  kind** (decision D8). An `interfaces` scope is sent to a widget under the key
+  its manifest declares for an `interface` reference list, and to no other; a
+  `reference` parameter (one value, not a list) receives a scope holding exactly
+  one reference. A widget declaring no parameter of a kind in force is drawn
+  unscoped for that kind and its card says "not scoped".
+- **Nothing is expanded or inferred.** An `owners` scope is never turned into the
+  clients the person owns: ownership is never inferred, and a widget that takes
+  clients but not owners is "not scoped" by person.
+- The references are ordinary reference objects (*The reference object*), with
+  the same fail-open resolution: a scope reference this installation does not
+  have is reported on the cards it reaches, never refused on save.
 
 ### Widget
 
@@ -143,14 +174,24 @@ not survive a write.** When `opnview` writes a dashboard back — because the us
 edited it in the UI, or repaired a reference, or the layout compacted — it
 serialises the model, and comments are not in the model. Grafana, Home Assistant
 and Dashy all have this property, and Home Assistant's raw editor warns before
-saving for exactly this reason. `opnview` warns in the same place, in the same
-words as its own UI copy: *"This file has comments. Saving will rewrite it from
-the current model and the comments will be lost."* It does not silently discard
-them.
+saving for exactly this reason. `opnview` warns in the same place: when the YAML
+being applied holds a comment, the editor says before saving that the comments
+will be lost. The words are the interface's own, from its string catalogue like
+every other word on screen; this document fixes what the warning must say, not
+its wording. It does not silently discard them.
 
-Which syntax an **export** produces is listed under *Open choices* with the cost
-of each option; it is not decided here. What is decided here is that **import
-accepts both**, detected from the content rather than from the file extension: a
+**The YAML `opnview` reads and writes is a restricted subset**, parsed and
+serialised by the front's own document module rather than by a general YAML
+library (decision D12): block mappings and sequences, a mapping opening a
+sequence item (`- id: ...`), one-line flow mappings and sequences
+(`{ x: 0, y: 0, w: 12, h: 6 }`, `[a, b]`), plain, single-quoted and
+double-quoted scalars, blank lines and comments. That is every construct of the
+worked example below and of the serialiser's own output. A file using anything
+else is refused with the line it is on, never half-read. The server stores
+JSON only.
+
+The syntax an **export** produces is the user's choice, YAML or JSON, made at
+export (*Decided choices*, 1). **Import accepts both**, detected from the content rather than from the file extension: a
 document whose first non-whitespace character is `{` is parsed as JSON, anything
 else as YAML. An extension is a hint for the file picker and never a contract.
 
@@ -411,6 +452,17 @@ condition rather than as a failure or as silence.
 The import report, shown once after an import, lists every collected condition
 grouped by canvas and widget, and links each to the widget it affects.
 
+In `opnview` an import is a file chosen or a text pasted in the interface. A
+structurally valid one is stored as a **new dashboard** whose origin is
+`imported` and which keeps the file's name, and is never merged into an existing
+one. The referential conditions are collected from what the widget API answers
+for each widget (`unknown_parameters`, `invalid_parameters`,
+`unresolved_references`, `unknown_widget_type`), from
+`GET /api/references/resolve` for each canvas scope, and from bare `shape`
+widgets, which this build draws as not implemented. Nothing is rewritten
+automatically; exporting the dashboard again before any repair writes back the
+imported members and references unchanged.
+
 ## Worked example
 
 One canvas, four widgets, shown first as JSON and then as YAML. **The two are
@@ -513,7 +565,7 @@ anywhere in `opnview`'s code, templates or defaults.
               {
                 "label": "CPU",
                 "source": "firewall_metric",
-                "metric": "cpu_percent",
+                "metric": "cpu",
                 "axis": "left",
                 "render": "line",
                 "aggregation": "mean"
@@ -521,7 +573,7 @@ anywhere in `opnview`'s code, templates or defaults.
               {
                 "label": "Temperature",
                 "source": "firewall_metric",
-                "metric": "temperature_celsius",
+                "metric": "temperature",
                 "axis": "left",
                 "render": "line",
                 "aggregation": "max"
@@ -542,7 +594,7 @@ anywhere in `opnview`'s code, templates or defaults.
               }
             ],
             "axes": {
-              "left": { "unit": "percent_or_celsius", "scale": "linear" },
+              "left": { "scale": "linear" },
               "right": { "unit": "bits_per_second", "scale": "linear" }
             }
           }
@@ -619,13 +671,13 @@ canvases:
           series:
             - label: CPU
               source: firewall_metric
-              metric: cpu_percent
+              metric: cpu
               axis: left
               render: line
               aggregation: mean
             - label: Temperature
               source: firewall_metric
-              metric: temperature_celsius
+              metric: temperature
               axis: left
               render: line
               aggregation: max
@@ -641,7 +693,7 @@ canvases:
                 value: opt3
                 label: Workshop
           axes:
-            left: { unit: percent_or_celsius, scale: linear }
+            left: { scale: linear }
             right: { unit: bits_per_second, scale: linear }
 ```
 
@@ -665,7 +717,8 @@ cannot be coerced rather than guessing.
   full-width band, an 8/4 split beneath it, then another full-width band.
 - **Absent optional fields.** `world-map` has no `title` and takes the
   catalogue's; `what-was-blocked` has no `interfaces` and is therefore
-  network-wide.
+  network-wide; the canvas carries neither `period` nor `scope`, so its range is
+  `24h` and it scopes nothing.
 - **A list of series, with a reference inside one of them.** `load-against-
   throughput` carries three series across two axes, each an object with its own
   label, render and aggregation, and the third scoped to an interface. That last
@@ -674,97 +727,87 @@ cannot be coerced rather than guessing.
   other two series normally with the third drawn as a labelled gap. A widget is
   not all-or-nothing.
 - **Two different periods on one canvas.** The first three widgets show seven
-  days and the fourth shows twenty-four hours, because the period is a widget
-  parameter rather than a canvas-wide control — which is the concrete reason
-  `docs/ui-references.md` proposes amending the ROADMAP's "period selector
-  everywhere".
+  days and the fourth shows twenty-four hours: each carries its own `period`,
+  which wins over the canvas's range, so each card says "own range". A widget
+  with no `period` of its own would take the canvas's.
 
-## Open choices
+## Decided choices
 
-Genuinely open, each with its options and what each costs. **This document is a
-draft for arbitration**; the maintainer decides these, and the decisions belong
-in a later cycle rather than being quietly settled here.
+The draft listed six questions as open, each with its options and their costs.
+Each is decided below, with its reason. **None of them is the maintainer's own
+decision**: they were decided by the orchestrator on 17 October 2026, on the
+Planner's recommendation, while the maintainer was unavailable
+(`specs/SPEC-step-7-frontend.md`, *Decided questions*, D1 to D6). The options
+weighed are kept, shortened, so the cost of each decision stays visible.
 
-### 1. Which syntax an export produces
+### 1. Which syntax an export produces — the user chooses at export (D1)
 
-- **JSON only.** Cheapest to write and to diff mechanically; one canonical
-  serialisation, so two exports of the same dashboard are byte-identical.
-  Costs: JSON is unpleasant to hand-edit, has no comments at all, and the
-  maintainer explicitly wanted YAML available.
-- **YAML only.** Pleasant to hand-edit and to read in a forum post. Costs:
-  serialising cleanly is harder, quoting rules are a recurring source of
-  surprise (`7d` versus `7`, `no` versus `false`), and diffs are noisier when
-  the serialiser's choices shift.
-- **The user chooses at export time.** Honest and flexible. Costs: two
-  serialisers to keep in step forever, and two sets of round-trip tests.
-- **Both, side by side, from one export action.** Removes the choice from the
-  user. Costs: two files where the user expected one, and an immediate question
-  about which is authoritative when they diverge.
+**The user chooses YAML or JSON at export**, preset from the editor's syntax
+radio, which is YAML by default. Why: the step-3 decision put YAML first with a
+toggle, and the maintainer wanted YAML available. The cost accepted is the one
+the option carried: two serialisers kept in step, and two sets of round-trip
+tests, which the conformance fixtures run in both syntaxes. Rejected: JSON only
+(unpleasant to hand-edit, no comments), YAML only (quoting surprises such as
+`7d` versus `7` and `no` versus `false`), and both files from one action (two
+files where one was expected, and a question of which is authoritative).
 
-### 2. What `placement` means
+### 2. What `placement` means — absolute coordinates (D2)
 
-- **Absolute coordinates, as drafted** (`x`, `y`, `w`, `h` in grid units).
-  Predictable, matches Grafana and is the easiest to reason about in a text
-  editor. Costs: a hand-edited file can overlap two widgets or leave holes, and
-  the reader has to define what happens then.
-- **Ordered flow with a size only** (`w`, `h`, position implied by array order).
-  Impossible to make invalid, and a hand edit is a line move. Costs: the user
-  cannot place a widget where they want it, which is close to the point of a
-  canvas.
-- **Both, with a per-canvas `layout` discriminator.** Flexible. Costs: two
-  layout engines, and every widget-manipulation feature written twice.
+**Absolute `x`, `y`, `w`, `h` in grid units, as drafted.** Why: edit mode moves
+and resizes a card by pointer and by keyboard on a grid (Homarr's mechanics), and
+both need a position the reader chose. A hand-edited overlap or hole is handled
+by the rules of *Placement*: `y` is advisory and compacted, `w` is clamped.
+Rejected: ordered flow with a size only (the reader cannot place a widget), and
+both behind a discriminator (two layout engines).
 
-### 3. When parameters are validated against the catalogue
+### 3. When parameters are validated against the catalogue — at import, fail-open, reported (D3)
 
-- **At import, fail-closed** — an unknown parameter key or an out-of-vocabulary
-  value refuses the file. Strongest guarantee that what imported will render.
-  Costs: a dashboard from a newer build cannot be opened at all, which defeats
-  the forward-compatibility argument made above.
-- **At import, fail-open, reported** — as drafted. Costs: a typo in a parameter
-  name is silently inert until the user reads the import report.
-- **At render only.** Simplest to implement. Costs: no import report, so the
-  user discovers problems one widget at a time.
+**At import, fail-open and reported, as drafted.** Why: it is already the widget
+API's behaviour — an unknown key is answered in `unknown_parameters`, an invalid
+value in `invalid_parameters` and replaced by its default — and it is what the
+forward-compatibility argument of *Versioning and compatibility* needs. The cost
+accepted: a misspelt key is inert until the reader looks; the import report and
+the card's "kept, not understood" chip are where it is shown. Rejected:
+fail-closed (a newer file could not be opened at all), and at render only (no
+import report).
 
-### 4. How a repaired reference is recorded
+### 4. How a repaired reference is recorded — the stored document is rewritten (D4)
 
-- **Rewrite the file.** Simple, and the repaired dashboard is a normal file.
-  Costs: the user loses the original, and re-importing the same file re-breaks
-  it, so a shared dashboard has to be repaired on every installation every time
-  it is updated.
-- **Keep the file and store local bindings beside it** — the file stays as
-  authored and a local table maps its references onto local objects. Re-import
-  of an updated file keeps the repairs. Costs: a second source of truth, the
-  exact thing this format is trying to avoid, and a new question about what
-  happens when both change.
-- **Rewrite the file but keep the authored value in a sibling field.**
-  A middle path. Costs: a field whose only purpose is provenance, and an
-  obligation to decide when it is ever cleared.
+**A repair rewrites the stored document; the user's original file is never
+touched, and there is no table of local bindings.** Why: a bindings table is a
+second source of truth, the very thing this format refuses (*Two coordinated
+surfaces, one model*). The cost, stated rather than hidden: re-importing an
+updated version of the same file breaks the same references again, so a shared
+dashboard is repaired on each installation each time it is imported. Rejected:
+local bindings beside the file, and a sibling field keeping the authored value.
 
-### 5. One dashboard per file, or a bundle
+### 5. One dashboard per file (D5)
 
-- **One dashboard per file, as drafted.** A dashboard is a unit you can paste
-  into a message.
-- **A bundle of several dashboards in one file.** Convenient for "export
-  everything". Costs: ids must become unique across the bundle, partial import
-  becomes a question, and the simple mental model — one file, one thing — goes.
+**One dashboard per file, and export is per dashboard.** Why: one file, one
+thing — a dashboard is a unit that can be pasted into a message. Rejected: a
+bundle (ids unique across the bundle, and partial import as a new question).
 
-### 6. Whether an export may be signed or checksummed
+### 6. Signing or checksumming an export — neither (D6)
 
-Not a security control — a dashboard file is not trusted input and is never
-executed — but a way to tell "this is the file I exported" from "this is the
-file someone edited". Options: nothing (simplest, and adequate if the format is
-never trusted); a checksum field (cheap, detects accidental corruption, detects
-nothing deliberate); a signature (detects tampering, and introduces key
-management the project has no appetite for). **No option here is recommended by
-this draft**; it is listed because it will otherwise be asked later.
+**No checksum and no signature.** Why: a dashboard file is never trusted input
+and never executed, and the draft recommended no option. A checksum detects
+nothing deliberate, and a signature brings key management the project has no
+use for.
 
-## What this draft does not do
+### And one addition: the canvas `period` and `scope` (D7)
 
-- It defines **no JSON Schema artifact**. Writing one is explicitly out of scope
-  for this cycle, and the shape above is what such a schema would describe.
-- It implements **no import, export or validation code**. This cycle produces
-  documents only.
-- It chooses **no rendering technology, charting library or frontend
-  framework**, and says nothing about how a widget is drawn.
-- It fixes **no final UI wording**. The sentences quoted above fix what the copy
-  must say, not how it will finally read.
+Two optional canvas fields, `period` and `scope` (*The canvas period and
+scope*), were added to format version 1 **without a version bump**. Why: the
+step-3 mockup already wrote a canvas `period`, `ROADMAP.md` puts the scope on the
+canvas, and no released reader of the format existed that a bump would protect.
+
+## What this document does not do
+
+- It defines **no JSON Schema artifact**. The structural validation is code,
+  written twice and held together by shared fixtures: in Go, authoritative, on
+  every save (`internal/dashboard`), and in the front's document module, for the
+  editor (`front/core/document.js`).
+- It chooses **no rendering technology**: how a widget is drawn is
+  `docs/front-plugins.md`'s contract (first-party SVG, no charting library).
+- It fixes **no UI wording**. The sentences quoted above fix what the interface
+  must say, not how it reads; the words are the interface's string catalogue's.

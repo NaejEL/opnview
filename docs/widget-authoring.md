@@ -75,7 +75,7 @@ not a silently ignored one.
 | `references` | array of strings | The reference kinds the widget accepts: `interface`, `client`, `rule`, `owner`, `provider`, `country`, `operator`, `site`. Validated against the reference parameters: each must be accepted by some parameter, and every reference parameter's kind must be listed. (A `series` parameter accepts every kind.) | `[]` |
 | `queries` | array of strings | The widget's query files, plain file names ending in `.sql`, in its own directory. A declarative widget lists exactly one. | `[]` |
 | `script` | string | The JavaScript file, in the widget's own directory, that answers the widget; its `queries` are then statement files of named statements. Only a widget a plugin carries has one; `docs/plugins.md`, *Widgets*, documents it. | none |
-| `renderer` | object | The widget's own renderer: `{"entry": "<file>.js"}`, a classic script of the widget's own directory that the front runs to draw it (`docs/front-plugins.md`). Absent, the widget is drawn by its shape's renderer from the shape contract payload (*Shape contracts*, below). A widget with a `renderer` and neither `queries` nor a `script` is a **front-only widget**: nothing on the server answers it, `GET /api/widget/{type}` answers `404` `{"condition": "front_only_widget"}`, and its renderer asks the core for what it draws. | absent |
+| `renderer` | object | The widget's own renderer: `{"entry": "<file>.js"}`, a classic script of the widget's own directory that the front runs to draw it (`docs/front-plugins.md`). Absent, the widget is drawn by its shape's renderer from the shape contract payload (*Shape contracts*, below). A widget with a `renderer` and neither `queries` nor a `script` is a **front-only widget**: nothing on the server answers it, `GET /api/widget/{type}` answers `404` `{"condition": "front_only_widget"}`, and its renderer asks the core for what it draws. The placeholder `{"reserved": true}` that every built-in manifest carried before the front existed is retired: it is refused `renderer_invalid`, as is any slot that is not exactly `{"entry": "<file>.js"}`. | absent |
 
 ### Parameters
 
@@ -114,6 +114,25 @@ A reference is resolved by **exact match on its `by` key and on nothing else**; 
 for the repair surface and never matched. A reference that matches nothing makes the widget answer
 `unresolved_reference` with no data, never zeros. A `site` reference under `no_domains` is withheld,
 whatever its value. The engine does this for you; the query only receives the resolved value.
+
+### Strings
+
+A widget never carries a word: its title, its question, its parameters' labels and its values'
+names are keys of the string catalogue, each with an English text (`docs/front-plugins.md`,
+*Strings of a widget*). The picker shows the title and the question; the card shows the title, or the
+document's own `title`; the no-code form labels each parameter, and each value of an `enum` or an
+`enum_set`, by these keys.
+
+| Widget | File | Keys |
+|---|---|---|
+| carried by a plugin | the plugin's `locale/<language>.json` | `plugin.<plugin>.widget.<type>.title`, `.question`, `.parameter.<key>` and `.value.<key>.<value>`, and any other key under `plugin.<plugin>.widget.<type>.` its renderer asks for |
+| an operator's, or front-only | `locale/<language>.json` in the widget's own directory | the same, under `widget.<type>.` |
+
+A widget directory's file defining a key outside `widget.<type>.` is refused
+`string_outside_namespace`: the widget is served without its strings and the refusal is listed by
+`GET /api/widgets`. A missing title or question of a widget of the data directory is not a refusal; it
+is listed on its row of `GET /api/widgets` under `missing_strings`, and the key is shown marked as
+missing. A built-in widget missing an English key fails the test suite.
 
 ## The query contract
 
@@ -303,6 +322,7 @@ log; the reason is specific to the rule, and the other widgets still load.
 | `references_mismatch` | `references` and the reference parameters disagree |
 | `renderer_invalid` | `renderer` is not `{"entry": "<file>.js"}` naming a plain `.js` file other than the script, or the file does not compile as a classic script (an ES module's `import` or `export` among the reasons) |
 | `renderer_missing` | the renderer the manifest names is not in the widget's directory |
+| `string_outside_namespace` | the widget directory's `locale/<language>.json` defines a key outside `widget.<type>.`; the widget is still served, without its strings |
 | `type_mismatch_with_directory` | the manifest's type is not its directory's name |
 | `name_collision` | the type is already served by a built-in or by another widget: the built-in wins every collision |
 | `query_missing` | no query declared, the file is absent, or it holds no statement |

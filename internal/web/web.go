@@ -395,12 +395,20 @@ func (s *Server) AccountExists(ctx context.Context) (bool, error) {
 // none: a default would pre-empt what the installer of step 8 chooses, and no
 // address of any real network belongs in this repository.
 func (s *Server) ListenAndServe(ctx context.Context, address string, grace time.Duration) error {
+	return s.ListenAndServeHandler(ctx, address, grace, s.mux)
+}
+
+// ListenAndServeHandler is ListenAndServe serving handler, which wraps this server. It is the one seam a
+// development build uses to stand in front of the routes (cmd/opnview, the review build); the product
+// passes the server itself.
+func (s *Server) ListenAndServeHandler(ctx context.Context, address string, grace time.Duration,
+	handler http.Handler) error {
 	if address == "" {
 		return errors.New("web: no listen address was given")
 	}
 	server := &http.Server{
 		Addr:              address,
-		Handler:           s.mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

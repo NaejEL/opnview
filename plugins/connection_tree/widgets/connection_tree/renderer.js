@@ -25,15 +25,15 @@
 
       function label(node) {
         var kind = node.key.split(":")[0], rest = node.key.slice(kind.length + 1);
-        if (node.key === "remainder") { return tp("plugin.connection_tree.widget.connection_tree.remainder", node.remainder_members || 0); }
+        if (node.key === "remainder") { return tp("shape.remainder", node.remainder_members || 0); }
         if (node.interface) { return kit.interfaceLabel(node.interface); }
         if (node.client) { return kit.clientLabel(node.client); }
         if (node.owner) { return node.owner.display_name; }
-        if (node.key === "owner:unassigned") { return t("plugin.connection_tree.widget.connection_tree.unassigned"); }
-        if (node.key === "this_firewall") { return t("plugin.connection_tree.widget.connection_tree.this_firewall"); }
+        if (node.key === "owner:unassigned") { return t("people.nobody"); }
+        if (node.key === "this_firewall") { return t("column.scope.this_firewall"); }
         if (kind === "operator") { return node.operator || rest; }
-        if (kind === "unplaced") { return tk("plugin.connection_tree.widget.connection_tree.unplaced.", rest); }
-        if (node.key === "site:none") { return t("plugin.connection_tree.widget.connection_tree.no_site_name"); }
+        if (kind === "unplaced") { return t("reason.not_placed", { reason: tk("reason.", rest) }); }
+        if (node.key === "site:none") { return t("reason.no_site_name"); }
         if (kind === "site") { return node.site_name || rest; }
         return rest || node.key;
       }
@@ -79,7 +79,7 @@
             list(data.inside, "inside", 1, "")
           ]),
           h("div", { key: "outside", "class": "tree-side", "data-side": "outside" }, [
-            h("div", { "class": "tree-side-title" }, t("plugin.connection_tree.widget.connection_tree.outside")),
+            h("div", { "class": "tree-side-title" }, t("column.scope.north_south")),
             list(data.outside, "outside", 1, "")
           ])
         ]),

@@ -31,6 +31,7 @@
   --rail-width: 13rem;
   --header-height: 3.75rem;
   --row-height: 40px;
+  --dock-width: 34rem;
 }
 
 /* The statement of the scheme, keyed to the resolved theme, so the
@@ -823,6 +824,227 @@ svg .graph-node { fill: var(--accent); stroke: var(--border-strong); }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-sm); margin-bottom: var(--spacing-sm); }
 .panel-title { font-size: 0.875rem; }
 
+/* ------------------------------------------------------------------ *
+ * Editing (Lot 3): edit mode, the picker, the canvas management, the
+ * import report and the dock. The rules are the step-3 mockup's unless
+ * one says it is new here.
+ * ------------------------------------------------------------------ */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* Edit mode: a bar of buttons on each card, the three resize grips,
+   and the "add a widget here" slot. Homarr's mechanics, none of its
+   rounding. */
+.edit-bar {
+  display: flex; gap: 0.2rem; flex-wrap: wrap; align-items: center;
+  border: var(--border-width) dashed var(--accent);
+  border-radius: var(--border-radius);
+  padding: 0.2rem 0.3rem; background: var(--accent-soft);
+}
+.edit-bar .grip { font-size: 0.625rem; color: var(--text-primary); margin-right: 0.2rem; }
+.grid.is-editing > .card { cursor: grab; }
+.grid.is-editing > .card.is-dragging { outline: var(--border-width-thick) dashed var(--accent); outline-offset: -1px; }
+.grip-edge, .grip-corner { position: absolute; z-index: 30; }
+.grip-e {
+  top: 0; right: 0; width: 8px; height: 100%; cursor: ew-resize;
+  border-right: var(--border-width-thick) solid var(--border-strong);
+}
+.grip-s {
+  left: 0; bottom: 0; height: 8px; width: 100%; cursor: ns-resize;
+  border-bottom: var(--border-width-thick) solid var(--border-strong);
+}
+.grip-e:hover, .grip-s:hover { border-color: var(--accent); }
+/* A square of the accent in the corner, drawn by its two borders: no
+   gradient, so no colour is written here but the accent's. */
+.grip-corner {
+  right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize;
+  border-right: 7px solid var(--accent); border-bottom: 7px solid var(--accent);
+}
+.slot {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; font-family: inherit;
+  border: var(--border-width-thick) dashed var(--border-strong);
+  border-radius: var(--border-radius);
+  background: var(--bg-inset); color: var(--text-primary);
+  cursor: pointer; font-size: 0.8125rem;
+}
+.slot:hover { border-color: var(--accent); color: var(--link); }
+.slot:focus-visible { outline: var(--border-width-thick) solid var(--accent); outline-offset: 2px; }
+
+/* The card the dock is about, and the card previewing the form. */
+.card.is-selected { border-color: var(--accent); }
+.card.is-pending { outline: var(--border-width-thick) solid var(--status-ref); outline-offset: -1px; }
+.card-pending {
+  font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-primary);
+  border-left: var(--border-width-thick) solid var(--status-ref);
+  padding-left: 0.3rem;
+}
+
+/* The canvas's own controls in edit mode, and the notice carrying an
+   undo. */
+.canvas-manage { display: flex; align-items: center; gap: 0.35rem 0.5rem; flex-wrap: wrap; flex-basis: 100%; }
+.canvas-manage > label {
+  font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary);
+}
+.canvas-manage .form-input { max-width: 16rem; }
+.form-input, .form-select {
+  background: var(--bg-surface); color: var(--text-primary);
+  border: var(--border-width) solid var(--border-color);
+  border-radius: var(--border-radius); padding: 0.3rem 0.4rem; font: inherit; font-size: 0.8125rem;
+  min-width: 0;
+}
+.form-input[aria-invalid="true"], .form-select.is-unresolved { border-color: var(--status-ref); border-width: var(--border-width-thick); }
+.edit-notice {
+  display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap; flex-basis: 100%;
+  font-size: 0.8125rem;
+  border-left: var(--border-width-thick) solid var(--status-info); padding-left: 0.5rem;
+}
+
+/* The picker: a chooser may explain, so each type carries its
+   question. */
+.picker-item {
+  display: flex; flex-direction: column; gap: 0.15rem; width: 100%; text-align: left; cursor: pointer;
+  background: var(--bg-inset); color: var(--text-primary);
+  border: var(--border-width) solid var(--border-color);
+  border-radius: var(--border-radius);
+  padding: 0.4rem 0.5rem; margin-bottom: 0.3rem; font: inherit;
+}
+.picker-item:hover, .picker-item:focus-visible { border-color: var(--accent); }
+.picker-item .pi-name { font-weight: var(--font-weight-bold); font-size: 0.8125rem; }
+.picker-item .pi-question { font-size: 0.75rem; color: var(--text-primary); }
+.picker-item .pi-shape { font-size: 0.625rem; color: var(--text-secondary); }
+.picker-item .pi-type { font-family: var(--font-mono); font-size: 0.625rem; color: var(--text-secondary); }
+
+/* The import report: a card above the grid, not part of the document. */
+.import-report { margin-bottom: var(--spacing); }
+.import-report tr.group-row td {
+  font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.05em;
+  background: var(--bg-inset); color: var(--text-primary);
+}
+
+/* The dock: a column of the body beside the canvas, sticky under the
+   header, never a modal over what it edits. */
+.doc-dock {
+  flex: 0 0 var(--dock-width); width: var(--dock-width); min-width: 0;
+  align-self: flex-start;
+  position: sticky; top: var(--header-height);
+  max-height: calc(100vh - var(--header-height));
+  display: flex; flex-direction: column; gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing);
+  background: var(--bg-raised);
+  border-left: var(--border-width) solid var(--border-color);
+}
+.doc-dock-body { overflow: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.doc-dock-body.is-code { overflow: hidden; }
+.dock-grip {
+  position: absolute; left: -0.3rem; top: 0; bottom: 0; width: 0.6rem;
+  background: none; border: none; padding: 0; cursor: col-resize; z-index: 5;
+}
+.dock-grip:hover, .dock-grip:focus { background: var(--accent-soft); outline: none; }
+.dock-subject { margin: 0; font-size: 0.6875rem; color: var(--text-primary); display: flex; flex-direction: column; gap: 0.1rem; }
+.dock-subject .dock-subject-id { font-family: var(--font-mono); font-size: 0.625rem; color: var(--text-primary); }
+.dock-actions { display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap; }
+.panel-tabs { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; }
+.panel-subtabs {
+  display: flex; gap: 0.35rem; align-items: center;
+  padding-left: 0.5rem; margin-left: 0.15rem;
+  border-left: var(--border-width) solid var(--border-color);
+}
+.panel-subtabs-label { font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-primary); }
+.btn[aria-selected="true"], .btn[aria-checked="true"], .btn[aria-pressed="true"] {
+  background: var(--accent); border-color: var(--accent-hover); color: var(--on-accent);
+}
+.doc-dock .form-field label, .doc-dock .form-field .hint { color: var(--text-primary); }
+.doc-dock .form-field { max-width: none; }
+.doc-dock .form-field label { display: flex; align-items: baseline; gap: 0.3rem; flex-wrap: wrap; }
+.doc-dock .form-field label .form-clear { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.doc-dock .form-field label .badge { text-transform: none; letter-spacing: 0; }
+.form-checks { display: flex; flex-wrap: wrap; gap: 0.2rem 0.75rem; }
+.form-check { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; text-transform: none; letter-spacing: 0; }
+.form-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.form-footnote {
+  font-size: 0.6875rem; color: var(--text-primary);
+  margin: var(--spacing-sm) 0 0; padding-top: 0.35rem;
+  border-top: var(--border-width) solid var(--border-color);
+}
+.series-editor { display: flex; flex-direction: column; gap: 0.35rem; }
+.series-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.series-entry {
+  border: var(--border-width) solid var(--border-color); border-radius: var(--border-radius);
+  padding: 0.35rem; display: flex; flex-direction: column; gap: 0.3rem; background: var(--bg-surface);
+}
+.series-head { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+.series-head .form-input { flex: 1 1 8rem; }
+.series-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.3rem; }
+.series-control { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.6875rem; }
+
+/* THE CODE PANE IS TWO LAYERS IN REGISTER. The textarea holds the
+   caret, the selection and the typing; its own glyphs are drawn in the
+   pane's ground, so they do not show. Over it, a highlighted copy of
+   the same text in the same font, line height and box, which takes no
+   pointer and paints no ground of its own; its marks are the
+   translucent highlight and accent washes, so the caret and the
+   selection show through them. Both reserve the scrollbar's gutter, so
+   the two wrap at the same width. */
+.code-editor { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 14rem; }
+.code-input, .code-editor .code {
+  font-family: var(--font-mono); font-size: 0.6875rem; line-height: 1.5;
+  padding: 0.5rem; margin: 0;
+  border: var(--border-width) solid var(--border-color); border-radius: var(--border-radius);
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal;
+  scrollbar-gutter: stable;
+}
+.code-input {
+  flex: 1 1 auto; width: 100%; min-height: 14rem; resize: none;
+  background: var(--bg-inset); color: var(--bg-inset); -webkit-text-fill-color: var(--bg-inset);
+  caret-color: var(--accent); overflow-x: hidden; overflow-y: auto;
+}
+.code-input::selection { background: var(--accent-soft); color: var(--bg-inset); }
+.code-input:focus { outline: var(--border-width-thick) solid var(--accent); outline-offset: 0; }
+.code-editor .code {
+  position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: none; border-color: var(--border-color); overflow: hidden;
+}
+.code-line { display: block; position: relative; }
+.code-line.is-unresolved, .code-line.is-kept { background: var(--highlight-bg); }
+.code-line.is-kept { box-shadow: inset 0.125rem 0 0 0 var(--status-ref); }
+.code-line.is-subject { box-shadow: inset 0.125rem 0 0 0 var(--accent); }
+.code-line.is-error { background: var(--accent-soft); box-shadow: inset 0.125rem 0 0 0 var(--status-error); }
+.code-line.is-unresolved > span, .code-line.is-kept > span, .code-line.is-error > span { color: var(--text-primary); }
+.code-notice {
+  position: absolute; right: 0.3rem; top: 0; max-width: 58%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--font-family); font-size: 0.625rem; color: var(--text-primary);
+  border-left: var(--border-width-thick) solid var(--status-ref);
+  padding-left: 0.3rem; background: var(--bg-inset);
+}
+.code-line.is-error .code-notice { border-left-color: var(--status-error); }
+.code-notice-list { margin: var(--spacing-sm) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.25rem; }
+.code-notice-list li {
+  font-size: 0.6875rem; line-height: 1.4; color: var(--text-primary);
+  border-left: var(--border-width-thick) solid var(--status-ref); padding-left: 0.4rem;
+}
+.code-notice-list .code-notice-line { display: block; font-family: var(--font-mono); font-size: 0.625rem; color: var(--text-primary); }
+.code-error {
+  font-size: 0.6875rem; color: var(--text-primary); margin: 0;
+  border-left: var(--border-width-thick) solid var(--status-error); padding-left: 0.4rem;
+}
+.code-warning {
+  font-size: 0.6875rem; color: var(--text-primary); margin: 0;
+  border-left: var(--border-width-thick) solid var(--status-warn); padding-left: 0.4rem;
+}
+.code-hint { font-size: 0.6875rem; color: var(--text-primary); }
+.tok-key { color: var(--code-key); }
+.tok-str { color: var(--code-str); }
+.tok-num { color: var(--code-num); }
+.tok-bool { color: var(--code-bool); }
+.tok-punct { color: var(--code-punct); }
+.import-paste textarea { min-height: 12rem; }
+.code-input-plain { font-size: 0.75rem; }
+
 @media (max-width: 1320px) {
   .rail { display: none; }
   #rail-toggle { display: inline-flex; }
@@ -830,6 +1052,13 @@ svg .graph-node { fill: var(--accent); stroke: var(--border-strong); }
 
 @media (max-width: 1100px) {
   .map-layout, .tree-layout { grid-template-columns: minmax(0, 1fr); }
+  /* No room beside the canvas: the dock becomes the row under it, still docked, still leaving the
+     drawing in view. */
+  .app-body { flex-wrap: wrap; }
+  .doc-dock {
+    flex: 1 1 100%; width: 100%; position: static; max-height: 70vh;
+    border-left: none; border-top: var(--border-width) solid var(--border-color);
+  }
 }
 
 @media (max-width: 860px) {

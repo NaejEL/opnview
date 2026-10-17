@@ -38,7 +38,7 @@
       function rateText(rate, side) {
         var value = rate ? rate[side] : null;
         if (!rate || rate.state === "no_current_sample" || value === null || value === undefined) {
-          return kit.none(t("plugin.traffic_composition.widget.traffic_composition.no_current_sample"));
+          return kit.none(t("reason.no_current_sample"));
         }
         return kit.value({ measure: rate.measure, lower_bound: rate.lower_bound, value: value }, "bits_per_second");
       }
@@ -61,8 +61,8 @@
           [t("column.blocked"), kit.value(slice.volume, unit, { field: connections ? "blocked_connections" : "blocked_bytes" })]
         ];
         if (memberRate[slice.key]) {
-          facts.push([t("plugin.traffic_composition.widget.traffic_composition.rate_in"), rateText(memberRate[slice.key], "in_bits_per_second")]);
-          facts.push([t("plugin.traffic_composition.widget.traffic_composition.rate_out"), rateText(memberRate[slice.key], "out_bits_per_second")]);
+          facts.push([t("column.direction.in"), rateText(memberRate[slice.key], "in_bits_per_second")]);
+          facts.push([t("column.direction.out"), rateText(memberRate[slice.key], "out_bits_per_second")]);
         }
         if (slice["interface"]) { return kit.interfaceSubject(slice["interface"], facts); }
         if (slice.client) { return kit.clientSubject(slice.client, facts); }
@@ -70,6 +70,10 @@
       }
 
       /* One ring: its slices, its Other, its total. ringKey names it ("whole" or a direction). */
+      /* A direction in the core's words, and the firewall's own two in this widget's. */
+      function directionName(key) {
+        return kit.direction(key) || tk("plugin.traffic_composition.widget.traffic_composition.direction.", key);
+      }
       function ring(ringKey, part, ringLabel) {
         var total = kit.amount(part.total, field) || 0;
         var slices = (part.slices || []).map(function (slice, index) {
@@ -98,7 +102,7 @@
       var whole = ring("whole", data, tk("plugin.traffic_composition.widget.traffic_composition.whole.", data.whole));
       var rings = [whole];
       (data.rings || []).forEach(function (part) {
-        rings.push(ring(part.direction, part, tk("plugin.traffic_composition.widget.traffic_composition.direction.", part.direction)));
+        rings.push(ring(part.direction, part, directionName(part.direction)));
       });
 
       var legendRows = whole.slices.map(function (entry) {
@@ -128,9 +132,9 @@
       ]));
 
       var directionRates = (rates.by_direction || []).map(function (entry) {
-        var name = tk("plugin.traffic_composition.widget.traffic_composition.direction.", entry.key);
+        var name = directionName(entry.key);
         return kit.figure("rate-" + entry.key, rateText(entry.rate, "out_bits_per_second"), name,
-          h("span", { "class": "figure-previous" }, [t("plugin.traffic_composition.widget.traffic_composition.rate_in"), " ",
+          h("span", { "class": "figure-previous" }, [t("column.direction.in"), " ",
             rateText(entry.rate, "in_bits_per_second")]));
       });
 

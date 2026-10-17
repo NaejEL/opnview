@@ -32,7 +32,7 @@
           [t("column.bytes"), kit.value(volume, "bytes", { field: "bytes" })],
           [t("column.connections"), kit.value(volume, null, { field: "connections" })],
           [t("column.blocked"), kit.value(volume, null, { field: "blocked_connections" })],
-          [t("plugin.interface_volume_ranking.widget.interface_volume_ranking.east_west"), kit.value(bar.east_west, unit, { field: field })],
+          [t("column.scope.east_west"), kit.value(bar.east_west, unit, { field: field })],
           [t("plugin.interface_volume_ranking.widget.interface_volume_ranking.north_south"), kit.value(bar.north_south, unit, { field: field })],
           [t("plugin.interface_volume_ranking.widget.interface_volume_ranking.this_firewall"), kit.value(bar.this_firewall, unit, { field: field })],
           [t("plugin.interface_volume_ranking.widget.interface_volume_ranking.clients_seen"), t("plugin.interface_volume_ranking.widget.interface_volume_ranking.of", { seen: kit.text(bar.clients_seen), known: kit.text(bar.clients_known) })]

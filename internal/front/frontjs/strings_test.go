@@ -16,6 +16,7 @@ import (
 	"github.com/NaejEL/opnview/internal/front"
 	"github.com/NaejEL/opnview/internal/front/frontjs"
 	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/owners"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/widget/request"
@@ -104,18 +105,91 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 	}
 	scopeKinds := []string{"interface", "client", "owner"}
 	periods := []string{"1h", "24h", "7d", "30d"}
-	return map[string][]string{
+	// The editing surfaces (front/views/dock.js, front/views/edit.js, front/views/dashboards.js): the
+	// document module's refusals, the series vocabulary, the edit steps.
+	list := func(script string) []string {
+		var values []string
+		if err := json.Unmarshal([]byte(page.Run("JSON.stringify("+script+")").String()), &values); err != nil {
+			t.Fatalf("%s: %v", script, err)
+		}
+		return values
+	}
+	refusals := append(append(list("Object.keys(opnview.document.CONDITIONS).map(function (k) { return opnview.document.CONDITIONS[k]; })"),
+		list("opnview.document.PARSE_CONDITIONS")...), "revision_conflict", "read_failed", "form_invalid",
+		"unknown_dashboard", "internal_error")
+	moves := list("opnview.editChrome.MOVES")
+	reportConditions := []string{"unresolved_reference", "unknown_widget_type", "shape_not_served", "unknown_parameter_key",
+		"invalid_parameter"}
+	editing := map[string][]string{
+		"document.refusal.":   refusals,
+		"dock.notice.":        reportConditions,
+		"report.condition.":   reportConditions,
+		"dock.tab.":           list("opnview.dock.TABS"),
+		"dock.syntax.":        list("opnview.editing.SYNTAXES"),
+		"series.source.":      list("Object.keys(opnview.dock.SERIES_SOURCES)"),
+		"series.axis.":        list("opnview.dock.SERIES_AXES"),
+		"series.render.":      list("opnview.dock.SERIES_RENDERS"),
+		"series.aggregation.": list("opnview.dock.SERIES_AGGREGATIONS"),
+		"series.reference.":   list("opnview.dock.SERIES_REFERENCES"),
+		"edit.move.":          moves[:4],
+		"edit.size.":          moves[4:],
+		"edit.face.":          moves,
+		"shape.name.": {"figure", "ranked_bars", "time_series", "table", "feed", "cards", "map", "donut", "tree", "sankey",
+			"graph", "matrix"},
+		"notice.":            {"widget_removed", "canvas_removed", "dashboard_removed"},
+		"dashboards.origin.": {"created", "imported", "default"},
+	}
+	// The form's labels: every key a built-in manifest declares and every value it offers (a range's
+	// values are the period's own words), the core's volume_measure, and the series figures.
+	parameterKeys := map[string]bool{"volume_measure": true}
+	parameterValues := map[string]bool{"logged": true, "netflow": true, "best_available": true}
+	for _, widget := range builtinWidgets(t) {
+		for _, parameter := range widget.Parameters {
+			parameterKeys[parameter.Key] = true
+			if parameter.Key == "period" {
+				continue
+			}
+			for _, value := range parameter.Values {
+				parameterValues[value] = true
+			}
+		}
+	}
+	var seriesFigures [][]string
+	if err := json.Unmarshal([]byte(page.Run("JSON.stringify(Object.keys(opnview.dock.SERIES_SOURCES).map(function (k) { return opnview.dock.SERIES_SOURCES[k].values; }))").String()), &seriesFigures); err != nil {
+		t.Fatal(err)
+	}
+	for _, figures := range seriesFigures {
+		for _, figure := range figures {
+			parameterValues[figure] = true
+		}
+	}
+	for key := range parameterKeys {
+		editing["parameter."] = append(editing["parameter."], key)
+	}
+	for value := range parameterValues {
+		editing["parameter.value."] = append(editing["parameter.value."], value)
+	}
+	composed := map[string][]string{
 		"appearance.mode.":    config.AppearanceModes(),
 		"blocklists.purpose.": owners.BlocklistPurposes,
 		// The canvas (front/views/canvas.js, front/core/kit.js): a widget's condition, the provider
 		// conditions a state badge names, the named states, the measures, the methods, the periods and
 		// the scope kinds.
-		"condition.":                 append(conditions, "reachable"),
-		"named_state.":               namedStates,
-		"measure.":                   measures,
-		"method.":                    {"resolver_cache_answer", "lookup_timing", "not_recorded_beyond_flow_horizon"},
-		"period.":                    periods,
-		"period.short.":              periods,
+		"condition.":    append(conditions, "reachable"),
+		"named_state.":  namedStates,
+		"measure.":      measures,
+		"method.":       {"resolver_cache_answer", "lookup_timing", "not_recorded_beyond_flow_horizon"},
+		"period.":       periods,
+		"period.short.": periods,
+		// The renderers' shared words (front/core/kit.js, placeReason, direction, directionState): the
+		// places traffic can be, the lookup states of an address, the directions, NetFlow's per-direction
+		// states and the blocking engines.
+		"column.scope.":           {"north_south", "east_west", "this_firewall"},
+		"reason.":                 {"miss", "pending", "no_row", "no_coordinates"},
+		"column.direction.":       {"in", "out", "inbound", "outbound"},
+		"column.direction_state.": netflow.VolumeStates(),
+		"column.engine.": {"firewall_rule", "security_engine", "dns_advertising_list", "dns_threat_list",
+			"dns_unassigned_list", "dns_list_not_recorded"},
 		"scope.all.":                 scopeKinds,
 		"scope.kind.":                scopeKinds,
 		"card.own_scope.":            scopeKinds,
@@ -141,7 +215,7 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 			"unknown_interface", "display_name_empty", "display_name_taken", "unknown_client", "no_clients",
 			"duplicate_client", "invalid_owner_assigned_at", "unknown_owner", "purpose_not_in_vocabulary",
 			"unknown_blocklist", "palette_unknown", "mode_unknown", "language_unknown",
-			"revision_conflict"},
+			"revision_conflict", "unknown_dashboard", "nothing_to_undo", "form_invalid"},
 		"gap_reason.": unquote(schemaVocabulary(t, "collection_gap", "reason")),
 		"opnsense_page.": {"ids_administration", "kea_dhcpv4", "dnsmasq_dhcp_ranges", "unbound_general",
 			"unbound_reporting", "netflow"},
@@ -166,6 +240,10 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 			"certificate_refused", "unexpected_answer", "no_url"},
 		"unit.symbol.": units,
 	}
+	for prefix, values := range editing {
+		composed[prefix] = values
+	}
+	return composed
 }
 
 // namedStates are the named states of the widget API (docs/widget-api.md, "Named states"), and the

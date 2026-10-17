@@ -20,6 +20,12 @@
  * panel naming why there is nothing to draw, which keeps the card's footprint and title and links to
  * the Sources view: never a zero, never a blank, never a red failure.
  *
+ * EDITING (Lot 3) goes through front/core/editing.js: the document of the dashboard on screen is
+ * the one the session holds, every edit is one undoable save, and edit mode, the picker, the canvas
+ * management, the import report (front/views/edit.js) and the dock (front/views/dock.js) are drawn
+ * here around the cards. A gesture in progress -- a drag, a form's pending values -- is drawn from
+ * this view's memory and written once, when it ends or on Apply.
+ *
  * A REFRESH NEVER REPLACES A CARD. Answers arrive, the cards are drawn again, and the reconciler
  * (front/core/view.js) patches what changed; an open detail, an expanded row, a tooltip, a focused
  * mark, a selection and the scroll position survive it.
@@ -76,6 +82,7 @@
         });
       });
       state.chosen = chosen || (wanted.dashboard ? null : first);
+      state.dashboardId = state.chosen ? state.chosen.dashboard.id : null;
       state.missing = !!wanted.dashboard && !chosen;
       state.loaded = true;
       state.answers = state.answers || {};
@@ -84,12 +91,10 @@
       if (!state.chosen) { return null; }
       return context.api.get("/api/dashboards/" + encodeURIComponent(state.chosen.dashboard.id)).then(function (result) {
         if (result.status !== 200 || !result.body) {
-          state.document = null;
+          state.unreadable = true;
           return null;
         }
-        state.document = result.body.document;
-        state.editor = model.editor({ api: context.api, id: result.body.id, revision: result.body.revision,
-          document: result.body.document, onChange: function (document) { state.document = document; } });
+        opnview.editing.adopt(state.dashboardId, result);
         start(context);
         loadReferences(context);
         return null;
@@ -99,24 +104,66 @@
 
   /* The candidates of the three scope kinds, for the canvas bar's dropdowns. */
   function loadReferences(context) {
+    REFERENCE_KINDS.forEach(function (kind) { referencesOf(context, kind); });
+  }
+
+  /* The candidates of one reference kind, asked once a view: the canvas bar's scope and the form's
+   * reference dropdowns. Null until they arrive. */
+  function referencesOf(context, kind) {
     var state = context.state;
-    if (state.references) { return; }
-    state.references = {};
-    REFERENCE_KINDS.forEach(function (kind) {
-      context.api.get("/api/references/" + kind).then(function (result) {
-        state.references[kind] = result.status === 200 && result.body ? result.body : { candidates: [] };
+    state.references = state.references || {};
+    state.referencesAsked = state.referencesAsked || {};
+    if (!state.referencesAsked[kind]) {
+      state.referencesAsked[kind] = true;
+      context.api.get("/api/references/" + encodeURIComponent(kind)).then(function (result) {
+        state.references[kind] = result.status === 200 && result.body ? result.body : { candidates: [], by: [] };
         context.rerender();
       });
-    });
+    }
+    return state.references[kind] || null;
+  }
+
+  /* The data catalogue's datasets, for the series editor's sources; asked once a view. */
+  function datasetsOf(context) {
+    var state = context.state;
+    if (!state.datasetsAsked) {
+      state.datasetsAsked = true;
+      context.api.get("/api/datasets").then(function (result) {
+        state.datasets = result.status === 200 && result.body ? result.body.datasets || [] : [];
+        context.rerender();
+      });
+    }
+    return state.datasets || null;
   }
 
   /* ---------------------------------------------------------------------------------------------
    * The widgets of the canvas on screen, their requests and their refresh.
    * ------------------------------------------------------------------------------------------- */
 
+  /* The document of the dashboard on screen, as the session holds it, with a drag in progress
+   * drawn where the pointer has it. */
+  function currentDocument(state) {
+    if (!state.dashboardId) { return null; }
+    var document = opnview.editing.document(state.dashboardId);
+    if (!document || !state.drag || !state.drag.placement) { return document; }
+    var copy = JSON.parse(JSON.stringify(document));
+    var canvas = model.canvasIn(copy, state.chosen.canvas.id);
+    (canvas && canvas.widgets || []).forEach(function (widget) {
+      if (widget && widget.id === state.drag.id) { widget.placement = state.drag.placement; }
+    });
+    return copy;
+  }
+
   function currentCanvas(state) {
-    if (!state.document || !state.chosen) { return null; }
-    return model.canvasIn(state.document, state.chosen.canvas.id);
+    if (!state.chosen) { return null; }
+    var document = currentDocument(state);
+    return document ? model.canvasIn(document, state.chosen.canvas.id) : null;
+  }
+
+  function canvasIndexOf(document, id) {
+    var canvases = document && Array.isArray(document.canvases) ? document.canvases : [];
+    for (var i = 0; i < canvases.length; i++) { if (canvases[i] && canvases[i].id === id) { return i; } }
+    return -1;
   }
 
   function widgetsOf(canvas) {
@@ -156,7 +203,10 @@
       schedule(context);
       return;
     }
-    var built = model.request(row, widget, currentCanvas(state));
+    // The form's pending values are drawn on the card they preview, never written until Apply.
+    var asked = state.pending && state.pending.id === id
+      ? { id: widget.id, type: widget.type, placement: widget.placement, parameters: state.pending.parameters } : widget;
+    var built = model.request(row, asked, currentCanvas(state));
     var settle = function (record) {
       if (state.generation !== generation) { return; }
       record.notes = built.notes;
@@ -211,34 +261,69 @@
    * Edits of the canvas: the range, the scope, and the two pivots that edit. Each is undoable.
    * ------------------------------------------------------------------------------------------- */
 
-  function edit(context, mutate) {
+  /* An edit of the canvas on screen: mutate(canvas, document) changes a copy, which is saved as one
+   * undoable edit. A mutation answering false changes nothing. */
+  function edit(context, mutate, label) {
     var state = context.state;
-    if (!state.editor) { return Promise.resolve(); }
+    if (!state.dashboardId || !opnview.editing.document(state.dashboardId)) { return Promise.resolve({ ok: false }); }
     var canvasId = state.chosen.canvas.id;
-    return state.editor.edit(function (document) {
+    return opnview.editing.edit(context.api, state.dashboardId, function (document) {
       var canvas = model.canvasIn(document, canvasId);
-      if (canvas) { mutate(canvas, document); }
-    }).then(function (outcome) {
-      state.editFailed = outcome.ok ? null : (outcome.condition || "read_failed");
-      if (outcome.ok && !outcome.unchanged) { start(context); }
-      context.rerender();
+      if (!canvas) { return false; }
+      return mutate(canvas, document);
+    }, label).then(function (outcome) {
+      settled(context, outcome);
+      return outcome;
     });
   }
 
+  /* After a save: the widgets asked again, the import report collected again, the canvas drawn. */
+  function settled(context, outcome) {
+    var state = context.state;
+    state.editFailed = outcome.ok ? null : (outcome.condition || "read_failed");
+    if (outcome.ok && !outcome.unchanged) {
+      start(context);
+      if (opnview.editing.report(state.dashboardId)) {
+        opnview.editing.recollect(context.api, state.dashboardId).then(function () { context.rerender(); });
+      }
+      context.reloadDashboards();
+    }
+    context.rerender();
+  }
+
+  /* Undoes the session's last edit, whichever dashboard it touched. */
   function undo(context) {
     var state = context.state;
-    if (!state.editor || !state.editor.canUndo()) { return Promise.resolve(); }
-    return state.editor.undo().then(function (outcome) {
+    if (!opnview.editing.canUndo()) { return Promise.resolve(); }
+    return opnview.editing.undo(context.api).then(function (outcome) {
       state.editFailed = outcome.ok ? null : (outcome.condition || "read_failed");
-      if (outcome.ok) { start(context); }
-      context.rerender();
+      if (!outcome.ok) { context.rerender(); return; }
+      var entry = outcome.entry;
+      if (entry.kind !== "document" || entry.dashboard !== state.dashboardId) {
+        // The undo touched the dashboards themselves, or another one: the canvas is read again.
+        context.reloadDashboards().then(function () {
+          context.go(root.location ? root.location.pathname : "/", { replace: true });
+        });
+        return;
+      }
+      if (!currentCanvas(state)) {
+        context.go("/canvas/" + encodeURIComponent(state.dashboardId) + "/" +
+          encodeURIComponent(firstCanvasId(state)), { replace: true });
+        return;
+      }
+      settled(context, { ok: true });
     });
+  }
+
+  function firstCanvasId(state) {
+    var document = opnview.editing.document(state.dashboardId);
+    return document && document.canvases && document.canvases[0] ? document.canvases[0].id : "";
   }
 
   function setPeriod(context, period) {
     return edit(context, function (canvas) {
       canvas.period = period;
-    });
+    }, "period");
   }
 
   function setScope(context, kind, references) {
@@ -247,7 +332,7 @@
       var scope = canvas.scope && typeof canvas.scope === "object" ? canvas.scope : {};
       if (references && references.length) { scope[key] = references; } else { delete scope[key]; }
       if (Object.keys(scope).length) { canvas.scope = scope; } else { delete canvas.scope; }
-    });
+    }, "scope");
   }
 
   function addWidgetAbout(context, subject) {
@@ -256,7 +341,7 @@
       if (!Array.isArray(canvas.widgets)) { canvas.widgets = []; }
       canvas.widgets.push({ id: model.freshWidgetId(canvas, about.type), type: about.type,
         placement: { x: 0, y: model.bottomRow(canvas), w: 6, h: 8 }, parameters: JSON.parse(JSON.stringify(about.parameters)) });
-    });
+    }, "add");
   }
 
   /* ---------------------------------------------------------------------------------------------
@@ -349,15 +434,138 @@
       ]));
       REFERENCE_KINDS.forEach(function (kind) { controls.push(scopeControl(context, kind)); });
       controls.push(h("button", { key: "undo", type: "button", "class": "btn", id: "canvas-undo",
-        disabled: !(state.editor && state.editor.canUndo()), on: { click: function () { undo(context); } } }, t("action.undo")));
+        disabled: !opnview.editing.canUndo(), on: { click: function () { undo(context); } } }, t("action.undo")));
       if (state.editFailed) {
         controls.push(h("span", { key: "failed", "class": "field-error", role: "status" }, tk("error.", state.editFailed)));
       }
     }
+    var document = currentDocument(state);
     return h("div", { key: "bar", "class": "canvas-bar" }, [
       tabs(context),
-      controls.length ? h("div", { key: "controls", "class": "canvas-controls" }, controls) : null
+      controls.length ? h("div", { key: "controls", "class": "canvas-controls" }, controls) : null,
+      canvas && opnview.editing.editMode() ? opnview.editChrome.manage({ canvas: canvas, count: document.canvases.length,
+        index: canvasIndexOf(document, canvas.id), onRename: function (title) { renameCanvas(context, title); },
+        onMove: function (by) { moveCanvas(context, by); }, onAdd: function () { addCanvas(context); },
+        onRemove: function () { removeCanvas(context); } }) : null,
+      opnview.editChrome.notice(opnview.editing.notice(), function () { undo(context); },
+        function () { opnview.editing.setNotice(null); context.rerender(); })
     ]);
+  }
+
+  /* -----------------------------------------------------------------------------------------------
+   * Editing the layout and the canvases.
+   * --------------------------------------------------------------------------------------------- */
+
+  function setPlacement(context, id, placement, label) {
+    return edit(context, function (canvas) {
+      var widget = (canvas.widgets || []).filter(function (w) { return w && w.id === id; })[0];
+      if (!widget) { return false; }
+      widget.placement = { x: placement.x, y: placement.y, w: placement.w, h: placement.h };
+      return true;
+    }, label || "placement");
+  }
+
+  function authoredColumns(canvas) {
+    return canvas && canvas.grid && Number(canvas.grid.columns) > 0 ? Number(canvas.grid.columns) : 12;
+  }
+
+  function step(context, widget, action) {
+    var columns = authoredColumns(currentCanvas(context.state));
+    var placement = opnview.grid.placementOf(widget, columns);
+    return setPlacement(context, widget.id, opnview.editChrome.stepped(placement, action, columns), action);
+  }
+
+  function removeWidget(context, widget, name) {
+    return edit(context, function (canvas) {
+      var before = (canvas.widgets || []).length;
+      canvas.widgets = (canvas.widgets || []).filter(function (w) { return !(w && w.id === widget.id); });
+      return canvas.widgets.length !== before;
+    }, "remove").then(function (outcome) {
+      if (outcome && outcome.ok && !outcome.unchanged) {
+        opnview.editing.setNotice({ kind: "widget_removed", params: { name: name }, undo: true });
+        if (opnview.editing.dock().widget === widget.id) { opnview.editing.dock().widget = null; }
+        context.rerender();
+      }
+    });
+  }
+
+  function addWidget(context, row) {
+    var state = context.state;
+    var added = null;
+    state.picker = false;
+    return edit(context, function (canvas) {
+      if (!Array.isArray(canvas.widgets)) { canvas.widgets = []; }
+      added = opnview.editChrome.newWidget(canvas, row);
+      canvas.widgets.push(added);
+      return true;
+    }, "add").then(function (outcome) {
+      if (outcome && outcome.ok && added) {
+        opnview.editing.dock().widget = added.id;
+        context.rerender();
+      }
+    });
+  }
+
+  /* A canvas id not yet taken in the document. */
+  function freshCanvasId(document) {
+    var taken = {};
+    (document.canvases || []).forEach(function (canvas) { if (canvas) { taken[canvas.id] = true; } });
+    for (var n = (document.canvases || []).length + 1; ; n++) {
+      if (!taken["canvas-" + n]) { return "canvas-" + n; }
+    }
+  }
+
+  function renameCanvas(context, title) {
+    var trimmed = String(title || "").trim();
+    if (!trimmed) { return Promise.resolve(); }
+    return edit(context, function (canvas) {
+      if (canvas.title === trimmed) { return false; }
+      canvas.title = trimmed;
+      return true;
+    }, "rename_canvas");
+  }
+
+  function moveCanvas(context, by) {
+    var id = context.state.chosen.canvas.id;
+    return edit(context, function (canvas, document) {
+      var index = canvasIndexOf(document, id);
+      var target = index + by;
+      if (index < 0 || target < 0 || target >= document.canvases.length) { return false; }
+      document.canvases.splice(index, 1);
+      document.canvases.splice(target, 0, canvas);
+      return true;
+    }, "move_canvas");
+  }
+
+  function addCanvas(context) {
+    var state = context.state;
+    var created = null;
+    return edit(context, function (canvas, document) {
+      created = { id: freshCanvasId(document), title: t("canvas.new_title"), widgets: [] };
+      document.canvases.push(created);
+      return true;
+    }, "add_canvas").then(function (outcome) {
+      if (outcome && outcome.ok && created) {
+        context.go("/canvas/" + encodeURIComponent(state.dashboardId) + "/" + encodeURIComponent(created.id));
+      }
+    });
+  }
+
+  function removeCanvas(context) {
+    var state = context.state;
+    var id = state.chosen.canvas.id;
+    var title = state.chosen.canvas.title;
+    return edit(context, function (canvas, document) {
+      if (document.canvases.length < 2) { return false; }
+      document.canvases = document.canvases.filter(function (other) { return !(other && other.id === id); });
+      return true;
+    }, "remove_canvas").then(function (outcome) {
+      if (outcome && outcome.ok && !outcome.unchanged) {
+        opnview.editing.setNotice({ kind: "canvas_removed", params: { name: String(title || id) }, undo: true });
+        context.go("/canvas/" + encodeURIComponent(state.dashboardId) + "/" + encodeURIComponent(firstCanvasId(state)),
+          { replace: true });
+      }
+    });
   }
 
   /* ---------------------------------------------------------------------------------------------
@@ -508,31 +716,54 @@
     var record = state.answers[widget.id];
     var title = titleOf(widget, row);
     var size = sizeOf(state, widget, cell, state.columns);
-    return h("section", { key: "card-" + widget.id, "class": "card" + (state.detail && state.detail.widget === widget.id ? " has-detail" : ""),
+    var editing = opnview.editing.editMode();
+    var dock = opnview.editing.dock();
+    var selected = dock.open && dock.widget === widget.id;
+    var pending = state.pending && state.pending.id === widget.id;
+    var classes = "card" + (state.detail && state.detail.widget === widget.id ? " has-detail" : "") +
+      (selected ? " is-selected" : "") + (pending ? " is-pending" : "") +
+      (state.drag && state.drag.id === widget.id ? " is-dragging" : "");
+    return h("section", { key: "card-" + widget.id, "class": classes,
       "data-widget-card": widget.id, "data-type": widget.type || widget.shape || "",
       "data-cell": cell ? [cell.column, cell.span, cell.row, cell.rows].join(",") : "" }, [
+      editing ? opnview.editChrome.bar(widget, title, function (action) { step(context, widget, action); },
+        function () { removeWidget(context, widget, title); }) : null,
       h("header", { key: "head", "class": "card-head" }, [
         h("h2", { "class": "card-title" }, title),
         chips(record, widget, row),
+        pending ? h("span", { key: "pending", "class": "card-pending", "data-chip": "unapplied" }, t("card.unapplied")) : null,
         h("button", { key: "gear", type: "button", "class": "card-gear", "data-configure": widget.id,
           "aria-label": t("card.configure", { name: title }), title: t("card.configure", { name: title }),
-          on: { click: function (event) { openWidgetDetail(context, widget, row, record, event); } } }, t("card.configure_mark"))
+          on: { click: function () { configure(context, widget.id, "form"); } } }, t("card.configure_mark"))
       ]),
-      h("div", { key: "body", "class": "card-body", "data-widget-body": widget.id }, body(context, widget, row, record, size))
+      h("div", { key: "body", "class": "card-body", "data-widget-body": widget.id }, body(context, widget, row, record, size)),
+      editing ? opnview.editChrome.grips(widget) : null
     ]);
   }
 
-  /* The configure control: the widget's own facts, as a detail -- inspecting what it asks for. */
-  function openWidgetDetail(context, widget, row, record, event) {
-    var parameters = record && record.parameters ? record.parameters : (widget.parameters || {});
-    var facts = [[t("detail.fact.type"), widget.type || widget.shape || ""]];
-    if (row) { facts.push([t("detail.fact.shape"), row.shape]); }
-    Object.keys(parameters).sort().forEach(function (key) {
-      var value = parameters[key];
-      facts.push([key, value === null ? t("figure.dash") : typeof value === "object" ? JSON.stringify(value) : String(value)]);
-    });
-    openDetail(context, widget.id, { kind: "widget", key: widget.id, title: titleOf(widget, row), facts: facts,
-      related: [], reference: null, about: null }, event);
+  /* The configure control: the dock, opened on this widget. */
+  function configure(context, id, tab) {
+    var dock = opnview.editing.dock();
+    if (dock.widget !== id) { clearPending(context); }
+    opnview.editing.openDock(tab || dock.tab || "form", id);
+    context.rerender();
+  }
+
+  /* The form's pending values, drawn on their card and asked for with them. */
+  function setPending(context, pending) {
+    var state = context.state;
+    var before = state.pending;
+    state.pending = pending;
+    var id = (pending && pending.id) || (before && before.id);
+    if (id && JSON.stringify(before) !== JSON.stringify(pending)) {
+      state.answers[id] = null;
+      fetchWidget(context, id);
+    }
+    context.rerender();
+  }
+
+  function clearPending(context) {
+    if (context.state.pending) { setPending(context, null); }
   }
 
   /* ---------------------------------------------------------------------------------------------
@@ -567,8 +798,8 @@
     var subject = fresh || detail.subject;
     if (fresh) { detail.subject = fresh; }
     var reference = subject.reference;
-    var canScope = !!reference && REFERENCE_KINDS.indexOf(reference.kind) >= 0 && !!state.editor;
-    var canAdd = !!subject.about && !!opnview.widgets.row(subject.about.type) && !!state.editor;
+    var canScope = !!reference && REFERENCE_KINDS.indexOf(reference.kind) >= 0 && !!opnview.editing.document(state.dashboardId);
+    var canAdd = !!subject.about && !!opnview.widgets.row(subject.about.type) && !!opnview.editing.document(state.dashboardId);
     return h("div", { key: "detail-layer", "class": "detail-layer" }, opnview.detail.render({
       subject: subject, stale: !fresh && subject.kind !== "widget", canScope: canScope, canAdd: canAdd,
       onClose: function () { closeDetail(context); },
@@ -636,6 +867,7 @@
           }
         }
       },
+      pointerdown: function (event) { beginDrag(context, event); },
       mouseover: function (event) { showTip(tipAt(context.state, event.target)); },
       focusin: function (event) { showTip(tipAt(context.state, event.target)); },
       mouseleave: function () { showTip(null); }
@@ -655,6 +887,12 @@
     var grid = document && document.getElementById ? document.getElementById("canvas-grid") : null;
     if (!grid) { return false; }
     var redraw = false;
+    var slot = document.getElementById("add-widget-slot");
+    if (slot && slot.style) {
+      var slotCell = (slot.getAttribute("data-cell") || "").split(",").map(Number);
+      slot.style.gridColumn = "1 / -1";
+      slot.style.gridRow = slotCell[2] + " / span " + slotCell[3];
+    }
     var cards = grid.querySelectorAll ? grid.querySelectorAll("[data-widget-card]") : [];
     for (var i = 0; i < cards.length; i++) {
       var element = cards[i];
@@ -708,8 +946,77 @@
     var authored = canvas && canvas.grid && Number(canvas.grid.columns) > 0 ? Number(canvas.grid.columns) : 12;
     var cells = opnview.grid.layout(widgets, state.columns, authored === 12 ? 12 : authored);
     var handlers = state.handlers || (state.handlers = listeners(context));
-    return h("div", { key: "grid", id: "canvas-grid", "class": "grid cols-" + state.columns, on: handlers },
-      cells.map(function (cell) { return card(context, widgets[cell.index], cell); }));
+    var editing = opnview.editing.editMode();
+    var lowest = cells.reduce(function (row, cell) { return Math.max(row, cell.row + cell.rows); }, 1);
+    return h("div", { key: "grid", id: "canvas-grid", "class": "grid cols-" + state.columns + (editing ? " is-editing" : ""),
+      on: handlers }, [
+      cells.map(function (cell) { return card(context, widgets[cell.index], cell); }),
+      editing ? h("button", { key: "slot", type: "button", "class": "slot", id: "add-widget-slot",
+        "data-cell": [1, state.columns, lowest, 2].join(","), on: { click: function () { openPicker(context); } } },
+      t("edit.add_here")) : null
+    ]);
+  }
+
+  function openPicker(context) {
+    context.state.picker = true;
+    context.rerender();
+  }
+
+  /* -----------------------------------------------------------------------------------------------
+   * Dragging a card: the authored placement follows the pointer by whole columns and rows, drawn as
+   * it goes, and is written once, when the pointer is released.
+   * --------------------------------------------------------------------------------------------- */
+
+  function beginDrag(context, event) {
+    var state = context.state;
+    if (!opnview.editing.editMode() || (event.button !== undefined && event.button > 0)) { return; }
+    var target = event.target;
+    var gripMode = target && target.getAttribute ? target.getAttribute("data-grip") : null;
+    // A control or a mark keeps its own meaning: only the card itself is grabbed to move it.
+    for (var node = target; !gripMode && node && node.getAttribute && !node.getAttribute("data-widget-card"); node = node.parentNode) {
+      if (/^(BUTTON|A|INPUT|SELECT|TEXTAREA)$/i.test(String(node.tagName)) || node.getAttribute("data-subject")) { return; }
+    }
+    var cardNode = target;
+    while (cardNode && cardNode.getAttribute && !cardNode.getAttribute("data-widget-card")) { cardNode = cardNode.parentNode; }
+    if (!cardNode || !cardNode.getAttribute) { return; }
+    var widget = findWidget(state, cardNode.getAttribute("data-widget-card"));
+    var grid = root.document.getElementById("canvas-grid");
+    if (!widget || !grid) { return; }
+    var columns = authoredColumns(currentCanvas(state));
+    if (event.preventDefault) { event.preventDefault(); }
+    state.drag = { id: widget.id, mode: gripMode || "move", x0: event.clientX, y0: event.clientY,
+      start: opnview.grid.placementOf(widget, columns), placement: null, columns: columns,
+      column: (grid.clientWidth + GAP) / columns, row: ROW_HEIGHT + GAP };
+    if (!state.dragListening) {
+      state.dragListening = true;
+      root.document.addEventListener("pointermove", function (moved) { dragMove(context, moved); });
+      root.document.addEventListener("pointerup", function () { endDrag(context); });
+      root.document.addEventListener("pointercancel", function () { endDrag(context); });
+    }
+  }
+
+  function dragMove(context, event) {
+    var drag = context.state.drag;
+    if (!drag) { return; }
+    var dx = Math.round((event.clientX - drag.x0) / drag.column);
+    var dy = Math.round((event.clientY - drag.y0) / drag.row);
+    var next = opnview.editChrome.dragged(drag.start, drag.mode, dx, dy, drag.columns);
+    var held = drag.placement || drag.start;
+    if (next.x === held.x && next.y === held.y && next.w === held.w && next.h === held.h) { return; }
+    drag.placement = next;
+    context.rerender();
+  }
+
+  function endDrag(context) {
+    var state = context.state;
+    var drag = state.drag;
+    if (!drag) { return; }
+    state.drag = null;
+    if (drag.placement && JSON.stringify(drag.placement) !== JSON.stringify(drag.start)) {
+      setPlacement(context, drag.id, drag.placement, drag.mode === "move" ? "move" : "resize");
+    } else {
+      context.rerender();
+    }
   }
 
   function render(context) {
@@ -733,11 +1040,103 @@
     var content = widgets.length === 0
       ? h("div", { key: "empty", "class": "state state-gap canvas-empty" }, [
           h("span", { "class": "state-badge" }, t("canvas.state.empty")),
-          canvas.description ? h("p", { "class": "state-text" }, canvas.description) : null
+          canvas.description ? h("p", { "class": "state-text" }, canvas.description) : null,
+          h("button", { key: "invite", type: "button", "class": "btn btn-primary", id: "canvas-invite",
+            on: { click: function () { openPicker(context); } } }, t("canvas.invite"))
         ])
       : grid(context, canvas);
-    return [head, content, detailLayer(context),
+    var report = opnview.editing.report(state.dashboardId);
+    return [head,
+      report ? opnview.editChrome.report({ report: report, titleOf: function (type) {
+        var row = type ? opnview.widgets.row(type) : null;
+        return row ? opnview.editChrome.titleOf(row) : String(type || "");
+      }, onRepair: function (row) { repair(context, row); },
+      onDismiss: function () { opnview.editing.dismissReport(state.dashboardId); context.rerender(); } }) : null,
+      content, detailLayer(context),
+      state.picker ? opnview.editChrome.picker(function (row) { addWidget(context, row); },
+        function () { state.picker = false; context.rerender(); }) : null,
       h("div", { key: "tip", id: "canvas-tip", "class": "tip-layer", "data-reconcile": "manual" })];
+  }
+
+  /* A report row's repair: the dock, on the widget it concerns -- the form for a reference, the
+   * document for what only the code can change. */
+  function repair(context, row) {
+    var state = context.state;
+    var document = opnview.editing.document(state.dashboardId);
+    var canvas = document && document.canvases ? document.canvases[row.canvas_index] : null;
+    if (!canvas) { return; }
+    var tab = row.condition === "unresolved_reference" && row.widget_id !== null ? "form" : "document";
+    opnview.editing.openDock(tab, row.widget_id);
+    if (canvas.id !== state.chosen.canvas.id) {
+      context.go("/canvas/" + encodeURIComponent(state.dashboardId) + "/" + encodeURIComponent(canvas.id));
+      return;
+    }
+    context.rerender();
+  }
+
+  /* The issues the code view marks on their lines: the import report's, and what the answers of the
+   * canvas on screen report. Paths are the document's. */
+  function issues(context) {
+    var state = context.state;
+    var out = [];
+    var seen = {};
+    var report = opnview.editing.report(state.dashboardId);
+    (report ? report.rows : []).forEach(function (row) { seen[row.path] = true; out.push(row); });
+    var document = opnview.editing.document(state.dashboardId);
+    var ci = canvasIndexOf(document, state.chosen ? state.chosen.canvas.id : null);
+    if (ci < 0) { return out; }
+    (document.canvases[ci].widgets || []).forEach(function (widget, wi) {
+      if (!widget) { return; }
+      var at = "canvases[" + ci + "].widgets[" + wi + "]";
+      var record = state.answers[widget.id];
+      var found = [];
+      if (widget.type && !opnview.widgets.row(widget.type)) {
+        found.push({ condition: "unknown_widget_type", path: at + ".type", kind: "widget_type", by: "type", value: widget.type,
+          label: widget.title || null });
+      } else if (!widget.type && widget.shape) {
+        found.push({ condition: "shape_not_served", path: at + ".shape", kind: "shape", by: "shape", value: widget.shape,
+          label: widget.title || null });
+      } else if (record && record.answer && !(state.pending && state.pending.id === widget.id)) {
+        opnview.editing.issuesOf(record.answer).forEach(function (issue) {
+          issue.path = at + ".parameters." + issue.path;
+          found.push(issue);
+        });
+      }
+      found.forEach(function (issue) { if (!seen[issue.path]) { seen[issue.path] = true; out.push(issue); } });
+    });
+    return out;
+  }
+
+  /* The dock, beside the canvas: what it edits, and what it is told back. */
+  function aside(context) {
+    var state = context.state;
+    if (!state.chosen || !opnview.editing.dock().open) { return null; }
+    var document = currentDocument(state);
+    if (!document) { return null; }
+    var ci = canvasIndexOf(document, state.chosen.canvas.id);
+    var canvas = ci >= 0 ? document.canvases[ci] : null;
+    var dock = opnview.editing.dock();
+    var widget = null, wi = -1;
+    (canvas && canvas.widgets || []).forEach(function (candidate, index) {
+      if (candidate && candidate.id === dock.widget) { widget = candidate; wi = index; }
+    });
+    if (!widget && canvas && canvas.widgets && canvas.widgets.length && dock.tab !== "document") {
+      widget = canvas.widgets[0];
+      wi = 0;
+      dock.widget = widget.id;
+    }
+    var row = widget && widget.type ? opnview.widgets.row(widget.type) : null;
+    return opnview.dock.render(context, {
+      api: context.api, dashboard: state.dashboardId, document: document, canvas: canvas, canvasIndex: ci,
+      widget: widget, widgetIndex: wi, row: row, widgetTitle: widget ? titleOf(widget, row) : null,
+      issues: issues(context), dragging: !!state.drag,
+      references: function (kind) { return referencesOf(context, kind); },
+      datasets: function () { return datasetsOf(context); },
+      onPending: function (pending) { setPending(context, pending); },
+      onApplied: function () { settled(context, { ok: true }); },
+      switchTab: function (tab) { opnview.editing.openDock(tab); context.rerender(); },
+      close: function () { clearPending(context); opnview.editing.closeDock(); context.rerender(); }
+    });
   }
 
   opnview.views.register({
@@ -748,6 +1147,16 @@
     heading: false,
     load: load,
     render: render,
+    aside: aside,
+    /* Edit mode is entered from the header, on the canvas. */
+    headerControls: function (context) {
+      var on = opnview.editing.editMode();
+      return [h("button", { key: "edit-toggle", type: "button", id: "edit-toggle", "class": "btn",
+        "aria-pressed": on ? "true" : "false", on: { click: function () {
+          opnview.editing.setEditMode(!on);
+          context.rerender();
+        } } }, t("edit.toggle"))];
+    },
     /* After every drawing: the grid positions, the measured sizes, the cut-off flags. */
     rendered: function (context) {
       if (layOut(context) && !context.state.relaid) {
@@ -759,12 +1168,14 @@
     /* Leaving the canvas stops its refresh. */
     leave: function (context) {
       if (context.state.scheduler) { context.state.scheduler.stop(); }
+      context.state.drag = null;
     },
     visible: function (context) {
       if (context.state.scheduler) { context.state.scheduler.shown(); }
     },
     resized: function (context) { context.rerender(); },
     keydown: function (context, event) {
+      if (event.key === "Escape" && context.state.picker) { context.state.picker = false; context.rerender(); return true; }
       if (event.key === "Escape" && context.state.detail) { closeDetail(context); return true; }
       var target = event.target;
       var editable = target && target.tagName && /^(INPUT|TEXTAREA|SELECT)$/i.test(String(target.tagName));
@@ -778,5 +1189,5 @@
   });
 
   /* What the tests reach. */
-  opnview.canvasView = { panel: panel, PANEL_CONDITIONS: PANEL_CONDITIONS.slice() };
+  opnview.canvasView = { panel: panel, PANEL_CONDITIONS: PANEL_CONDITIONS.slice(), undo: undo };
 })(this);
