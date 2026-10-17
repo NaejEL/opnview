@@ -1,6 +1,7 @@
 package decode
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -237,5 +238,28 @@ func TestAnUnreadableTimestampIsAnErrorRatherThanAZero(t *testing.T) {
 	// current year from the host clock is exactly what this refuses.
 	if _, err := (Normaliser{}).NormaliseSyslog("Dec 31 23:59:00"); err == nil {
 		t.Error("a year-less timestamp was dated with no reference time")
+	}
+}
+
+// TestNoZonelessTimestampIsReadBeforeTheOffsetIsRead is N4 of the live validation of 17 October
+// 2026: until the firewall's offset from UTC has been read, a zone-less timestamp is refused rather
+// than read as UTC, and a timestamp carrying its zone is read as it stands.
+func TestNoZonelessTimestampIsReadBeforeTheOffsetIsRead(t *testing.T) {
+	unknown := Normaliser{Reference: time.Date(2026, 10, 17, 16, 36, 51, 0, time.UTC), OffsetSeconds: 7200,
+		OffsetUnknown: true}
+	for _, text := range []string{"2026-10-17T18:36:51", "2026-10-17 18:36:51", "Oct 17 18:36:51"} {
+		if epoch, err := unknown.NormaliseFilterLogTimestamp(text); !errors.Is(err, ErrOffsetUnknown) {
+			t.Errorf("%q was read as %d (%v) before the offset was read", text, epoch, err)
+		}
+	}
+	if _, err := unknown.NormaliseSyslog("Oct 17 18:36:51"); !errors.Is(err, ErrOffsetUnknown) {
+		t.Errorf("a year-less syslog time was read before the offset was read (%v)", err)
+	}
+	if epoch, err := unknown.NormaliseISO("2026-10-17T18:36:51+02:00"); err != nil || epoch != unknown.Reference.Unix() {
+		t.Errorf("a zoned timestamp was read as %d (%v)", epoch, err)
+	}
+	if epoch, err := unknown.Relative().NormaliseISO("2026-10-17T18:36:51"); err != nil ||
+		epoch != unknown.Reference.Unix() {
+		t.Errorf("the relative normaliser read %d (%v)", epoch, err)
 	}
 }

@@ -25,6 +25,8 @@ import (
 	"github.com/NaejEL/opnview/internal/broker/infer"
 	"github.com/NaejEL/opnview/internal/broker/mirror"
 	"github.com/NaejEL/opnview/internal/broker/schedule"
+	"github.com/NaejEL/opnview/internal/collect/providertest"
+	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/storetest"
@@ -190,6 +192,12 @@ type world struct {
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
+	return newWorldWith(t, nil)
+}
+
+// newWorldWith is a world whose broker reads the timestamp normaliser given, nil for the default.
+func newWorldWith(t *testing.T, normaliser func(clock *testClock) func(context.Context) (decode.Normaliser, error)) *world {
+	t.Helper()
 	database := storetest.Open(t)
 	fake := newFakeFirewall(t)
 	clock := &testClock{now: time.Unix(1790000000, 0)}
@@ -197,8 +205,11 @@ func newWorld(t *testing.T) *world {
 		baseURL: fake.server.URL}
 	client := opnsense.NewClient(opnsense.Credentials{BaseURL: fake.server.URL, APIKey: w.key, APISecret: w.secret},
 		http.DefaultTransport, 5*time.Second)
-	w.broker = broker.New(client, mirror.New(database, func() int64 { return clock.Now().Unix() }),
-		broker.Options{Clock: clock, Firewall: func() string { return w.baseURL }})
+	options := broker.Options{Clock: clock, Firewall: func() string { return w.baseURL }}
+	if normaliser != nil {
+		options.Normaliser = normaliser(clock)
+	}
+	w.broker = broker.New(client, mirror.New(database, func() int64 { return clock.Now().Unix() }), options)
 	w.broker.Scheduler().SetSettings(schedule.Settings{MaxInFlight: 16, MaxPerSecond: 1e6})
 	t.Cleanup(w.broker.Close)
 	return w
