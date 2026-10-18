@@ -187,8 +187,22 @@ dev <command>` runs anything else in the same environment, and
 `docker compose run --rm schema-checks` runs the schema harness when your
 change touches `internal/store/schema.sql`, `sql/` or the model documents.
 
-`checks` is the per-iteration command: the everyday suite, without `-race`,
-whose `go test` wall time must stay under its 60 s budget or the run fails.
+**Testing discipline — the maintainer's rule, repeated many times, binding:**
+
+- **While you work, run only the tests of what you changed:** the package, plugin,
+  widget or front file you touched, plus its direct dependants, with
+  `docker compose run --rm dev go test -count=1 ./<that package>/...`. For a
+  performance change, measure only the widget or plugin you are optimising.
+- **Run `docker compose run --rm checks` exactly once, at the end, before you
+  commit or hand back.** Never after each change, and never several times "to
+  get a green run".
+- **Never run `pre-deployment` or a cold seed rebuild (`schema-checks`)** unless
+  the orchestrator's brief explicitly asks for that single run.
+- **Never make test timing, seed rebuilds or gates a goal of your work.** If the
+  final `checks` is slow or flaky, report it in one line and hand back.
+
+`checks` is the everyday suite, without `-race`, whose `go test` wall time must
+stay under its 60 s budget or the run fails.
 `docker compose run --rm pre-deployment` is the gate run before a deployment —
 `-race` over the whole suite, the tests moved out of `checks` with the
 `predeployment` build tag, the budget's own check and the schema checks with

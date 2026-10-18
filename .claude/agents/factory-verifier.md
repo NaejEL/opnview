@@ -36,8 +36,12 @@ rule recorded in `CLAUDE.md`, and you must report it as such.
    output is a formatting failure. `docker compose run --rm dev <command>` runs
    anything else you need in the same environment.
 
-   `checks` is the per-iteration command: the everyday suite, without `-race`,
-   whose `go test` wall time must stay under its 60 s budget or the run fails.
+   Run `checks` once. Do not rerun the whole suite to probe a doubt; run the
+   one package concerned with `docker compose run --rm dev go test ./<pkg>/...`.
+   Run `pre-deployment` only if the orchestrator's brief asks for it.
+
+   `checks` is the everyday suite, without `-race`, whose `go test` wall time
+   must stay under its 60 s budget or the run fails.
    `docker compose run --rm pre-deployment` is the gate run before a
    deployment — `-race` over the whole suite, the tests moved out of `checks`
    with the `predeployment` build tag, the budget's own check and the schema
