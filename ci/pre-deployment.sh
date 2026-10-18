@@ -277,6 +277,13 @@ broker_budgets() {
 }
 run_step 'broker budgets (go test -tags brokerbudget -run Budget)' broker_budgets
 
+# THE PROGRAMS UNDER ci/ THE SCHEMA CHECKS AND THE ANSWER DRIFT RUN, BUILT NOW, also on a quiet machine:
+# the schema checks build theirs first thing, and beside the two go test runs that build took half a
+# minute of their critical path (18 October 2026); built here, theirs is a hit in the shared build
+# cache. The answer drift's program is kept, so what runs after the schema checks is the program alone.
+run_step 'go build the programs of the schema checks and the answer drift' \
+  go build -o "$STEPS_DIR/" ./ci/planjson ./ci/statementfiles ./ci/plugintables ./ci/widgetbudget ./ci/answerdrift
+
 # The steps that need nothing from the others, in the background.
 start_step vet 'go vet -tags predeployment,reclassifycost,brokerbudget ./...' \
   go vet -tags predeployment,reclassifycost,brokerbudget ./...
@@ -291,9 +298,6 @@ else
     env OPNVIEW_TEST_DATABASE="$schema_test_database" bash "$REPO_ROOT/sql/schema-checks.sh"
 fi
 start_step selftest 'ci/budget-self-test.sh' bash "$REPO_ROOT/ci/budget-self-test.sh"
-# The answer drift's program is built now, beside the other steps, so that what runs after the schema
-# checks is the program alone.
-start_step answerdrift_build 'go build ./ci/answerdrift' go build -o "$STEPS_DIR/answerdrift" ./ci/answerdrift
 fuzz_ids=()
 for target in "FuzzHeader ./internal/push/protocols/syslog" "FuzzFraming ./internal/push/protocols/syslog" \
   "FuzzDecoder ./internal/push/protocols/netflow"; do
@@ -339,7 +343,7 @@ if [ "${#plain_packages[@]}" -gt 0 ]; then
   wait_step plain
 fi
 
-for id in vet "${fuzz_ids[@]}" selftest answerdrift_build schema; do
+for id in vet "${fuzz_ids[@]}" selftest schema; do
   [ -n "${step_pid[$id]:-}" ] || continue
   wait_step "$id"
 done
