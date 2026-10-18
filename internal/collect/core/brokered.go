@@ -60,10 +60,15 @@ func (c *Collector) DeclareCoreEndpoints() {
 
 // KnownNormaliser is the timestamp normaliser the broker's inference reads: the firewall's offset
 // as far as it is known, measured by nothing. Measuring it is a firewall call, which the broker must
-// never make from inside another one; a cursor read before the offset is known is ordered by it
-// alike, and the records a pass stores are normalised by the pass, which measures it first.
+// never make from inside another one. Before the offset has been read the normaliser says so, and
+// no instant is derived from the firewall's local time: the broker learns the shape and orders
+// the rows, but mirrors nothing that holds such a time (N4, live validation of 17 October 2026).
+// The records a pass stores are normalised by the pass, which measures the offset first.
 func (c *Collector) KnownNormaliser(context.Context) (decode.Normaliser, error) {
-	return decode.Normaliser{Reference: c.Clock.Now(), OffsetSeconds: c.FirewallOffsetSeconds()}, nil
+	c.Mutex.RLock()
+	offset, measured := c.OffsetSeconds, c.OffsetMeasured
+	c.Mutex.RUnlock()
+	return decode.Normaliser{Reference: c.Clock.Now(), OffsetSeconds: offset, OffsetUnknown: !measured}, nil
 }
 
 // The mirror's retention settings (A10 and A14 of the broker amendment): the mirror follows

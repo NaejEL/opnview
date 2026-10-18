@@ -124,4 +124,9 @@ type Collector struct {
 	// SequenceBoundObserver is told every recorded read of a sequence bound (pushhandlers.go). The mutex
 	// guards it.
 	SequenceBoundObserver SequenceBoundObserver
+	// firstDiscovery is closed when the run's first discovery pass has ended, and the two
+	// Onces make it once and close it once (firstdiscovery.go).
+	firstDiscovery       chan struct{}
+	firstDiscoveryMade   sync.Once
+	firstDiscoveryClosed sync.Once
 }

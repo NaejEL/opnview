@@ -35,3 +35,25 @@ func (c *Collector) PassOf(kind string) (func(context.Context) error, bool) {
 	}
 	return pass(c), true
 }
+
+// The kinds whose pass reads what discovery publishes -- the interfaces a measurement pass samples --
+// and so waits for the run's first discovery before it runs (N5, live validation of 17 October 2026;
+// firstdiscovery.go). A coordinator declares it from its own package, beside its RegisterPass.
+var discoveryReaders = struct {
+	sync.RWMutex
+	kinds map[string]bool
+}{kinds: map[string]bool{}}
+
+// RegisterDiscoveryReader declares that a kind's pass reads the discovery snapshot.
+func RegisterDiscoveryReader(kind string) {
+	discoveryReaders.Lock()
+	defer discoveryReaders.Unlock()
+	discoveryReaders.kinds[kind] = true
+}
+
+// ReadsDiscovery says whether a kind's pass waits for the run's first discovery.
+func ReadsDiscovery(kind string) bool {
+	discoveryReaders.RLock()
+	defer discoveryReaders.RUnlock()
+	return discoveryReaders.kinds[kind]
+}

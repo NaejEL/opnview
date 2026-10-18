@@ -77,8 +77,10 @@ const (
 	Refused
 )
 
-// Refresh performs one call for a datum.
-type Refresh func(ctx context.Context) Outcome
+// Refresh performs one call for a datum. It returns how the call ended, and the value every
+// caller waiting on the call is handed: whichever of them queued the job, and whichever job ran,
+// they all receive the result of the one call made.
+type Refresh func(ctx context.Context) (Outcome, any)
 
 // ErrBackingOff is a call not made because its datum, or the queue, is backing off.
 var ErrBackingOff = errors.New("schedule: backing off")
@@ -98,6 +100,8 @@ type datum struct {
 
 	queued   *job
 	inFlight bool
+	// running is the job in flight, which a caller arriving meanwhile joins.
+	running *job
 }
 
 type demand struct {
@@ -119,7 +123,7 @@ type job struct {
 
 type result struct {
 	outcome Outcome
-	err     error
+	value   any
 }
 
 // Stats are the counters a test and the catalogue read.
@@ -331,18 +335,27 @@ func (s *Scheduler) BackingOff(key string) bool {
 	return found && now.Before(entry.backoffUntil)
 }
 
-// Do runs one call for a datum now -- at the nearest deadline -- through the queue, and waits for
-// it. A call already queued or in flight for the datum is joined, never repeated: the broker never
-// has two calls in flight for one datum. A datum backing off is answered ErrBackingOff at once.
-func (s *Scheduler) Do(ctx context.Context, key, endpoint string, maxAge time.Duration, run Refresh) (Outcome, error) {
+// Do runs one call for a datum now -- at the nearest deadline -- through the queue, waits for it,
+// and returns its outcome and the value its Refresh returned. A call already queued or in flight
+// for the datum is joined, never repeated: the broker never has two calls in flight for one datum,
+// and the caller is handed the value of the call it joined, whoever queued it -- an advance
+// refresh included (N1, live validation of 17 October 2026). A datum backing off is answered
+// ErrBackingOff at once.
+func (s *Scheduler) Do(ctx context.Context, key, endpoint string, maxAge time.Duration, run Refresh) (Outcome, any, error) {
 	s.mutex.Lock()
 	now := s.clock.Now()
 	entry := s.entry(key, endpoint)
+	waiter := make(chan result, 1)
+	if entry.running != nil {
+		// A call in flight is joined: its answer is younger than the request.
+		entry.running.waiters = append(entry.running.waiters, waiter)
+		s.mutex.Unlock()
+		return wait(ctx, waiter)
+	}
 	if now.Before(s.queueUntil) || now.Before(entry.backoffUntil) {
 		s.mutex.Unlock()
-		return Failed, ErrBackingOff
+		return Failed, nil, ErrBackingOff
 	}
-	waiter := make(chan result, 1)
 	if entry.queued != nil {
 		entry.queued.waiters = append(entry.queued.waiters, waiter)
 		entry.queued.proactive = false
@@ -359,11 +372,16 @@ func (s *Scheduler) Do(ctx context.Context, key, endpoint string, maxAge time.Du
 	}
 	s.mutex.Unlock()
 	s.kick()
+	return wait(ctx, waiter)
+}
+
+// wait waits for a call's result, or for the caller's context to end.
+func wait(ctx context.Context, waiter chan result) (Outcome, any, error) {
 	select {
 	case got := <-waiter:
-		return got.outcome, got.err
+		return got.outcome, got.value, nil
 	case <-ctx.Done():
-		return Failed, ctx.Err()
+		return Failed, nil, ctx.Err()
 	}
 }
 
@@ -541,6 +559,7 @@ func (s *Scheduler) dispatch(ctx context.Context, chosen *job, now time.Time) {
 	entry := chosen.datum
 	entry.queued = nil
 	entry.inFlight = true
+	entry.running = chosen
 	entry.lastAttempt = now
 	s.inFlight++
 	s.starts = append(s.starts, now)
@@ -571,20 +590,21 @@ func (s *Scheduler) dispatch(ctx context.Context, chosen *job, now time.Time) {
 		run = entry.refresh
 	}
 	go func() {
-		outcome := Failed
+		outcome, value := Failed, any(nil)
 		if run != nil {
-			outcome = run(ctx)
+			outcome, value = run(ctx)
 		}
-		s.finished(chosen, outcome)
+		s.finished(chosen, outcome, value)
 	}()
 }
 
 // finished records a call's end: back-off on failure, the end of every back-off on success.
-func (s *Scheduler) finished(done *job, outcome Outcome) {
+func (s *Scheduler) finished(done *job, outcome Outcome, value any) {
 	s.mutex.Lock()
 	now := s.clock.Now()
 	entry := done.datum
 	entry.inFlight = false
+	entry.running = nil
 	s.inFlight--
 	switch outcome {
 	case Succeeded, Refused:
@@ -618,7 +638,7 @@ func (s *Scheduler) finished(done *job, outcome Outcome) {
 	waiters := done.waiters
 	s.mutex.Unlock()
 	for _, waiter := range waiters {
-		waiter <- result{outcome: outcome}
+		waiter <- result{outcome: outcome, value: value}
 	}
 	s.kick()
 }

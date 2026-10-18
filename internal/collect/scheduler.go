@@ -47,8 +47,29 @@ import (
 // passes whoever builds the loops (purge.go).
 func (c *Collector) Tasks(settings *config.Live) []core.Task {
 	tasks := append(append(c.coreTasks(settings), c.DeclaredTasks()...), c.DerivationTasks()...)
-	tasks = append(tasks, c.LiveTask(settings))
+	// The live passes sample what the baseline measurement pass samples: they wait alike (N5).
+	live := c.LiveTask(settings)
+	live.Run = c.afterFirstDiscovery(settings, live.Run)
+	tasks = append(tasks, live)
 	return append(tasks, c.listenTask()...)
+}
+
+// afterFirstDiscovery holds a pass until the run's first discovery pass has ended, so it reads
+// the interfaces discovery found rather than an empty snapshot. A run whose discovery loop is off
+// -- its interval not positive -- has no first discovery to wait for, and its passes run at once.
+func (c *Collector) afterFirstDiscovery(settings *config.Live, pass func(context.Context) error) func(
+	context.Context) error {
+	discovery := settings.Interval(func(s config.Config) time.Duration { return s.DiscoveryInterval })
+	return func(ctx context.Context) error {
+		if discovery() > 0 {
+			select {
+			case <-c.FirstDiscovery():
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return pass(ctx)
+	}
 }
 
 // coreTasks are the loops of discovery, the probe round, every core kind with a poll cadence and a
@@ -83,10 +104,16 @@ func (c *Collector) coreTasks(settings *config.Live) []core.Task {
 			continue
 		}
 		kind := cadence.Kind
+		run := c.afterPass(kind, pass)
+		// A kind whose coordinator declared that its pass reads what discovery publishes waits for the
+		// run's first discovery (N5, live validation of 17 October 2026).
+		if core.ReadsDiscovery(kind) {
+			run = c.afterFirstDiscovery(settings, run)
+		}
 		tasks = append(tasks, core.Task{
 			Name:       kind,
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.Interval(kind, provider.CadencePoll) }),
-			Run:        c.afterPass(kind, pass),
+			Run:        run,
 			RunAtStart: true,
 		})
 	}

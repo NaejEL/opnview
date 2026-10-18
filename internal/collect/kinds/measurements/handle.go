@@ -17,4 +17,6 @@ func On(state *core.Collector) *MeasurementCoordinator {
 
 func init() {
 	core.RegisterPass(Kind, func(c *core.Collector) func(context.Context) error { return On(c).CollectMeasurement })
+	// It samples the interfaces discovery publishes, so its passes wait for the run's first discovery (N5).
+	core.RegisterDiscoveryReader(Kind)
 }

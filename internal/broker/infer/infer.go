@@ -110,8 +110,11 @@ type Shape struct {
 // written into a schema; it only tells a key that is a value from one that is a field name.
 type Vocabulary func() []string
 
-// Learn infers an answer's shape and marks its value-keyed objects in place.
+// Learn infers an answer's shape and marks its value-keyed objects in place. A shape -- which
+// field is a timestamp, which orders the rows -- does not depend on the firewall's offset from
+// UTC, so it is learned whether or not the offset has been read; no instant is kept from it.
 func Learn(value *answer.Value, corrections Corrections, vocabulary Vocabulary, normaliser decode.Normaliser) Shape {
+	normaliser = normaliser.Relative()
 	shape := Shape{Types: map[string]string{}, Domains: map[string]bool{}}
 	names := map[string]bool{}
 	if vocabulary != nil {
@@ -375,8 +378,38 @@ func epochs(sample []string) bool {
 	return true
 }
 
-// Timestamp reports whether a text is in one of the shapes internal/decode reads.
+// DependsOnOffset reports whether an answer holds a timestamp read as the firewall's local time
+// while the normaliser does not know the firewall's offset from UTC: an instant nothing may be
+// derived from yet (N4, live validation of 17 October 2026).
+func DependsOnOffset(value *answer.Value, normaliser decode.Normaliser) bool {
+	if value == nil || !normaliser.OffsetUnknown {
+		return false
+	}
+	switch value.Kind {
+	case answer.String:
+		_, strict := Instant(value, normaliser)
+		_, relative := Instant(value, normaliser.Relative())
+		return relative && !strict
+	case answer.Object:
+		for _, field := range value.Fields {
+			if DependsOnOffset(field, normaliser) {
+				return true
+			}
+		}
+	case answer.Array:
+		for _, item := range value.Items {
+			if DependsOnOffset(item, normaliser) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Timestamp reports whether a text is in one of the shapes internal/decode reads. Whether it is
+// does not depend on the firewall's offset from UTC.
 func Timestamp(text string, normaliser decode.Normaliser) bool {
+	normaliser = normaliser.Relative()
 	if _, err := normaliser.NormaliseISO(text); err == nil {
 		return true
 	}

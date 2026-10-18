@@ -161,7 +161,6 @@ type Broker struct {
 	declared map[string]*declared // by endpoint path
 	roles    map[int64]map[string]string
 	honoured map[int64]map[string]*bool
-	flights  map[int64]*flight
 	datums   map[string]*mirror.Datum
 	firewall string
 	// version is the firewall's OPNsense version, read at discovery; empty until read.
@@ -189,9 +188,9 @@ type Counters struct {
 	PerEndpoint map[string]int
 }
 
-// flight is one call in progress, which every requester of its datum waits for.
-type flight struct {
-	done   chan struct{}
+// fetched is what one firewall call for a datum gave: the value the scheduler hands every caller
+// waiting on that call.
+type fetched struct {
 	answer *Answer
 	err    error
 }
@@ -212,7 +211,7 @@ func New(client *opnsense.Client, mirrored *mirror.Mirror, options Options) *Bro
 	broker := &Broker{client: client, mirror: mirrored, clock: options.Clock, options: options,
 		scheduler: schedule.New(options.Clock, options.Settings), declared: map[string]*declared{},
 		roles: map[int64]map[string]string{}, honoured: map[int64]map[string]*bool{},
-		flights: map[int64]*flight{}, datums: map[string]*mirror.Datum{}, lastRequests: map[int64]Request{},
+		datums: map[string]*mirror.Datum{}, lastRequests: map[int64]Request{},
 		counters: Counters{PerEndpoint: map[string]int{}},
 		recorder: recorder{fields: map[string][]string{}, ready: map[string]map[string]bool{},
 			kinds: map[string]map[string]string{}}}
@@ -528,12 +527,14 @@ func (b *Broker) Call(ctx context.Context, request Request) (*Answer, error) {
 	b.mutex.Lock()
 	b.lastRequests[datum.ID] = request
 	b.mutex.Unlock()
-	refresh := func(ctx context.Context) schedule.Outcome {
+	// The advance refresh is a call the scheduler runs: it makes the firewall call itself and waits
+	// on nothing, and a reader finding the datum stale meanwhile joins it (N1, live validation of
+	// 17 October 2026).
+	refresh := func(ctx context.Context) (schedule.Outcome, any) {
 		b.mutex.Lock()
 		last := b.lastRequests[datum.ID]
 		b.mutex.Unlock()
-		answer, err := b.shared(ctx, datum, key, last, false)
-		return scheduleOutcome(answer, err)
+		return b.call(ctx, datum, last)
 	}
 	if maxAge > 0 {
 		maxAge = b.scheduler.Demand(key, request.Endpoint.Path, request.Requester.Name, maxAge, floor, refresh)
@@ -553,7 +554,7 @@ func (b *Broker) Call(ctx context.Context, request Request) (*Answer, error) {
 			return served, nil
 		}
 	}
-	answer, err := b.shared(ctx, datum, key, request, true)
+	answer, err := b.shared(ctx, datum, key, request)
 	if err != nil {
 		return answer, err
 	}
@@ -696,53 +697,42 @@ func (b *Broker) fromMirror(ctx context.Context, shared *mirror.Datum, request R
 	return served
 }
 
-// shared runs one firewall call for a datum, or joins the one in progress. A reader's call goes
-// through the scheduler's queue; a refresh the scheduler started is already its call.
-func (b *Broker) shared(ctx context.Context, datum *mirror.Datum, key string, request Request, queued bool) (
-	*Answer, error) {
-	b.mutex.Lock()
-	if running, found := b.flights[datum.ID]; found {
-		b.mutex.Unlock()
-		select {
-		case <-running.done:
-			return running.answer, running.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-	current := &flight{done: make(chan struct{})}
-	b.flights[datum.ID] = current
-	b.mutex.Unlock()
-	defer func() {
-		b.mutex.Lock()
-		delete(b.flights, datum.ID)
-		b.mutex.Unlock()
-		close(current.done)
-	}()
-	if !queued {
-		current.answer, current.err = b.fetch(ctx, datum, request)
-		return current.answer, current.err
-	}
-	_, err := b.scheduler.Do(ctx, key, request.Endpoint.Path, b.maxAgeOf(request), func(callCtx context.Context) schedule.Outcome {
-		current.answer, current.err = b.fetch(ctx, datum, request)
-		return scheduleOutcome(current.answer, current.err)
-	})
+// call makes one firewall call for a datum, as the scheduler runs it: the outcome the scheduler
+// counts, and the answer every caller waiting on the call is handed.
+func (b *Broker) call(ctx context.Context, datum *mirror.Datum, request Request) (schedule.Outcome, any) {
+	answer, err := b.fetch(ctx, datum, request)
+	return scheduleOutcome(answer, err), &fetched{answer: answer, err: err}
+}
+
+// shared answers a reader from one firewall call for a datum: its own, queued, or the one already
+// queued or in flight -- another reader's or the advance refresh's -- which the scheduler joins it
+// to. The scheduler is the one place a datum's calls are shared, so nothing here waits on another
+// caller: a reader waits on a call, and a call waits on the firewall only (N1, live validation of
+// 17 October 2026). The call runs under the scheduler's context, not the reader's: a reader that
+// gives up does not end a call other readers share.
+func (b *Broker) shared(ctx context.Context, datum *mirror.Datum, key string, request Request) (*Answer, error) {
+	_, value, err := b.scheduler.Do(ctx, key, request.Endpoint.Path, b.maxAgeOf(request),
+		func(callCtx context.Context) (schedule.Outcome, any) { return b.call(callCtx, datum, request) })
 	if errors.Is(err, schedule.ErrBackingOff) {
 		// The datum backs off: its last outcome is served, with when it was had.
 		last := b.mirror.Snapshot(datum)
-		current.answer = &Answer{Response: opnsense.Response{Endpoint: request.Endpoint,
+		backedOff := &Answer{Response: opnsense.Response{Endpoint: request.Endpoint,
 			Outcome: opnsense.Outcome(last.Outcome), StatusCode: last.StatusCode, Detail: last.Detail},
 			ServedFrom: ServedFromMirror, FetchedAt: last.AttemptedAt, Datum: last.ID, Holding: answer.Everything}
 		if last.Outcome == "" {
-			current.answer.Response.Outcome = opnsense.OutcomeTransportFailure
-			current.answer.Response.Detail = "the firewall is backed off after failing"
+			backedOff.Response.Outcome = opnsense.OutcomeTransportFailure
+			backedOff.Response.Detail = "the firewall is backed off after failing"
 		}
-		return current.answer, nil
+		return backedOff, nil
 	}
-	if err != nil && current.answer == nil {
-		current.err = err
+	if err != nil {
+		return nil, err
 	}
-	return current.answer, current.err
+	got, _ := value.(*fetched)
+	if got == nil {
+		return nil, fmt.Errorf("broker: the call for %s returned no answer", request.Endpoint.Path)
+	}
+	return got.answer, got.err
 }
 
 // serveFresh shapes a fresh answer for one requester: the page it asked for, or the rows past
@@ -823,6 +813,15 @@ func (b *Broker) fetch(ctx context.Context, datum *mirror.Datum, request Request
 	keepLearnedCursor(view, &shape)
 	value, pages, response = b.walkPages(ctx, datum, request, options, shape, value, response)
 	_ = pages
+	if infer.DependsOnOffset(value, normaliser) {
+		// The answer holds the firewall's local time and its offset from UTC has not been read:
+		// nothing is derived from it -- no row's instant, no gap, no window verdict -- and it is
+		// served to the reader alone, unmirrored, until the offset is known (N4).
+		b.options.Log(fmt.Sprintf("%s was not mirrored: it holds timestamps with no zone and the firewall's "+
+			"offset from UTC has not been read yet", request.Endpoint.Path))
+		return &Answer{Response: response, Value: value, Holding: answer.Everything, ServedFrom: ServedFromFirewall,
+			FetchedAt: started.Unix(), Datum: datum.ID}, nil
+	}
 	if window != nil {
 		b.verifyWindow(ctx, datum, request.Endpoint.Path, windowName, *window, shape, value, normaliser)
 	}
