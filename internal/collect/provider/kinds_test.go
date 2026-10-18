@@ -8,9 +8,13 @@ import (
 	"testing/fstest"
 )
 
-// TestAddingAKindFileAddsAKind is PA-AC3's second half: a kind is a file. A tree holding the embedded
-// kind files and one more file reads that kind, its attributes and its contract, with no Go change.
-func TestAddingAKindFileAddsAKind(t *testing.T) {
+// TestAddingAKindFileAddsAKindContract is PA-AC3's second half: a kind's contract is a file. A tree holding
+// the embedded kind files and one more file reads that kind, its attributes and its contract, with no Go
+// change. What the file alone does not give a core kind is a collection loop: the records of a core kind are
+// stored in the core's own tables, so a core kind is collected only once a coordinator directory under
+// internal/collect/kinds/ registers its pass (core.RegisterPass) -- docs/plugins.md, *Kinds*, states that
+// seam. A kind a plugin declares for itself needs neither, and gets the generic loop.
+func TestAddingAKindFileAddsAKindContract(t *testing.T) {
 	t.Parallel()
 	tree := fstest.MapFS{}
 	if err := fs.WalkDir(kindFiles, ".", func(path string, entry fs.DirEntry, err error) error {

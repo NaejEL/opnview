@@ -34,15 +34,17 @@ func (s *FlowStore) ProviderID(ctx context.Context, kind, providerKey string) (i
 	return id, nil
 }
 
-// RegisterDeclarations writes what declarations say of the registry, in three statements whatever their
+// RegisterDeclarations writes what declarations say of the registry, in four statements whatever their
 // number (PA2 of the plugin-API amendment): each kind's attribute, its provider_kind row, inserted or
 // brought up to date; each provider's registry row, inserted when absent and otherwise left exactly as it
-// is, activeness included; and the availability row every registry row has. It is how the DDL can seed no
-// product row: the built-ins' declarations write theirs when they load, and a plugin added later writes
-// its own the same way.
+// is, activeness included; the availability row every registry row has; and each declared gap reason's
+// gap_reason row, inserted or given its declarer (decision 4 of the amendment's first verification). It is
+// how the DDL can seed no product row: the built-ins' declarations write theirs when they load, and a
+// plugin added later writes its own the same way. A reason no longer declared keeps its row, which the
+// gaps recorded under it still reference.
 // A provider of a kind the declarations do not name carries no attribute, and the row is refused.
 func (s *FlowStore) RegisterDeclarations(ctx context.Context, kinds []vocab.ProviderKind,
-	providers []vocab.ProviderDeclaration, now int64) error {
+	providers []vocab.ProviderDeclaration, gapReasons []vocab.GapReasonDeclaration, now int64) error {
 	kindNames := make([]string, 0, len(kinds))
 	concurrent := make([]bool, 0, len(kinds))
 	for _, kind := range kinds {
@@ -80,6 +82,18 @@ func (s *FlowStore) RegisterDeclarations(ctx context.Context, kinds []vocab.Prov
 			"SELECT p.id, 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0 FROM provider AS p "+
 			"WHERE NOT EXISTS (SELECT 1 FROM source_availability AS a WHERE a.provider_id = p.id)"); err != nil {
 		return fmt.Errorf("store: giving the providers their availability rows: %w", err)
+	}
+	reasons := make([]string, 0, len(gapReasons))
+	declarers := make([]string, 0, len(gapReasons))
+	for _, declared := range gapReasons {
+		reasons = append(reasons, string(declared.Reason))
+		declarers = append(declarers, declared.DeclaredBy)
+	}
+	if _, err := transaction.ExecContext(ctx,
+		"INSERT INTO gap_reason (reason, declared_by) SELECT r, d FROM unnest(CAST($1 AS TEXT[]), CAST($2 AS TEXT[])) AS g (r, d) "+
+			"ON CONFLICT (reason) DO UPDATE SET declared_by = EXCLUDED.declared_by "+
+			"WHERE gap_reason.declared_by IS DISTINCT FROM EXCLUDED.declared_by", reasons, declarers); err != nil {
+		return fmt.Errorf("store: registering the gap reasons: %w", err)
 	}
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("store: committing the registration of the declarations: %w", err)

@@ -1819,10 +1819,11 @@ expect_sql_failure 'GAP-AC1 a gap attributed to a provider that does not exist i
      VALUES (999999999, $NOW - 60, $NOW, 'digest_outside_returned_window', $NOW);"
 
 # GAP-AC2: the reasons are the MEASURED failure modes, and the vocabulary is
-# closed because these are opnview's own detections rather than values any
-# endpoint reports -- so enumerating them invents nothing. RESTATED by step 5A,
-# which adds the fourth: a Public Suffix List download that failed, leaving the
-# list held since the last refresh in use.
+# declared because these are opnview's own detections rather than values any
+# endpoint reports -- so declaring them invents nothing. Each is a row of
+# gap_reason, which collection_gap.reason references: a reason nothing declared
+# is rejected. RESTATED by step 5A, which adds the fourth: a Public Suffix List
+# download that failed, leaving the list held since the last refresh in use.
 check 'GAP-AC2 all four measured failure modes are represented in the seed' \
     'digest_outside_returned_window|download_failed|eve_rotation_lost|resolver_window_not_honoured' \
     "$(q "$MAIN_DB" "SELECT string_agg(CAST(reason AS text), '|' ORDER BY reason) FROM

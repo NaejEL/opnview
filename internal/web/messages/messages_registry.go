@@ -52,8 +52,8 @@ func vocabularyKeys() []Key {
 	for _, reason := range coreGapReasons {
 		keys = append(keys, GapReasonKey(string(reason)))
 	}
-	for _, reason := range push.ProtocolGapReasons() {
-		keys = append(keys, GapReasonKey(reason))
+	for _, declared := range push.DeclaredGapReasons() {
+		keys = append(keys, GapReasonKey(declared.Reason))
 	}
 	return keys
 }

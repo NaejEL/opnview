@@ -2,6 +2,7 @@
   "kind" : "security_event",
   "description" : "Intrusion-detection events: data source 2. Several providers may be active at once; every event names the provider that reported it, and the kind keeps a watermark per file.",
   "concurrent" : true,
+  "gap_reasons" : ["eve_rotation_lost"],
   "push" : false,
   "bindable" : true,
   "cadences" : [

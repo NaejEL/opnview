@@ -119,167 +119,6 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 	}
 }
 
-// TestASeriesSumsToItsWindowAndMarksItsGaps is AC23.
-func TestASeriesSumsToItsWindowAndMarksItsGaps(t *testing.T) {
-	t.Parallel()
-	network := storetest.Populated(t, 2, 6, 600, 3*86400)
-	ctx := context.Background()
-	from := network.Now - 2*86400 - 1700
-	to := network.Now + 2*3600
-	// A collection gap over two hours of the window.
-	gapStart := vocab.PeriodHour.SlotStart(network.Now-30*3600) + 600
-	providerID, _ := network.DB.ProviderID(ctx, "firewall_log", "pf")
-	if err := network.DB.RecordCollectionGap(ctx, vocab.CollectionGap{ProviderID: providerID,
-		IntervalStartAt: gapStart, IntervalEndAt: gapStart + 3600, Reason: vocab.GapDigestOutsideWindow,
-		DetectedAt: network.Now}); err != nil {
-		t.Fatalf("recording a gap: %v", err)
-	}
-	// And an hour with no flow at all inside the covered interval.
-	silent := vocab.PeriodHour.SlotStart(network.Now - 10*3600)
-	if _, err := network.DB.DB().Exec("DELETE FROM flow WHERE observed_at >= $1 AND observed_at < $2",
-		silent, silent+3600); err != nil {
-		t.Fatalf("emptying an hour: %v", err)
-	}
-	// A flow is removed only by the retention purge, which removes the slots with it; this
-	// test removes some by hand, so it forces their hour.
-	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now,
-		append(allFlowInstants(t, network.DB), silent)); err != nil {
-		t.Fatalf("recomputing: %v", err)
-	}
-
-	buckets, err := network.DB.ReadVolumeSeries(ctx, from, to, vocab.PeriodHour, network.Now)
-	if err != nil {
-		t.Fatalf("reading the series: %v", err)
-	}
-	window, err := network.DB.ReadVolumeWindow(ctx, from, to, network.Now)
-	if err != nil {
-		t.Fatalf("reading the window: %v", err)
-	}
-	var sum int64
-	var gaps, zeroes int
-	for _, bucket := range buckets {
-		if bucket.From%3600 != 0 && bucket.From != from {
-			t.Errorf("a bucket starts off a slot boundary: %d", bucket.From)
-		}
-		if bucket.Total != nil {
-			sum += bucket.Total.Bytes
-		}
-		overlapsGap := bucket.From < gapStart+3600 && bucket.To >= gapStart
-		future := bucket.To > network.Now
-		switch {
-		case overlapsGap || future:
-			gaps++
-			if !bucket.Gap {
-				t.Errorf("the bucket [%d, %d) is not marked a gap", bucket.From, bucket.To)
-			}
-			if future && bucket.From >= network.Now && bucket.Total != nil {
-				t.Errorf("a bucket after now carries a figure: %+v", *bucket.Total)
-			}
-		case bucket.From == silent:
-			zeroes++
-			if bucket.Gap || bucket.Total == nil || bucket.Total.Bytes != 0 {
-				t.Errorf("a covered hour with no flow is %+v, not a zero", bucket)
-			}
-		}
-	}
-	if gaps == 0 || zeroes != 1 {
-		t.Errorf("the series exercised %d gaps and %d zero buckets", gaps, zeroes)
-	}
-	if sum != window.Total().Bytes {
-		t.Errorf("the buckets sum to %d bytes, the window to %d", sum, window.Total().Bytes)
-	}
-}
-
-// TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree is AC24, the rule of
-// docs/mockups/check-tree-reconciliation.js: children sum to their parent, and each side's
-// first level sums to every flow of the window.
-func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
-	t.Parallel()
-	network := storetest.Populated(t, 3, 9, 700, 2*86400)
-	attributeNetwork(t, network)
-	ctx := context.Background()
-	if _, err := network.DB.DB().Exec(`INSERT INTO owner (id, display_name, created_at, updated_at)
-		VALUES (1, 'example owner', 0, 0)`); err != nil {
-		t.Fatalf("writing an owner: %v", err)
-	}
-	if _, err := network.DB.DB().Exec(`UPDATE client SET owner_id = 1, owner_assigned_at = 0 WHERE id % 3 = 0`); err != nil {
-		t.Fatalf("assigning an owner: %v", err)
-	}
-	if _, err := network.DB.DB().Exec(`INSERT INTO geo_asn (address, provider_id, lookup_state,
-		country_code, asn, operator, dataset_build_at, looked_up_at)
-		SELECT DISTINCT dst_address, (SELECT id FROM provider WHERE kind = 'ip_geolocation'), 'resolved', 'ZZ',
-		       64500 + (length(dst_address) % 3), 'example operator', 1, 1
-		FROM flow WHERE dst_interface_id IS NULL AND id % 3 = 0`); err != nil {
-		t.Fatalf("placing addresses: %v", err)
-	}
-	if _, err := network.DB.DB().Exec(`INSERT INTO geo_asn (address, lookup_state, looked_up_at)
-		SELECT DISTINCT dst_address, 'miss', 1 FROM flow WHERE dst_interface_id IS NULL AND id % 3 = 1
-		ON CONFLICT DO NOTHING`); err != nil {
-		t.Fatalf("recording misses: %v", err)
-	}
-	from, to := network.Now-86400, network.Now
-	var flows, bytes, blocked int64
-	if err := network.DB.DB().QueryRow(`SELECT count(*), sum(packet_bytes),
-		sum(CASE WHEN action IN ('block', 'reject') THEN 1 ELSE 0 END) FROM flow
-		WHERE observed_at >= $1 AND observed_at < $2`, from, to).Scan(&flows, &bytes, &blocked); err != nil {
-		t.Fatalf("counting the window: %v", err)
-	}
-	for _, root := range []reads.TreeRoot{reads.TreeRootInterface, reads.TreeRootClient, reads.TreeRootOwner} {
-		tree, err := network.DB.ReadConnectionTree(ctx, from, to, root)
-		if err != nil {
-			t.Fatalf("reading the %s tree: %v", root, err)
-		}
-		for side, nodes := range map[string][]*reads.TreeNode{"inside": tree.Inside, "outside": tree.Outside} {
-			var levelBytes, levelConnections, levelBlocked int64
-			keys := map[string]bool{}
-			for _, node := range nodes {
-				if keys[node.Key] {
-					t.Errorf("%s root, %s side: the node %s appears twice", root, side, node.Key)
-				}
-				keys[node.Key] = true
-				levelBytes += node.Bytes
-				levelConnections += node.Connections
-				levelBlocked += node.Blocked
-				if len(node.Children) == 0 {
-					continue
-				}
-				var childBytes, childConnections, childBlocked int64
-				for _, child := range node.Children {
-					childBytes += child.Bytes
-					childConnections += child.Connections
-					childBlocked += child.Blocked
-				}
-				if childBytes != node.Bytes || childConnections != node.Connections || childBlocked != node.Blocked {
-					t.Errorf("%s root, %s side: the children of %s sum to %d bytes, %d connections, %d "+
-						"blocked; the node holds %d, %d, %d", root, side, node.Key, childBytes,
-						childConnections, childBlocked, node.Bytes, node.Connections, node.Blocked)
-				}
-			}
-			if levelBytes != bytes || levelConnections != flows || levelBlocked != blocked {
-				t.Errorf("%s root, %s side: the first level holds %d bytes in %d connections, the "+
-					"window %d in %d", root, side, levelBytes, levelConnections, bytes, flows)
-			}
-		}
-		if root == reads.TreeRootInterface {
-			found := map[string]bool{}
-			for _, node := range tree.Outside {
-				found[node.Key[:min(len(node.Key), 8)]] = true
-				for _, child := range node.Children {
-					found[child.Key[:min(len(child.Key), 5)]] = true
-				}
-			}
-			for _, prefix := range []string{"operator", "unplaced", "inter_in", "site:"} {
-				if !found[prefix] {
-					t.Errorf("the outside side holds no %s node, so the case is not exercised", prefix)
-				}
-			}
-		}
-	}
-	if _, err := network.DB.ReadConnectionTree(ctx, from, to, reads.TreeRoot("example-root")); err == nil {
-		t.Error("an unknown root was accepted")
-	}
-}
-
 // TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary is AC25.
 func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 	t.Parallel()
@@ -346,10 +185,21 @@ func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 	add("dns_list_not_recorded", "SELECT count(*) FROM dns_resolution WHERE action IN ('block', 'drop') AND blocklist_id IS NULL")
 	add("security_engine", "SELECT count(*) FROM security_event WHERE event_action = 'blocked'")
 
-	counts, err := network.DB.ReadBlockedDecisionCounts(ctx, 0, network.Now+1)
+	counts := map[string]int64{}
+	rows, err := network.DB.DB().QueryContext(ctx, `SELECT engine_kind, count(*) FROM blocked_decision
+		WHERE occurred_at >= 0 AND occurred_at < $1 GROUP BY engine_kind`, network.Now+1)
 	if err != nil {
 		t.Fatalf("counting the refusals: %v", err)
 	}
+	for rows.Next() {
+		var kind string
+		var count int64
+		if err := rows.Scan(&kind, &count); err != nil {
+			t.Fatal(err)
+		}
+		counts[kind] = count
+	}
+	_ = rows.Close()
 	for kind, want := range direct {
 		if want == 0 {
 			t.Errorf("the network holds no %s refusal, so the kind is not exercised", kind)
@@ -685,38 +535,6 @@ func TestAThroughputIsDerivedFromConsecutiveCountersAndAResetIsNotANegativeRate(
 		if point.PerSecond != nil && *point.PerSecond < 0 {
 			t.Errorf("a negative rate: %+v", point)
 		}
-	}
-}
-
-// TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero is AC2's code half.
-func TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero(t *testing.T) {
-	t.Parallel()
-	network := storetest.NewNetwork(t, 1, 2)
-	ctx := context.Background()
-	client := network.Clients[0]
-	key := endpointKey(client.Device, client.Address)
-	for _, at := range []int64{100, 400} {
-		insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureCumulativeBytesIn, vocab.UnitByte, 300, network.Now+at)
-		insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureCumulativeBytesOut, vocab.UnitByte, 200, network.Now+at)
-	}
-	// A per-peer reading is not counted again: the totals already hold it.
-	insertReading(t, network.DB, vocab.SubjectInterfaceEndpointPair,
-		pairKey(client.Device, client.Address, storetest.Outside(1, client.V6)),
-		vocab.MeasureCumulativeBytesIn, vocab.UnitByte, 300, network.Now+100)
-	sampled, state, err := network.DB.ReadSampledBytes(ctx, network.Now, network.Now+1000)
-	if err != nil {
-		t.Fatalf("reading the sampled bytes: %v", err)
-	}
-	if state != samples.Sampled || len(sampled) != 1 || sampled[0].Bytes != 1000 || sampled[0].Samples != 2 ||
-		sampled[0].SampledSeconds != 2*vocab.SampleSeconds {
-		t.Errorf("the sampled bytes are %s %+v", state, sampled)
-	}
-	_, state, err = network.DB.ReadSampledBytes(ctx, network.Now+2000, network.Now+3000)
-	if err != nil {
-		t.Fatalf("reading an unsampled period: %v", err)
-	}
-	if state != samples.NotSampled {
-		t.Errorf("a period with no sample is %s, not not_sampled", state)
 	}
 }
 

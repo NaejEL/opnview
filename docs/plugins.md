@@ -916,7 +916,10 @@ A kind is a contract: what an implementation's script exports, and the fields of
 answers. **A core kind is a file**, `internal/collect/provider/kinds/<kind>.json`, found by walking
 that directory: its description, its attributes (`concurrent`, `push`, `bindable`), its cadences and
 page sizes, what sizing measures, its functions, its exported values and its records. Adding a core
-kind is adding a file. Every contract is rendered, table by table, in `docs/plugin-kinds.md`, which a
+kind's contract is adding a file. Its records are stored in the core's own tables, so a core kind with
+a poll cadence is collected only once a coordinator -- a directory under `internal/collect/kinds/`
+that registers its pass with `core.RegisterPass` -- stores them; a file alone gets no loop. A kind a
+plugin declares for itself needs neither (*Kinds of the plugin's own*). Every contract is rendered, table by table, in `docs/plugin-kinds.md`, which a
 test holds equal to the files. The host converts what a script answers against exactly those tables:
 a missing required field, or a field the record does not have, is `records_invalid`.
 

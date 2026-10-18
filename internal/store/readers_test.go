@@ -5,9 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/storetest"
-	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // B8d and decision 10 of specs/SPEC-step-5b-widget-api.md: the read functions run on
@@ -26,9 +24,6 @@ func TestTheReadFunctionsRunPreparedStatementsFromOneCache(t *testing.T) {
 		if _, err := network.DB.ReadVolumeWindow(ctx, from, to, network.Now); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := network.DB.ReadConnectionTree(ctx, from, to, reads.TreeRootOwner); err != nil {
-			t.Fatal(err)
-		}
 		if _, err := network.DB.ReadAttributionRate(ctx, from, to, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -39,9 +34,6 @@ func TestTheReadFunctionsRunPreparedStatementsFromOneCache(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := network.DB.ReadPublicAddresses(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := network.DB.ReadSiteTotals(ctx, vocab.PeriodDay, from, to); err != nil {
 			t.Fatal(err)
 		}
 	}

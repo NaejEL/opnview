@@ -8,11 +8,15 @@ import (
 
 	opnview "github.com/NaejEL/opnview"
 	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/push"
+	// Every push protocol registers itself, with the gap reasons it declares (GapReasons).
+	_ "github.com/NaejEL/opnview/internal/push/protocols"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // RegisterProviderDeclarations writes what declarations say of the registry -- kinds with their
-// attributes, providers' rows -- in a bounded number of statements (flows.RegisterDeclarations).
+// attributes, providers' rows, and the gap reasons the kinds and the push sources declare -- in a
+// bounded number of statements (flows.RegisterDeclarations).
 func (s *Store) RegisterProviderDeclarations(ctx context.Context, kinds []provider.KindAttributes,
 	providers []provider.Manifest, now int64) error {
 	rows := make([]vocab.ProviderKind, 0, len(kinds))
@@ -24,7 +28,31 @@ func (s *Store) RegisterProviderDeclarations(ctx context.Context, kinds []provid
 		declared = append(declared, vocab.ProviderDeclaration{Kind: manifest.Kind, Key: manifest.Key,
 			DisplayName: manifest.DisplayName})
 	}
-	return s.RegisterDeclarations(ctx, rows, declared, now)
+	return s.RegisterDeclarations(ctx, rows, declared, GapReasons(kinds), now)
+}
+
+// GapReasons are the gap reasons the declarations name: each kind's own (its file's gap_reasons), then the
+// push sources' and every push protocol's (push.DeclaredGapReasons). A reason two declarers name is the
+// first's. collection_gap.reason references the registry they are written to, so no reason is listed in
+// the schema and a gap of a reason nothing declares is refused.
+func GapReasons(kinds []provider.KindAttributes) []vocab.GapReasonDeclaration {
+	var reasons []vocab.GapReasonDeclaration
+	seen := map[string]bool{}
+	add := func(reason, declaredBy string) {
+		if !seen[reason] {
+			seen[reason] = true
+			reasons = append(reasons, vocab.GapReasonDeclaration{Reason: vocab.GapReason(reason), DeclaredBy: declaredBy})
+		}
+	}
+	for _, kind := range kinds {
+		for _, reason := range kind.GapReasons {
+			add(reason, "kind "+kind.Kind)
+		}
+	}
+	for _, declared := range push.DeclaredGapReasons() {
+		add(declared.Reason, declared.DeclaredBy)
+	}
+	return reasons
 }
 
 // RegisterBuiltinDeclarations writes the built-ins' registry rows -- the core kinds' files and the
@@ -64,10 +92,12 @@ func builtinDeclarationsText() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(struct {
-		Kinds     []provider.KindAttributes
-		Providers []provider.Manifest
-		Measures  []vocab.DeclaredMeasure
-	}{append(kinds, pluginKinds...), append(providers, pluginProviders...), measures})
+		Kinds      []provider.KindAttributes
+		Providers  []provider.Manifest
+		Measures   []vocab.DeclaredMeasure
+		GapReasons []vocab.GapReasonDeclaration
+	}{append(kinds, pluginKinds...), append(providers, pluginProviders...), measures,
+		GapReasons(append(kinds, pluginKinds...))})
 }
 
 // RecordProviderValues replaces the exported values of the given implementations with those given (PA6

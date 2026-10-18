@@ -2,6 +2,7 @@
   "kind" : "dns_lookup",
   "description" : "The lookups a resolver answered, per querying client: data source 5, the sole source of site names. The kind never presents what it read as coverage of a window.",
   "concurrent" : false,
+  "gap_reasons" : ["resolver_window_not_honoured"],
   "push" : false,
   "bindable" : true,
   "cadences" : [

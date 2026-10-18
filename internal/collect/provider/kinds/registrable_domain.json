@@ -2,6 +2,7 @@
   "kind" : "registrable_domain",
   "description" : "Groups site names by their registrable domain, at read time; no stored name is ever altered. One provider is active at a time; with none, no grouping is offered.",
   "concurrent" : false,
+  "gap_reasons" : ["download_failed"],
   "push" : false,
   "bindable" : true,
   "cadences" : [

@@ -130,6 +130,10 @@ type Contract struct {
 	// LiveAnswer names the answer table a live pass of the kind returns, when the kind accepts a live pass
 	// (docs/plugins.md, "Live pass"): only a kind whose records a fine sample can be.
 	LiveAnswer string `json:"live_answer,omitempty"`
+	// GapReasons are the reasons of the collection gaps the kind's coordinator records: what its own reads
+	// reveal they missed. They are rows of the database's gap-reason registry, which collection_gap.reason
+	// references, so a gap of a reason nothing declares is refused.
+	GapReasons []string `json:"gap_reasons,omitempty"`
 	// Registered are registry rows the kind's declaration writes itself, for an implementation no
 	// plugin declares: a core-only kind's historical provider.
 	Registered []RegisteredProvider `json:"registered,omitempty"`

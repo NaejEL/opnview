@@ -10,6 +10,13 @@ type ProviderKind struct {
 	Concurrent bool
 }
 
+// GapReasonDeclaration is a row of the gap-reason registry, gap_reason: a reason a collection gap may be
+// recorded for, and what declares it -- a kind's file, the push sources or one push protocol.
+type GapReasonDeclaration struct {
+	Reason     GapReason
+	DeclaredBy string
+}
+
 // ProviderDeclaration is a registry row as a declaration states it: its kind, its key within the kind,
 // and what it is called.
 type ProviderDeclaration struct {

@@ -8,7 +8,6 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/flows"
-	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -299,8 +298,10 @@ func TestThisFirewallIsDecidedAsOfTheRowsInstant(t *testing.T) {
 	}
 }
 
-// TestThisFirewallIsItsOwnKeyAndHasATreeNodeOnEachSide is AC4.
-func TestThisFirewallIsItsOwnKeyAndHasATreeNodeOnEachSide(t *testing.T) {
+// TestThisFirewallIsItsOwnKeyInTheVolumeFamilyAndTheWindow is AC4 for the volume family and the
+// window. The connection tree AC4 also names is now the connection_tree widget plugin's, whose level
+// sums TestEveryReconciliationCountsAPairedConnectionOnce (internal/widget/widgets) checks.
+func TestThisFirewallIsItsOwnKeyInTheVolumeFamilyAndTheWindow(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 6}, {4, 11}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
@@ -361,74 +362,7 @@ func TestThisFirewallIsItsOwnKeyAndHasATreeNodeOnEachSide(t *testing.T) {
 				window.ByDirection()[vocab.DirectionFromThisFirewall].Bytes; got != direct {
 				t.Errorf("the window's this-firewall directions hold %d bytes, a direct sum %d", got, direct)
 			}
-
-			for _, root := range []reads.TreeRoot{reads.TreeRootInterface, reads.TreeRootClient, reads.TreeRootOwner} {
-				tree, err := network.DB.ReadConnectionTree(ctx, network.Now-86400, network.Now+1, root)
-				if err != nil {
-					t.Fatalf("reading the tree: %v", err)
-				}
-				var insideFirewall, outsideFirewall int64
-				for _, node := range tree.Inside {
-					if node.Key == reads.TreeNodeThisFirewall {
-						insideFirewall = node.Bytes
-					}
-					assertLevelSums(t, root, node)
-				}
-				for _, node := range tree.Outside {
-					if node.Key == reads.TreeNodeThisFirewall {
-						outsideFirewall = node.Bytes
-					}
-					assertLevelSums(t, root, node)
-				}
-				fromFirewall := storetest.QueryInt(t, network.DB, `SELECT coalesce(sum(packet_bytes), 0) FROM classified_flow
-					WHERE traffic_direction IN ('to_this_firewall', 'from_this_firewall') AND peer_address IS NOT NULL`)
-				toFirewall := storetest.QueryInt(t, network.DB, `SELECT coalesce(sum(packet_bytes), 0) FROM classified_flow
-					WHERE traffic_direction IN ('to_this_firewall', 'from_this_firewall') AND peer_address IS NULL`)
-				if insideFirewall != fromFirewall || fromFirewall == 0 {
-					t.Errorf("%s root: the inside this-firewall node holds %d bytes, its flows %d",
-						root, insideFirewall, fromFirewall)
-				}
-				if outsideFirewall != toFirewall || toFirewall == 0 {
-					t.Errorf("%s root: the outside this-firewall node holds %d bytes, its flows %d",
-						root, outsideFirewall, toFirewall)
-				}
-				// The firewall's ends are under no operator, no unplaced condition, no
-				// "interface:none" and no "client:none": every flow of this firewall is
-				// accounted for by the two nodes above, so the other nodes hold exactly the
-				// rest.
-				var rest int64
-				for _, node := range tree.Inside {
-					if node.Key != reads.TreeNodeThisFirewall {
-						rest += node.Bytes
-					}
-				}
-				others := storetest.QueryInt(t, network.DB, `SELECT coalesce(sum(packet_bytes), 0) FROM classified_flow
-					WHERE observed_at >= $1 AND observed_at < $2 AND exit_leg_device IS NULL
-					  AND NOT (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
-					           AND (peer_address IS NOT NULL OR local_interface_id IS NULL))`,
-					network.Now-86400, network.Now+1)
-				if rest != others {
-					t.Errorf("%s root: the other inside nodes hold %d bytes, the other flows %d", root, rest, others)
-				}
-			}
 		})
-	}
-}
-
-// assertLevelSums checks that a node's children sum to it.
-func assertLevelSums(t *testing.T, root reads.TreeRoot, node *reads.TreeNode) {
-	t.Helper()
-	if len(node.Children) == 0 {
-		return
-	}
-	var bytes, connections int64
-	for _, child := range node.Children {
-		bytes += child.Bytes
-		connections += child.Connections
-	}
-	if bytes != node.Bytes || connections != node.Connections {
-		t.Errorf("%s root: the children of %s sum to %d bytes and %d connections, the node holds %d and %d",
-			root, node.Key, bytes, connections, node.Bytes, node.Connections)
 	}
 }
 
@@ -658,8 +592,7 @@ func TestReclassifyEverythingPurgesThePhantomClientsAtFirewallAddresses(t *testi
 func TestTheTermIsOpnsensesThisFirewall(t *testing.T) {
 	t.Parallel()
 	if vocab.ScopeThisFirewall != "this_firewall" || vocab.DirectionToThisFirewall != "to_this_firewall" ||
-		vocab.DirectionFromThisFirewall != "from_this_firewall" || vocab.ClientResolutionThisFirewall != "this_firewall_hostname" ||
-		reads.TreeNodeThisFirewall != "this_firewall" {
+		vocab.DirectionFromThisFirewall != "from_this_firewall" || vocab.ClientResolutionThisFirewall != "this_firewall_hostname" {
 		t.Error("an identifier does not use the term this firewall")
 	}
 	for _, loopback := range []string{"127.0.0.1", "127.8.9.10", "::1", "localhost", "LocalHost.", "::ffff:127.0.0.1"} {

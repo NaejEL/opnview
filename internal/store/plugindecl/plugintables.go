@@ -158,17 +158,6 @@ func (t PluginTable) CarriesDomain() bool {
 	return false
 }
 
-// RoleOf returns a column's role: its declared one, time for the time column, dimension otherwise.
-func (t PluginTable) RoleOf(column PluginColumn) string {
-	switch {
-	case column.Role != "":
-		return column.Role
-	case column.Name == t.TimeColumn:
-		return RoleTime
-	}
-	return RoleDimension
-}
-
 // column returns a declared column by name.
 func (t PluginTable) column(name string) (PluginColumn, bool) {
 	for _, column := range t.Columns {

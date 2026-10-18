@@ -15,7 +15,8 @@
 //	                                              recorded answers and its tests
 //	internal/collect/kinds/<coordinator>/         what the core makes of a kind's records
 //
-// Adding a core kind is adding a file; adding an implementation is adding a plugin directory. An
+// Adding a core kind's contract is adding a file, and collecting a core kind is adding its coordinator
+// directory, which registers its pass; adding an implementation is adding a plugin directory. An
 // implementation is called by function name and answers records checked once against its kind's
 // contract (Implementation, Answer); every implementation of every kind is held in one Set. Nothing
 // selects an implementation at compile time, nothing branches on a product name, and detection

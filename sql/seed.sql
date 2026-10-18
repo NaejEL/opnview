@@ -149,6 +149,14 @@ INSERT INTO source_availability (provider_id, state, outcome, probe, detail, che
 SELECT p.id, 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0
 FROM provider AS p
 WHERE NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);
+
+-- The gap reasons the core kinds' files declare (gap_reasons), as the declarations write them.
+INSERT INTO gap_reason (reason, declared_by) VALUES
+    ('digest_outside_returned_window', 'kind firewall_log'),
+    ('eve_rotation_lost', 'kind security_event'),
+    ('resolver_window_not_honoured', 'kind dns_lookup'),
+    ('download_failed', 'kind registrable_domain')
+ON CONFLICT (reason) DO NOTHING;
 -- registry:end
 
 -- ---------------------------------------------------------------------------
@@ -2449,7 +2457,8 @@ WHERE provider_id IN (SELECT id FROM provider WHERE NOT is_active);
 -- something to leave alone.
 --
 -- A gap is attributed to the provider whose data is missing, looked up by kind
--- and activeness -- never by name.
+-- and activeness -- never by name. Its reason is a row of the gap-reason
+-- registry, which the kinds' files declare and the registry above writes.
 -- ---------------------------------------------------------------------------
 WITH RECURSIVE counter (k) AS (
     SELECT 1

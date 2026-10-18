@@ -2,6 +2,7 @@
   "kind" : "firewall_log",
   "description" : "Records of packets the firewall allowed or denied: data source 1. The kind keeps no server-side cursor; it reads the newest page and records a gap when the oldest record returned is newer than the newest stored.",
   "concurrent" : false,
+  "gap_reasons" : ["digest_outside_returned_window"],
   "push" : true,
   "push_record" : "firewall_log_record",
   "bindable" : true,

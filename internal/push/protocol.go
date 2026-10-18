@@ -272,17 +272,30 @@ type GapReasoner interface {
 	GapReasons() []string
 }
 
-// ProtocolGapReasons returns the gap reasons every registered protocol declares, sorted.
-func ProtocolGapReasons() []string {
+// DeclaredGapReason is one gap reason and what declares it: the push sources themselves, or one protocol.
+type DeclaredGapReason struct {
+	Reason     string
+	DeclaredBy string
+}
+
+// DeclaredGapReasons returns the gap reasons the push sources declare -- the hub's own, then those every
+// registered protocol declares -- each with its declarer, sorted by reason. They are rows of the database's
+// gap-reason registry, which collection_gap.reason references.
+func DeclaredGapReasons() []DeclaredGapReason {
+	reasons := []DeclaredGapReason{}
+	for _, reason := range []string{GapBufferOverflow, GapStoreFailed, GapListenerDown, GapScriptFailed, GapNotAlive} {
+		reasons = append(reasons, DeclaredGapReason{Reason: reason, DeclaredBy: "push"})
+	}
 	registryMutex.RLock()
-	defer registryMutex.RUnlock()
-	var reasons []string
-	for _, protocol := range registry {
+	for name, protocol := range registry {
 		if reasoner, declares := protocol.(GapReasoner); declares {
-			reasons = append(reasons, reasoner.GapReasons()...)
+			for _, reason := range reasoner.GapReasons() {
+				reasons = append(reasons, DeclaredGapReason{Reason: reason, DeclaredBy: "push protocol " + name})
+			}
 		}
 	}
-	sort.Strings(reasons)
+	registryMutex.RUnlock()
+	sort.Slice(reasons, func(i, j int) bool { return reasons[i].Reason < reasons[j].Reason })
 	return reasons
 }
 

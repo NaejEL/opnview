@@ -164,7 +164,8 @@ many connections fall in each coverage class -- `measured` (both directions meas
 measured byte) and `capture_not_known` (no readable, enabled capture configuration at the
 connection's start), the four summing to its connections -- `direction_states`: per direction state
 of the connection's measured volume (`measured`, `in_progress`, `awaiting_export`, `missing`,
-`export_gap`, `not_exported_when_refused`, `forwarding_export_unsettled`, `ingress_not_captured`,
+`ambiguous_records`, `export_gap`, `not_exported_when_refused`, `not_expected_when_refused`,
+`forwarding_export_unsettled`, `ingress_not_captured`,
 `parent_copies_only`, `interface_not_exported`, `interface_not_captured`,
 `capture_configuration_unknown`; `docs/data-model.md`, *NetFlow volumes*), the connections with at
 least one direction in it, so that no direction NetFlow cannot measure is silently zero -- and

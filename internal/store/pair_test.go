@@ -338,9 +338,6 @@ func TestAPairedConnectionCountsOnceInTheVolumeFamily(t *testing.T) {
 				WHERE observed_at >= $1 AND (pair_outcome IS NULL OR pair_outcome <> 'second_leg')`, network.Now-86400) {
 				t.Errorf("the window's total %d counts a paired connection twice", got)
 			}
-			if got := window.ExitLegs()[network.Upstream.Device].Bytes; got != legs {
-				t.Errorf("the window's exit legs on the upstream interface hold %d bytes, the flows %d", got, legs)
-			}
 		})
 	}
 }

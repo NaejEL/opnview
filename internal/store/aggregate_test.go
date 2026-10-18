@@ -517,32 +517,10 @@ func TestADistinctCountIsNeverSummedAcrossSlots(t *testing.T) {
 	}
 	recomputeEverything(t, network)
 
-	totals, err := network.DB.ReadOwnerTotals(ctx, vocab.PeriodHour, dayStart, vocab.PeriodDay.SlotEnd(dayStart))
-	if err != nil {
-		t.Fatalf("reading the owner totals: %v", err)
-	}
 	summedCounts := storetest.QueryInt(t, network.DB, `SELECT sum(client_count) FROM owner_volume_aggregate_1h
 		WHERE period_start_at >= $1 AND owner_id = 1`, dayStart)
 	if summedCounts != 3 {
 		t.Fatalf("the owned client should sit in three hour slots, it sits in %d", summedCounts)
-	}
-	found := map[string]bool{}
-	for _, total := range totals {
-		key := "unassigned"
-		if total.OwnerID != nil {
-			key = "owned"
-		}
-		found[key] = true
-		if total.Clients != 1 {
-			t.Errorf("the %s bucket counts %d clients over three hours; one machine is one client",
-				key, total.Clients)
-		}
-		if total.Bytes != 300 {
-			t.Errorf("the %s bucket sums %d bytes over three hours, not 300", key, total.Bytes)
-		}
-	}
-	if !found["owned"] || !found["unassigned"] {
-		t.Errorf("the owner totals hold %v, not both buckets", found)
 	}
 	for _, period := range vocab.Periods() {
 		if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM owner_volume_aggregate_"+period.Name+

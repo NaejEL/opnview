@@ -85,11 +85,14 @@ type KindAttributes struct {
 	Concurrent bool
 	Push       bool
 	Bindable   bool
+	// GapReasons are the gap reasons the kind declares (Contract.GapReasons).
+	GapReasons []string
 }
 
 // AttributesOf are a core kind's attributes.
 func (c Contract) AttributesOf() KindAttributes {
-	return KindAttributes{Kind: c.Kind, Concurrent: c.Concurrent, Push: c.Push, Bindable: c.Bindable}
+	return KindAttributes{Kind: c.Kind, Concurrent: c.Concurrent, Push: c.Push, Bindable: c.Bindable,
+		GapReasons: c.GapReasons}
 }
 
 // Declarer tells the broker every pass asks (a Gate) what one plugin declares of its endpoints.

@@ -5286,7 +5286,7 @@ Every test runs on the PostgreSQL test instance, under a fake clock where time m
   - Plugin-declared pages are served in the plugin listing and by `/api/plugins/{name}/settings`.
   - `/api/netflow/settings`, `web/surfaces/netflow`, `config/netflow.go` and every per-kind key of `config.go` are gone.
   - The two netflow settings keep their bounds and defaults as plugin settings.
-- [ ] **PA-AC13. Rendered pages.**
+- [ ] **PA-AC13. Rendered pages.** *Superseded by step 7 (decision 2 of "Verification of the plugin-API amendment, iteration 1: the orchestrator's decisions (18 October 2026)"): the Go-rendered pages it guarded were removed (F7-15), and the X3 snapshot no longer exists. Kept as written below for the record.*
   - X3's snapshot is byte-identical except for the removal of the MaxMind and Public Suffix List cards (B8).
   - The diff lists exactly those fragments.
 - [ ] **PA-AC14. NJ preserved, fixtures.** For F1 to F17, the plugin's per-record fields, per-direction figures, states, markers, unmatched slots and aggregate figures equal the recorded Go golden under the column-name map, value for value.

@@ -89,45 +89,8 @@ SELECT min(period_start_at) FROM volume_aggregate_1h;
 SELECT min(observed_at) FROM flow;
 
 
--- The intervals the filter log is known not to cover, overlapping a window.
--- statement: read_firewall_log_gaps
-SELECT g.interval_start_at, g.interval_end_at
-FROM collection_gap AS g
-WHERE g.provider_id IN (SELECT id FROM provider WHERE kind = 'firewall_log')
-  AND g.interval_start_at < :to
-  AND g.interval_end_at >= :from;
-
-
 -- ---------------------------------------------------------------------------
--- The connection tree: every flow of a window, grouped by every key a level of
--- either side reads, so each flow lands in exactly one node per level.
--- ---------------------------------------------------------------------------
-
--- statement: read_connection_tree
-SELECT f.local_interface_id,
-       f.local_client_id,
-       c.owner_id,
-       f.traffic_direction,
-       CASE WHEN f.peer_address IS NULL THEN NULL
-            WHEN g.address IS NULL THEN 'no_row'
-            ELSE g.lookup_state END,
-       g.asn,
-       a.site_name,
-       count(*),
-       sum(f.packet_bytes),
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END)
-FROM classified_flow AS f
-LEFT JOIN client AS c ON c.id = f.local_client_id
-LEFT JOIN geo_asn AS g ON g.address = f.peer_address
-LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
-WHERE f.observed_at >= :from
-  AND f.observed_at < :to
-  AND f.exit_leg_device IS NULL
-GROUP BY 1, 2, 3, 4, 5, 6, 7;
-
-
--- ---------------------------------------------------------------------------
--- Site names: the attribution rate, and per-site totals from the domain family.
+-- Site names: the attribution rate.
 -- ---------------------------------------------------------------------------
 
 -- The eligible flows: those a client sent to an outside destination. A flow with
@@ -189,41 +152,9 @@ FROM (SELECT 1
       LIMIT 1);
 
 
--- statement: read_site_totals
-SELECT site_name,
-       sum(bytes),
-       sum(allowed_connections + blocked_connections + unknown_connections),
-       count(DISTINCT client_id)
-FROM domain_volume_aggregate_@period@
-WHERE period_start_at >= :from
-  AND period_start_at < :to
-GROUP BY site_name;
-
-
 -- ---------------------------------------------------------------------------
--- People and machines over several slots. Summable figures are summed; the
--- distinct clients of an owner are counted from the client family, whose key
--- carries the client, so a client active in two slots counts once.
+-- The clients an interface has seen.
 -- ---------------------------------------------------------------------------
-
--- statement: read_owner_totals
-SELECT owner_id,
-       sum(bytes), sum(allowed_bytes), sum(blocked_bytes), sum(unknown_bytes),
-       sum(allowed_connections), sum(blocked_connections), sum(unknown_connections)
-FROM owner_volume_aggregate_@period@
-WHERE period_start_at >= :from
-  AND period_start_at < :to
-GROUP BY owner_id;
-
-
--- statement: read_owner_client_counts
-SELECT c.owner_id, count(DISTINCT v.client_id)
-FROM client_volume_aggregate_@period@ AS v
-JOIN client AS c ON c.id = v.client_id
-WHERE v.period_start_at >= :from
-  AND v.period_start_at < :to
-GROUP BY c.owner_id;
-
 
 -- statement: read_interface_seen_clients
 SELECT f.local_interface_id, count(DISTINCT f.local_client_id)
@@ -244,14 +175,6 @@ WHERE interface_id = :interface_id
 -- ---------------------------------------------------------------------------
 -- The decisions, the rules and the installation itself.
 -- ---------------------------------------------------------------------------
-
--- statement: read_blocked_decision_counts
-SELECT engine_kind, count(*)
-FROM blocked_decision
-WHERE occurred_at >= :from
-  AND occurred_at < :to
-GROUP BY engine_kind;
-
 
 -- statement: read_rules
 SELECT id, interface, legacy, logs_matches FROM rule ORDER BY id;

@@ -293,6 +293,7 @@ domain_volume_aggregate_7d
 encrypted_credential
 eve_ingest_cursor
 flow
+gap_reason
 geo_asn
 interface
 interface_address
@@ -441,6 +442,7 @@ declared_measure_marker
 declared_measure_state
 encrypted_credential
 eve_ingest_cursor
+gap_reason
 interface
 interface_map
 interface_network
@@ -3011,9 +3013,15 @@ those are two different sentences to put next to a figure.
 | `netflow_template_missing` | NetFlow data whose template never arrived within the bound |
 | `download_failed` | a Public Suffix List download failed or returned something that is not a list (step 5A). The interval runs from the last successful refresh to the failure, the list held since then stays in use, and `detail` names the failure |
 
-The vocabulary is closed, and it may be because these are `opnview`'s own
-detections rather than values any endpoint reports: enumerating them invents
-nothing. `detail` carries the free text, and the collector writes into it what
+The vocabulary is **declared**, and it may be because these are `opnview`'s own
+detections rather than values any endpoint reports: declaring them invents
+nothing. Each reason is a row of `gap_reason`, written when the declarations
+load: a kind's file names the reasons its coordinator records (`gap_reasons`),
+the push sources name theirs, and each push protocol names those its framing
+reveals. `collection_gap.reason` references that registry, so the schema names
+no reason and a reason nothing declares is refused; a kind or a protocol added
+brings its reasons with it. The table above describes the reasons the built-in
+declarations name. `detail` carries the free text, and the collector writes into it what
 the reader should do about it — for the filter log, that the page size has to be
 sized for this installation.
 

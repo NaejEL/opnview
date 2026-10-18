@@ -240,42 +240,65 @@ func TestAThirdPartyPluginAddsAMeasureInJavaScriptAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sink push.Sink
+	// The hub the service routes push entries by, with a listener of the entry's protocol, attached to the
+	// loaded plugins so that the provider's availability reads its listeners and their liveness.
+	sender := netip.MustParseAddr("192.0.2.40")
+	hub := push.NewHub(push.Options{Now: clock.Now})
+	subscribed := false
 	for _, subscription := range subscriptions {
 		if subscription.ID == thirdParty+".reports" {
-			sink = subscription.Sink
+			if err := hub.Subscribe(subscription); err != nil {
+				t.Fatal(err)
+			}
+			subscribed = true
 		}
 	}
-	if derivation == nil || sink == nil {
-		t.Fatalf("the derivation (%v) or the push entry's sink (%v) is missing", derivation, sink)
+	if derivation == nil || !subscribed {
+		t.Fatalf("the derivation (%v) or the push entry's subscription (%v) is missing", derivation, subscribed)
 	}
+	if err := hub.AddLoopbackListener("datagram", push.TransportUDP); err != nil {
+		t.Fatal(err)
+	}
+	hub.Senders().Set([]netip.Addr{sender})
+	loaded.AttachPushHub(hub)
 	if derivation.Cadence() != 300*time.Second {
 		t.Errorf("the derivation's cadence is %s, not the 300 s its manifest declares", derivation.Cadence())
 	}
 
-	// deliver hands datagrams to the push entry, decoded by the real datagram protocol and by the
-	// plugin's decode function, as one batch; derive runs the derivation as its loop does, then the
-	// aggregate refresh the collector runs after it.
-	protocol, known := push.Lookup("datagram")
-	if !known {
-		t.Fatal("the datagram protocol is not registered")
+	// deliver hands datagrams to the push entry through the hub, as its socket would -- decoded by the real
+	// datagram protocol and by the plugin's decode function -- and stores them as one batch.
+	stored := func() int64 {
+		return storetest.QueryInt(t, network.DB, "SELECT count(*) FROM plugin_"+thirdParty+".reports")
 	}
-	decoder := protocol.NewDecoder(push.Limits{})
 	deliver := func(reports ...report) {
 		t.Helper()
-		var records []push.Record
+		before := stored()
 		for _, r := range reports {
-			decoded := decoder.Decode([]byte(r.datagram()), push.Meta{Sender: netip.MustParseAddr("192.0.2.40"),
-				Transport: push.TransportUDP, ReceivedAt: clock.Now()})
-			records = append(records, decoded.Records...)
+			if err := hub.Deliver(ctx, "datagram", push.TransportUDP, []byte(r.datagram()), sender); err != nil {
+				t.Fatal(err)
+			}
 		}
-		prepared := sink.Prepare(ctx, records)
-		if prepared.Failed != 0 {
-			t.Fatalf("the decode function lost %d messages", prepared.Failed)
+		hub.Flush(ctx)
+		if after := stored(); after-before != int64(len(reports)) {
+			t.Fatalf("the push entry stored %d of %d messages", after-before, len(reports))
 		}
-		if err := sink.Store(ctx, prepared); err != nil {
+	}
+	// probe runs the probe round's pass over the plugin's kind -- which records the provider's availability and
+	// decides its activation, as for every kind -- and answers whether the provider is active and the outcome
+	// its availability row holds.
+	probe := func() (bool, string) {
+		t.Helper()
+		if err := collector.ProbeKind(ctx, "example_report"); err != nil {
+			t.Fatalf("the probe round over the plugin's kind: %v", err)
+		}
+		var active bool
+		var outcome string
+		if err := network.DB.DB().QueryRowContext(ctx, `SELECT p.is_active, a.outcome FROM provider AS p
+			JOIN source_availability AS a ON a.provider_id = p.id
+			WHERE p.kind = 'example_report' AND p.provider_key = $1`, thirdParty).Scan(&active, &outcome); err != nil {
 			t.Fatal(err)
 		}
+		return active, outcome
 	}
 	derive := func() provider.DerivationOutcome {
 		t.Helper()
@@ -352,9 +375,11 @@ func TestAThirdPartyPluginAddsAMeasureInJavaScriptAlone(t *testing.T) {
 		total["bytes"] != float64(loggedBytes) || !params.Contains(response.States, "reporter_off") {
 		t.Errorf("with no active provider best_available answered %v %v", total, response.States)
 	}
-	if _, err := network.DB.DB().ExecContext(ctx, `UPDATE provider SET is_active = true
-		WHERE kind = 'example_report' AND provider_key = $1`, thirdParty); err != nil {
-		t.Fatal(err)
+	// The probe round, with the listener open and nothing received: it records that no message arrived, and
+	// activates the provider as it activates every implementation the firewall's configuration separates --
+	// activeness is not reachability (internal/collect/probe.go).
+	if active, outcome := probe(); !active || outcome != "no_message_received" {
+		t.Errorf("before any message the probe round left the provider active %v, outcome %s", active, outcome)
 	}
 
 	// A first batch: one direction of two connections, and a report about the connection to this firewall,
@@ -368,6 +393,10 @@ func TestAThirdPartyPluginAddsAMeasureInJavaScriptAlone(t *testing.T) {
 			packets: 9},
 	}
 	deliver(first...)
+	// The entry is receiving: the next probe round finds the provider healthy, and keeps it active.
+	if active, outcome := probe(); !active || outcome != "healthy" {
+		t.Errorf("with its entry receiving the probe round left the provider active %v, outcome %s", active, outcome)
+	}
 	select {
 	case <-derivation.Wake():
 	default:

@@ -3,7 +3,6 @@ package samples
 import (
 	"context"
 	"fmt"
-	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -574,78 +573,6 @@ func (s *SampleStore) ReadClientCurrentRate(ctx context.Context, clientID, now i
 	return rate, RateCurrent, nil
 }
 
-// SampledBytesState says whether a device was sampled in a window.
-type SampledBytesState string
-
-// The two states of sampled bytes.
-const (
-	// Sampled means at least one sample was taken in the window.
-	Sampled SampledBytesState = "sampled"
-	// NotSampled means none was: a state, never 0 bytes.
-	NotSampled SampledBytesState = "not_sampled"
-)
-
-// SampledBytes is the bytes seen in samples on one device.
-type SampledBytes struct {
-	Device string
-	// Bytes is the sum of cumulative_bytes_in and cumulative_bytes_out over every
-	// sample in the window: bytes seen in samples, never extrapolated.
-	Bytes float64
-	// Samples is how many sampling instants the window holds, and SampledSeconds
-	// the seconds they cover, which is the coverage Bytes must be read against.
-	Samples        int64
-	SampledSeconds int64
-}
-
-// ReadSampledBytes returns the bytes seen in samples in [from, to), per device. A
-// window with no sample on any device is NotSampled and holds no figure.
-func (s *SampleStore) ReadSampledBytes(ctx context.Context, from, to int64) ([]SampledBytes, SampledBytesState, error) {
-	text, err := sqldb.Statement("read_sampled_pair_bytes")
-	if err != nil {
-		return nil, "", err
-	}
-	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
-	if err != nil {
-		return nil, "", fmt.Errorf("store: read_sampled_pair_bytes: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	byDevice := map[string]*SampledBytes{}
-	for rows.Next() {
-		var (
-			device    string
-			sampledAt int64
-			bytes     float64
-		)
-		if err := rows.Scan(&device, &sampledAt, &bytes); err != nil {
-			return nil, "", fmt.Errorf("store: read_sampled_pair_bytes: %w", err)
-		}
-		entry, present := byDevice[device]
-		if !present {
-			entry = &SampledBytes{Device: device}
-			byDevice[device] = entry
-		}
-		entry.Bytes += bytes
-		entry.Samples++
-		entry.SampledSeconds += vocab.SampleSeconds
-	}
-	if err := rows.Err(); err != nil {
-		return nil, "", fmt.Errorf("store: read_sampled_pair_bytes: %w", err)
-	}
-	if len(byDevice) == 0 {
-		return nil, NotSampled, nil
-	}
-	devices := make([]string, 0, len(byDevice))
-	for device := range byDevice {
-		devices = append(devices, device)
-	}
-	sort.Strings(devices)
-	result := make([]SampledBytes, 0, len(devices))
-	for _, device := range devices {
-		result = append(result, *byDevice[device])
-	}
-	return result, Sampled, nil
-}
-
 // ThroughputPoint is the throughput between two consecutive counter samples.
 type ThroughputPoint struct {
 	// From and To are the two samples' instants.
@@ -700,15 +627,4 @@ func (s *SampleStore) ReadInterfaceThroughput(ctx context.Context, device string
 		previous, previousAt, have = value, sampledAt, true
 	}
 	return points, rows.Err()
-}
-
-// IsFirewallAddress reports whether an address is one the firewall holds on any
-// interface, from the addr4 and addr6 fields discovery reads.
-func (s *SampleStore) IsFirewallAddress(ctx context.Context, address string) (bool, error) {
-	if _, err := netip.ParseAddr(address); err != nil {
-		return false, nil
-	}
-	_, found, err := sqldb.QueryOptionalInt(ctx, s.Reader, "read_is_firewall_address",
-		map[string]any{"address": address})
-	return found, err
 }

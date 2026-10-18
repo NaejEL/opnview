@@ -305,6 +305,16 @@ type recordingExpectation struct {
 	relation string
 	match    func(row map[string]any) bool
 	becomes  func(row map[string]any)
+	// regroups says the change also moves the connection between aggregate rows, which a regrouping of the same
+	// decision checks: the states it moves directions out of or into are then not left aside in every aggregate.
+	regroups bool
+}
+
+// recordingChanges are every change the decisions make to the recording: per row, and per aggregate row group.
+type recordingChanges struct {
+	rows []recordingExpectation
+	// regroupings are built from the recording as it was recorded, before any row expectation is applied.
+	regroupings func(recorded map[string][]map[string]any) []aggregateRegrouping
 }
 
 // comparable is a row as one canonical text, the columns the comparison leaves aside removed: the aggregate
@@ -342,9 +352,14 @@ func comparable(relation string, row map[string]any, changedStates map[string]bo
 // compareRecording compares a world's relations with a recording, applying the expected changes first, and
 // answers how many rows of each relation were expected to change. Every other difference fails the test.
 func compareRecording(t *testing.T, label string, recorded, got map[string][]map[string]any,
-	expectations []recordingExpectation) map[string]int {
+	changes recordingChanges) map[string]int {
 	t.Helper()
 	changed := map[string]int{}
+	expectations := changes.rows
+	var regroupings []aggregateRegrouping
+	if changes.regroupings != nil {
+		regroupings = changes.regroupings(recorded)
+	}
 	names := make([]string, 0, len(recorded))
 	for name := range recorded {
 		names = append(names, name)
@@ -357,21 +372,32 @@ func compareRecording(t *testing.T, label string, recorded, got map[string][]map
 		for _, row := range recorded[name] {
 			for _, expectation := range expectations {
 				if expectation.relation == name && expectation.match(row) {
-					changedStates[fmt.Sprint(row["state"])] = true
+					before := fmt.Sprint(row["state"])
 					expectation.becomes(row)
-					changedStates[fmt.Sprint(row["state"])] = true
+					if !expectation.regroups {
+						changedStates[before] = true
+						changedStates[fmt.Sprint(row["state"])] = true
+					}
 					changed[expectation.decision+": "+expectation.class]++
 				}
 			}
 		}
 	}
 	for _, name := range names {
+		recordedRows, gotRows := recorded[name], got[name]
+		if strings.Contains(name, "_aggregate_") && len(regroupings) > 0 {
+			var touched int
+			recordedRows, gotRows, touched = regroup(t, label, name, recordedRows, gotRows, regroupings)
+			if touched > 0 {
+				changed["aggregate rows regrouped, checked by their sums: "+name] += touched
+			}
+		}
 		want := map[string]int{}
-		for _, row := range recorded[name] {
+		for _, row := range recordedRows {
 			want[comparable(name, row, changedStates)]++
 		}
 		have := map[string]int{}
-		for _, row := range got[name] {
+		for _, row := range gotRows {
 			have[comparable(name, row, changedStates)]++
 		}
 		var missing, extra []string
@@ -515,32 +541,45 @@ func loadRecordingFile(t *testing.T, path string) map[string][]map[string]any {
 // recordingExpectations are the outcomes of the recording the orchestrator's decisions of the live validation of
 // 17 October 2026 change on purpose, each class found in the world by a reading of its own -- the legs and the
 // records as stored, never the plugin's code:
-//   - D5: the reverse direction of a connection pf refused -- its first or second leg blocked or rejected -- is
-//     not forwarding_export_unsettled: no reply is expected, and it is not_expected_when_refused, covered;
+//   - D5, local delivery: a connection to a limited broadcast or multicast destination ends at the firewall
+//     itself, so its directions take NJ5's answer with the firewall as an end, and the aggregate rows holding it
+//     are regrouped (netflowlocaldelivery_test.go);
+//   - D5, refused: the reverse direction of a connection pf refused -- its first or second leg blocked or
+//     rejected -- is not forwarding_export_unsettled: no reply is expected, and it is not_expected_when_refused,
+//     covered;
 //   - N3: a direction counted by one exporter, with no record joined and settled missing, whose records the join
 //     found but left ambiguous between two legs -- an ambiguous record with the first leg's tuple in the
 //     direction's orientation, started within the leg's export bound -- is ambiguous_records, not covered.
 //
+// The local-delivery class is applied first: its connection is not one leaving by an unknown interface, so the
+// refused class's two exporters do not apply to it.
+//
 // N2 (filter_log_gap) changes no outcome the recording holds: neither the fixtures nor the capture record a gap of
 // the filter log. TestAFlowRecordWhoseLegFellInAFilterLogGapIsNotNoLoggedLeg shows it on a fixture of its own.
-func recordingExpectations(t *testing.T, h *netflowWorld) []recordingExpectation {
+func recordingExpectations(t *testing.T, h *netflowWorld) recordingChanges {
 	t.Helper()
 	refused, ambiguous := refusedConnections(t, h), ambiguousDirections(t, h)
+	local := readLocalDelivery(t, h, ambiguous)
 	measure := "connection_measured_volume"
-	return []recordingExpectation{
+	return recordingChanges{rows: []recordingExpectation{
+		local.rowExpectation(),
 		{decision: "D5", class: "the reverse of a refused connection, once forwarding_export_unsettled", relation: measure,
 			match: func(row map[string]any) bool {
-				return row["state"] == "forwarding_export_unsettled" && row["direction"] == "reverse" &&
+				_, localDelivery := local.connections[fmt.Sprint(row["connection_leg"])]
+				return !localDelivery && row["state"] == "forwarding_export_unsettled" && row["direction"] == "reverse" &&
 					refused[fmt.Sprint(row["connection_leg"])]
 			},
 			becomes: func(row map[string]any) { row["state"] = "not_expected_when_refused" }},
 		{decision: "N3", class: "a direction whose only records were ambiguous, once missing", relation: measure,
 			match: func(row map[string]any) bool {
-				return row["state"] == "missing" && row["counted_copy"] == float64(0) &&
+				_, localDelivery := local.connections[fmt.Sprint(row["connection_leg"])]
+				return !localDelivery && row["state"] == "missing" && row["counted_copy"] == float64(0) &&
 					ambiguous[fmt.Sprint(row["connection_leg"])+"|"+fmt.Sprint(row["direction"])]
 			},
 			becomes: func(row map[string]any) { row["state"] = "ambiguous_records" }},
-	}
+	}, regroupings: func(recorded map[string][]map[string]any) []aggregateRegrouping {
+		return []aggregateRegrouping{local.regrouping(recorded)}
+	}}
 }
 
 // refusedConnections are the connections pf refused, by their first (or single) leg's digest.

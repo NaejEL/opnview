@@ -30,21 +30,6 @@ WHERE sampled_at >= :since
   AND (subject_kind = 'interface_endpoint' OR peer_address IS NOT NULL);
 
 
--- statement: read_sampled_pair_bytes
--- The bytes seen in samples, per device, from the totals of each local address:
--- a local address's outbound bytes exist only as that total.
-SELECT interface_device,
-       sampled_at,
-       sum(value)
-FROM measurement_sample
-WHERE sampled_at >= :from
-  AND sampled_at < :to
-  AND subject_kind = 'interface_endpoint'
-  AND measure IN ('cumulative_bytes_in', 'cumulative_bytes_out')
-  AND interface_device IS NOT NULL
-GROUP BY 1, 2;
-
-
 -- statement: read_interface_counter
 SELECT sampled_at, value
 FROM measurement_sample
@@ -67,12 +52,3 @@ LIMIT 1;
 
 -- statement: read_client_owner
 SELECT owner_id FROM client WHERE id = :client_id;
-
-
--- statement: read_is_firewall_address
-SELECT 1
-FROM interface_address
-WHERE address = :address
-  AND source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6')
-LIMIT 1;
-

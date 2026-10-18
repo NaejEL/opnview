@@ -13,7 +13,7 @@ import (
 )
 
 // The kind files: one per core kind, kinds/<kind>.json, found by walking the embedded directory, so
-// adding a core kind is adding a file and no list, switch or registry in Go names it (PA2 of the
+// adding a core kind's contract is adding a file and no list, switch or registry in Go names it (PA2 of the
 // plugin-API amendment to specs/SPEC-backend-completion-plugins.md). shared_records.json holds the
 // record every kind shares: the result.
 //

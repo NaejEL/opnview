@@ -3316,32 +3316,38 @@ CREATE INDEX IF NOT EXISTS idx_address_classification_classified_at
 -- Why it is a row rather than a log line: a gap is read by a screen. A byte
 -- total over a window that contains a gap is not a lower bound for the usual
 -- physical reason, it is a lower bound because opnview was not looking, and
--- those are two different sentences to put next to a figure. The three
--- detections that write here are all measured findings rather than
--- suppositions:
---   * the filter log's __digest__ is not a server-side cursor, so a poll whose
---     newest stored line is older than the oldest line the page returned has
---     missed everything in between (survey, "The filter log's digest is not a
---     server-side cursor");
---   * an eve.json rotation that discarded the file a watermark pointed at is a
---     permanent loss (survey, data source 2 (c));
---   * the resolver query window is ignored outright — a 5-minute and a 24-hour
---     request return the same ~410-second span — so what came back is the most
---     recent 1000 lookups and never the window that was asked for (survey,
---     "The resolver window is not honoured at all");
---   * a download of a reference list opnview keeps on disk -- today the Public
---     Suffix List -- failed or delivered a file that does not parse. The
---     interval runs from the last successful refresh of the copy in use (or the
---     failure itself, when there was none) to the failure: it is how long the
---     copy in use has gone without being refreshed, and the copy stays in use.
+-- those are two different sentences to put next to a figure. Every detection
+-- that writes here is a measured finding rather than a supposition, and is
+-- described where it is declared: the file of the kind whose reads reveal it
+-- (internal/collect/provider/kinds), the push sources (internal/push) or the push
+-- protocol whose framing reveals it (internal/push/protocols); docs/data-model.md,
+-- collection_gap, describes each.
 --
--- reason is a CLOSED vocabulary and it is opnview's own, legitimately: these
--- are opnview's own detections, not values an endpoint reports, so enumerating
--- them invents nothing. detail carries the free text.
+-- reason is a DECLARED vocabulary: a row of gap_reason below, which what
+-- detects the gap declares -- a kind's file (its gap_reasons), the push sources
+-- or a push protocol -- and the declarations write when they load, as they write
+-- the provider rows. These are opnview's own detections, not values an endpoint
+-- reports, so declaring them invents nothing; and the schema names none of them,
+-- so a kind or a protocol added brings its reasons with it (decision 4 of the
+-- plugin-API amendment's first verification, specs/SPEC-backend-completion-plugins.md).
+-- A reason nothing declares is refused by the reference. detail carries the free
+-- text.
 --
 -- Growing: one row per detected gap. Purged by detected_at, because a gap
 -- describing a window whose data would itself have been purged says nothing.
 -- ---------------------------------------------------------------------------
+
+-- gap_reason -- the reasons a collection gap may be recorded for, each with what
+-- declares it. Bounded: one row per declared reason. A reason no longer declared
+-- keeps its row, which the gaps recorded under it still reference until they are
+-- purged.
+CREATE TABLE IF NOT EXISTS gap_reason (
+    reason      TEXT PRIMARY KEY
+                CHECK (length(reason) BETWEEN 1 AND 64
+                       AND translate(reason, 'abcdefghijklmnopqrstuvwxyz0123456789_', '') = ''),
+    declared_by TEXT NOT NULL CHECK (length(declared_by) BETWEEN 1 AND 128)
+);
+
 CREATE TABLE IF NOT EXISTS collection_gap (
     id                BIGINT PRIMARY KEY,
     provider_id       BIGINT NOT NULL REFERENCES provider (id),
@@ -3349,19 +3355,7 @@ CREATE TABLE IF NOT EXISTS collection_gap (
                       CHECK (interval_start_at >= 0 AND interval_start_at < 4102444800),
     interval_end_at   BIGINT NOT NULL
                       CHECK (interval_end_at >= 0 AND interval_end_at < 4102444800),
-    reason            TEXT NOT NULL
-                      CHECK (reason IN ('digest_outside_returned_window',
-                                        'eve_rotation_lost',
-                                        'resolver_window_not_honoured',
-                                        'download_failed',
-                                        -- The push sources' (docs/plugins.md, "Push sources").
-                                        'push_buffer_overflow',
-                                        'push_store_failed',
-                                        'push_listener_down',
-                                        'push_script_failed',
-                                        'push_not_alive',
-                                        'netflow_sequence_gap',
-                                        'netflow_template_missing')),
+    reason            TEXT NOT NULL REFERENCES gap_reason (reason),
     detail            TEXT,
     detected_at       BIGINT NOT NULL CHECK (detected_at >= 0 AND detected_at < 4102444800),
     CHECK (interval_end_at >= interval_start_at)

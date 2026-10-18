@@ -18,7 +18,10 @@ import (
 func init() {
 	// The two fields whose shape the fix changes: security_events is a count in its own measure rather than
 	// in the measure the request is answered under, and each security_unplaced bin holds its events as such a
-	// count rather than as a volume.
+	// count rather than as a volume. The golden change is accepted by decision 1 of "Verification of the
+	// plugin-API amendment, iteration 1: the orchestrator's decisions (18 October 2026)" in
+	// specs/SPEC-backend-completion-plugins.md: security events are their own measure, security_events, and
+	// security_unplaced[].volume becomes .events.
 	registerPhaseCChange("blocked_traffic_world_map", "data.security_events", "data.security_unplaced")
 }
 

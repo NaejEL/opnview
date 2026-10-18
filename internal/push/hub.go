@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,13 +32,15 @@ import (
 // A TCP frame is never dropped there: the connection's reader waits, and TCP's own flow control
 // slows the sender.
 
-// The reasons of the gaps the hub records (docs/plugins.md, "Push sources"). The decoders add
-// theirs: netflow_template_missing and netflow_sequence_gap.
+// The reasons of the gaps the push sources record (docs/plugins.md, "Push sources"): the hub's own, and
+// GapNotAlive, a subscription that stopped receiving, which the service records from the hub's liveness.
+// Each protocol's decoder adds its own (GapReasoner); DeclaredGapReasons lists them all.
 const (
 	GapBufferOverflow = "push_buffer_overflow"
 	GapStoreFailed    = "push_store_failed"
 	GapListenerDown   = "push_listener_down"
 	GapScriptFailed   = "push_script_failed"
+	GapNotAlive       = "push_not_alive"
 )
 
 // The counters the hub keeps beside the decoders' problems.
@@ -448,20 +449,6 @@ func (h *Hub) Address(protocolName, transport string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// Listening reports whether a listener of a protocol on any transport is open.
-func (h *Hub) Listening(protocolName string) []string {
-	h.mutex.RLock()
-	defer h.mutex.RUnlock()
-	var transports []string
-	for _, l := range h.listeners {
-		if l.protocol.Name() == protocolName && l.listening.Load() {
-			transports = append(transports, l.transport)
-		}
-	}
-	sort.Strings(transports)
-	return transports
 }
 
 // route hands decoded records to their subscribers, and the decoder's problems to the counters and
