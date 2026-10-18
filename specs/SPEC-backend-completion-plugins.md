@@ -5499,3 +5499,20 @@ These were decided by the orchestrator under the maintainer's instruction to del
 3. **PA-AC31's line ceilings were set by the planner, not by the maintainer.** They were missed, and this is reported to the maintainer as it stands. Go is reduced separately, from the deployed binary's runtime coverage on the maintainer's traffic, as the clean-up amendment's section B2 requires. A ceiling is never met by padding or by moving code into test files that the product still needs.
 4. **Gap reasons can be declared by a kind or by a plugin.** `collection_gap.reason` stops being a closed list of product and protocol names.
 5. **The test budget target is 60 s with three green runs in a row.** PA-AC26's 45 s target is withdrawn: on this 8-core machine the suite is bound by database CPU. Margin is pursued through shared helpers, as the measurements suggested: the broker mirror's table checks cached per store, and a discovered-firewall state in the derived template.
+
+## Performance cycle: the orchestrator's decisions (18 October 2026)
+
+These were decided by the orchestrator under the maintainer's instruction to deliver end to end. They are not the maintainer's decisions.
+
+1. **`connection_tree` reads its levels from its own SQL.** The widget groups its inside and outside levels in its own statements, as PA18.2 allows, so the script receives hundreds of rows instead of tens of thousands. The answers stay byte-identical.
+2. **Batch figure helpers** (`host.figures.sum(list)`, `cover(list)`) are added to the host. The peer and sankey scripts use them.
+3. **Budgets are measured on a quiet machine.** S5B-AC18's widget budgets and the live budget run after the Go steps, or the 100k and 1M seeds run one after the other. They measure the product, not the load. This revisits Phase E decision 8.
+4. **The schema checks' I/O is cut:**
+   - the core foreign-key scans of an unchanged kept seed run once per digest, while plugin tables are checked every run;
+   - the backup runs on its own WAL_LOG copy;
+   - the preamble avoids `DROP DATABASE` checkpoints where a copy can be reused.
+
+   No check is dropped.
+5. **`applied_schema` is recorded when a kept seed is built,** so readers never write to a kept seed.
+6. **db-test is cleaned of stale templates from other digests** at the start of `checks` and `pre-deployment`, by exact name.
+7. **PA-AC26's pre-deployment figure is the script's 180 s budget,** not 150 s.
