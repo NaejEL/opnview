@@ -15,11 +15,6 @@ import (
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
-// THE LONGEST TEST OF THE PACKAGE HAS A FILE OF ITS OWN, named to sort before the others: go test releases
-// the parallel tests in the order their files sort, so the test that takes longest starts first rather
-// than last, and the package's wall time is bounded by its work rather than by its tail (carried item 1
-// of Lot 4 of the plugin-API amendment). Its helpers stay in purge_test.go.
-
 // TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce is AC3: a filter-log
 // loop, a lease loop, a resolver loop and a purge loop run concurrently, each for 36
 // iterations, under a retention of 600 s while the clock crosses an hour, a day and an ISO

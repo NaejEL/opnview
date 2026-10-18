@@ -495,6 +495,7 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/collect/kinds/securityevents` — the coordinator of the security_event kind.
 - `internal/collect/provider` — every kind's declaration as data (`kinds/<kind>.json`: contract and attributes), the provider set every implementation is registered in, and the session an implementation is handed.
 - `internal/collect/providertest` — the fake firewall every provider test runs against.
+- `internal/collect/purgeconcurrency` — the retention purge's tests against the collector, a package of tests alone so that the longest of them, the passes and the purge running together, starts with the suite.
 - `internal/collect/services` — the service kinds, geolocation and the registrable-domain list, as their providers last answered.
 - `internal/config` — the only reader of configuration.
 - `internal/dashboard` — the authoritative structural validator of the dashboard file format.
