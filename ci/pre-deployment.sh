@@ -41,8 +41,8 @@
 # THE STEPS THAT DO NOT DEPEND ON ONE ANOTHER RUN SIDE BY SIDE: go vet, the fuzz
 # targets, the budget self-test (most of which is its probe's sleep) and the schema
 # checks start in the background, and so does the non-race go test run, while the
-# -race run and then the broker budgets run in the foreground; each background step's
-# output is held and printed, in one block, when it ends. When the hard limit stops the
+# -race run runs in the foreground; the broker budgets run alone before any of them. Each
+# background step's output is held and printed, in one block, when it ends. When the hard limit stops the
 # run, every step that had not ended is printed with how long it ran and, for a
 # background step, the output it had written so far (STEPS_DIR below).
 #
@@ -267,6 +267,16 @@ printf -- '  %d packages selected for -race, %d excluded, %d in go list ./...\n'
   "${#plain_packages[@]}" "$(wc -l < "$STEPS_DIR/listed.txt")"
 record 'race selection' "$selection_status" $(( ( $(date +%s%N) - selection_begun ) / 1000000 ))
 
+# THE BROKER BUDGETS FIRST, on a quiet machine. They measure medians of a few milliseconds, which every
+# other step of this command -- the two go test runs, the schema checks, the fuzz targets -- would
+# measure instead while it runs: they start before any of them, and take a few seconds.
+broker_budgets() {
+  go test -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags brokerbudget -run Budget -v ./internal/broker/ ./internal/plugin/scripthost/ |
+    grep -E '^(budget:|--- FAIL|FAIL|ok)'
+  return "${PIPESTATUS[0]}"
+}
+run_step 'broker budgets (go test -tags brokerbudget -run Budget)' broker_budgets
+
 # The steps that need nothing from the others, in the background.
 start_step vet 'go vet -tags predeployment,reclassifycost,brokerbudget ./...' \
   go vet -tags predeployment,reclassifycost,brokerbudget ./...
@@ -294,7 +304,7 @@ for target in "FuzzHeader ./internal/push/protocols/syslog" "FuzzFraming ./inter
   fuzz_ids+=("fuzz_$fuzz_name")
 done
 
-# THE TWO GO TEST RUNS SIDE BY SIDE, then the broker budgets. The -race step's test databases are
+# THE TWO GO TEST RUNS SIDE BY SIDE. The -race step's test databases are
 # created on the everyday test instance, with that instance's clone strategy (the default,
 # FILE_COPY; internal/store/testdatabase.go); the non-race run keeps db-predeployment. The two runs
 # share no database instance, so the non-race run starts in the background as the -race run starts
@@ -328,13 +338,6 @@ fi
 if [ "${#plain_packages[@]}" -gt 0 ]; then
   wait_step plain
 fi
-# The broker budgets measure medians, so they start once neither go test run competes for the CPU.
-broker_budgets() {
-  go test -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags brokerbudget -run Budget -v ./internal/broker/ ./internal/plugin/scripthost/ |
-    grep -E '^(budget:|--- FAIL|FAIL|ok)'
-  return "${PIPESTATUS[0]}"
-}
-run_step 'broker budgets (go test -tags brokerbudget -run Budget)' broker_budgets
 
 for id in vet "${fuzz_ids[@]}" selftest answerdrift_build schema; do
   [ -n "${step_pid[$id]:-}" ] || continue

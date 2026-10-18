@@ -790,7 +790,9 @@ coverage and conditions (`host.envelope`), and the figures every widget shares -
 sites, peers, rates, samples, series, the data catalogue (`host.datasets`) and the rest. It grants no
 firewall call, no fetch and no write. A function called wrongly throws a `TypeError`. Every area is
 documented, function by function, in `docs/widget-host.md`, which a test holds to the areas the host
-has. Two rules hold for every area:
+has. A row or figures a host function hands is read from the core's own value: its members are read,
+set, added and deleted as any object's, but it takes no symbol, cannot be frozen, and a member cannot
+become an accessor or read-only (`Object.assign({}, row)` is a plain copy). Two rules hold for every area:
 
 - **A cell of a statement is typed for the script**: a `numeric` whose value is whole -- an integer sum
   is one -- is an integer and any other `numeric` a number with a fraction, so a script never meets
@@ -837,14 +839,14 @@ takes `host.figures.measure` as its measure, and its figures are handed to `host
   which serves every declared measure: the same parameters and the same columns, with the measure's
   bytes in place of the logged ones, plus `measure` (`CAST(:measure AS TEXT) AS measure`) and the
   measure's parts as `measure_parts`. A twin reading the flows joins each flow to the measure's
-  figures through `flow_measure(f.id, f.pair_outcome, f.paired_flow_id, f.action, CAST(:measure AS
-  TEXT)) AS n`, sums `n.bytes`, and sums the parts with `measure_parts_total(n.parts,
-  n.not_known_index, n.part_width) AS measure_parts`: no JSON per flow, which is what a 30-day read
-  costs. `flow_measures` (every measure's parts as one object, summed with `measure_parts_sum`, read
-  with `measure_total_bytes(parts, measure)` and `measure_bytes(parts, measure, part)`) answers the
-  same figures and stays for the aggregate refresh and the purge. The built-in `owner_activity`,
-  `traffic_composition` and `traffic_sankey` statement files show a twin over the flows;
-  `internal/widget/traffic/buckets.statements.sql` one over an aggregate family's `measure_parts`.
+  figures, `flow_measure(f.id, f.pair_outcome, f.paired_flow_id, f.action, CAST(:measure AS TEXT))
+  AS n`, sums `n.bytes`, and sums the parts with `measure_parts_total(n.parts, n.not_known_index,
+  n.part_width) AS measure_parts`: no JSON per flow, which a 30-day read costs. `flow_measures`
+  (every measure's parts in one object, summed with `measure_parts_sum` and read with
+  `measure_total_bytes` and `measure_bytes`) answers the same figures, for the aggregate refresh and
+  the purge. The built-in `owner_activity`, `traffic_composition` and `traffic_sankey` statement
+  files show a twin over the flows; `internal/widget/traffic/buckets.statements.sql` one over an
+  aggregate family's `measure_parts`.
 - **a twin binds exactly its statement's parameters and `:measure`**, and is a period template exactly
   when its statement is: the core runs it in the statement's place with the statement's parameters and
   the measure's name. A widget whose twin does not is refused when it loads, with

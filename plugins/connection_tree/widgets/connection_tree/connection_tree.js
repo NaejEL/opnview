@@ -55,21 +55,34 @@ function newLevels() {
 }
 
 // addToLevels lands one row in a node of each level of a side, from the first key down; an empty
-// key ends the path there.
-function addToLevels(side, keys, bytes, connections, blocked, newest) {
-  var level = side;
-  for (var index = 0; index < keys.length && keys[index] !== ""; index++) {
-    var key = keys[index];
-    var node = level.nodes[key];
-    if (node === undefined) {
-      node = newNode(key);
-      level.nodes[key] = node;
-      level.order.push(key);
-      level.children[key] = newLevels();
-    }
-    accumulate(node, bytes, connections, blocked, newest);
-    level = level.children[key];
+// key ends the path there. The keys are arguments rather than an array: the tree lands every row of
+// the window twice, and building an array of keys for each was a measurable share of its time.
+function addToLevels(side, first, second, third, bytes, connections, blocked, newest) {
+  if (first === "") {
+    return;
   }
+  var level = addToLevel(side, first, bytes, connections, blocked, newest);
+  if (second === "") {
+    return;
+  }
+  level = addToLevel(level, second, bytes, connections, blocked, newest);
+  if (third === "") {
+    return;
+  }
+  addToLevel(level, third, bytes, connections, blocked, newest);
+}
+
+// addToLevel lands one row in a node of one level and returns the level below that node.
+function addToLevel(level, key, bytes, connections, blocked, newest) {
+  var node = level.nodes[key];
+  if (node === undefined) {
+    node = newNode(key);
+    level.nodes[key] = node;
+    level.order.push(key);
+    level.children[key] = newLevels();
+  }
+  accumulate(node, bytes, connections, blocked, newest);
+  return level.children[key];
 }
 
 // nodeValue is the figure a node is drawn by.
@@ -263,7 +276,7 @@ exports.widget = {
         }
         second = clientNode;
       }
-      addToLevels(inside, [first, second], bytes, connections, blocked, row.newest);
+      addToLevels(inside, first, second, "", bytes, connections, blocked, row.newest);
       var destination;
       if (firewallOutside) {
         destination = THIS_FIREWALL;
@@ -288,7 +301,7 @@ exports.widget = {
           service = host.flows.serviceKey(row.protocol, row.port);
         }
       }
-      addToLevels(outside, [destination, named, service], bytes, connections, blocked, row.newest);
+      addToLevels(outside, destination, named, service, bytes, connections, blocked, row.newest);
       total.bytes += bytes;
       total.connections += connections;
       total.blocked += blocked;
