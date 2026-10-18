@@ -106,6 +106,21 @@ func resultMap(result provider.Result) map[string]any {
 		"probe": result.Probe.Path, "detail": result.Detail, "separable": result.Separable}
 }
 
+// RunDerivation runs one of the plugin's derivations now, as a test runs it: woken as a cadence tick would
+// wake it, over whatever was noted for it, and written as the collector writes it. It returns whether a run
+// happened and how many rows it changed.
+func (p *Plugin) RunDerivation(ctx context.Context, session provider.Session, name string, now int64) (
+	provider.DerivationOutcome, error) {
+	for _, d := range p.derivations {
+		if d.declaration.Name != name {
+			continue
+		}
+		d.Note(provider.DerivationChange{Trigger: provider.TriggerCadence, At: now})
+		return d.Run(ctx, session, now)
+	}
+	return provider.DerivationOutcome{}, &CallRefusal{Detail: fmt.Sprintf("the plugin declares no derivation %s", name)}
+}
+
 // Provides reports whether the plugin provides a kind.
 func (p *Plugin) Provides(kind string) bool {
 	_, found := p.implementations[kind]
@@ -152,7 +167,7 @@ func StoreAndRead(ctx context.Context, sink push.Sink, prepared push.Prepared) (
 	switch payload := prepared.Payload.(type) {
 	case tableBatch:
 		for _, row := range payload.rows {
-			rows = append(rows, readableRow(row))
+			rows = append(rows, ReadableRow(row))
 		}
 	case kindBatch:
 		if kind, isKind := sink.(*kindSink); isKind {
@@ -167,8 +182,8 @@ func StoreAndRead(ctx context.Context, sink push.Sink, prepared push.Prepared) (
 	return rows, nil
 }
 
-// readableRow is a stored row as a test reads it: instants as epoch seconds, addresses as text.
-func readableRow(row map[string]any) map[string]any {
+// ReadableRow is a stored row as a test reads it: instants as epoch seconds, addresses as text.
+func ReadableRow(row map[string]any) map[string]any {
 	converted := make(map[string]any, len(row))
 	for name, value := range row {
 		switch typed := value.(type) {

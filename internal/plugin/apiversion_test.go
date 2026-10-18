@@ -10,12 +10,12 @@ import (
 	"github.com/NaejEL/opnview/internal/plugin/contract"
 )
 
-// TestOnlyAPIVersion2IsReadAndAVersion1PluginIsRefusedNamingBoth is PA-AC1: version 2 is the only
-// version this build reads, a version-1 plugin is refused with unsupported_api_version and a detail
-// naming both versions, and every built-in manifest says 2.
+// TestOnlyAPIVersion2IsReadAndAVersion1PluginIsRefusedNamingBoth is PA-AC1 as amended by ADR 0018: versions 2 and 3 are the
+// versions this build reads, a version-1 plugin is refused with unsupported_api_version and a detail
+// naming both versions, and every built-in manifest says 2 or 3.
 func TestOnlyAPIVersion2IsReadAndAVersion1PluginIsRefusedNamingBoth(t *testing.T) {
-	if contract.MinAPIVersion != 2 || contract.MaxAPIVersion != 2 {
-		t.Fatalf("this build reads versions %d to %d, not 2 alone", contract.MinAPIVersion, contract.MaxAPIVersion)
+	if contract.MinAPIVersion != 2 || contract.MaxAPIVersion != 3 {
+		t.Fatalf("this build reads versions %d to %d, not 2 to 3", contract.MinAPIVersion, contract.MaxAPIVersion)
 	}
 	dataDir := t.TempDir()
 	directory := filepath.Join(dataDir, PluginsDirectory, "example_old")
@@ -43,7 +43,7 @@ func TestOnlyAPIVersion2IsReadAndAVersion1PluginIsRefusedNamingBoth(t *testing.T
 	if refusal == nil || refusal.Code != contract.RefusalUnsupportedAPIVersion {
 		t.Fatalf("the refusal is %+v, not %s", refusal, contract.RefusalUnsupportedAPIVersion)
 	}
-	if !strings.Contains(refusal.Detail, "version 1") || !strings.Contains(refusal.Detail, "version 2") {
+	if !strings.Contains(refusal.Detail, "version 1") || !strings.Contains(refusal.Detail, "versions 2 to 3") {
 		t.Errorf("the refusal's detail %q does not name both versions", refusal.Detail)
 	}
 	builtins := BuiltinsLoaded()
@@ -51,7 +51,7 @@ func TestOnlyAPIVersion2IsReadAndAVersion1PluginIsRefusedNamingBoth(t *testing.T
 		t.Fatalf("built-ins refused: %v", builtins.Refusals())
 	}
 	for _, member := range builtins.Plugins() {
-		if member.APIVersion != 2 {
+		if member.APIVersion != 2 && member.APIVersion != 3 {
 			t.Errorf("the built-in %s says api_version %d", member.Name, member.APIVersion)
 		}
 	}

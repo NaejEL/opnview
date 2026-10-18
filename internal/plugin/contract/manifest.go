@@ -20,10 +20,11 @@ const ManifestFile = "plugin.json"
 // The plugin API versions this build reads (docs/plugins.md, "The plugin API version"). A manifest declaring a
 // version outside the range is refused, naming both, so a format change is never half understood. Version 2
 // (the plugin-API amendment of 17 October 2026: kinds as data, datasets, derivations, measures, pages)
-// is the only one: no version-1 plugin exists outside the repository, and none is read.
+// was the first read; version 3 (ADR 0018, 18 October 2026) adds statements, relations, requires and
+// after_derivations, and removes nothing, so a version-2 plugin still loads.
 const (
 	MinAPIVersion = 2
-	MaxAPIVersion = 2
+	MaxAPIVersion = 3
 )
 
 // Manifest is the content of one plugin.json: JSON, decoded strictly, so a misspelt key is a
@@ -83,6 +84,17 @@ type Manifest struct {
 	// Derivations are the functions of the script that compute from what the core and the plugin stored, each
 	// run on its triggers (PA4 of the plugin-API amendment, docs/plugins.md "Derivations").
 	Derivations []DerivationDeclaration `json:"derivations,omitempty"`
+	// Statements are the plugin's statement files (ADR 0018, docs/plugins.md "Statements"): each a file of
+	// the plugin's directory holding named statements under "-- statement: <name>" markers, which its
+	// derivations run inside their transaction. A statement writes only in the plugin's own schema.
+	Statements []string `json:"statements,omitempty"`
+	// Relations are the plugin's relation files (ADR 0018, docs/plugins.md "Relations"): each holding
+	// CREATE OR REPLACE VIEW and CREATE OR REPLACE FUNCTION statements, every object in the plugin's own
+	// schema, applied at every start after its tables are ensured.
+	Relations []string `json:"relations,omitempty"`
+	// Requires names the plugins whose schemas this plugin's SQL reads (ADR 0018, docs/plugins.md
+	// "Requires"): they load first, and a required plugin that is absent or refused refuses this one.
+	Requires []string `json:"requires,omitempty"`
 }
 
 // EndpointDeclaration is one firewall endpoint a plugin reads, in the fields an
@@ -666,6 +678,13 @@ type DerivationDeclaration struct {
 	AfterPush []string `json:"after_push,omitempty"`
 	// CadenceSeconds runs it on a cadence as well; zero runs it on its other triggers alone.
 	CadenceSeconds int `json:"cadence_seconds,omitempty"`
+	// AfterDerivations are the derivations of required plugins that run it ("<plugin>/<derivation>"), after
+	// each successful run of theirs (ADR 0018).
+	AfterDerivations []string `json:"after_derivations,omitempty"`
+	// Statements makes the derivation SQL-only (ADR 0018): the plugin's statements it runs, in this order,
+	// each bound :since and :now, inside its one transaction, with no script function at all. Exclusive
+	// with Function; Outputs then lists nothing but the tables the statements write.
+	Statements []string `json:"statements,omitempty"`
 	// Datasets are the data-catalogue datasets it reads, each also named by the manifest's `datasets`.
 	Datasets []string `json:"datasets,omitempty"`
 	// Outputs are what it writes; anything else it returns refuses the run.
@@ -677,4 +696,7 @@ type DerivationDeclaration struct {
 type DerivationOutputs struct {
 	Tables   []string `json:"tables,omitempty"`
 	Measures []string `json:"measures,omitempty"`
+	// Statements are the plugin's statements a script derivation may return to run (ADR 0018): a run
+	// returning one it does not name here is refused.
+	Statements []string `json:"statements,omitempty"`
 }

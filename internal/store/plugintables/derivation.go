@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/NaejEL/opnview/internal/store/plugindecl"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // What one run of a derivation writes (PA4 of the plugin-API amendment to
@@ -46,10 +47,20 @@ type MeasureInterval struct {
 	State    string
 }
 
+// StatementRun is one of the plugin's own statements a run executes, as the plugin's role, before its rows
+// are written (ADR 0018).
+type StatementRun struct {
+	Name       string
+	Text       string
+	Parameters map[string]any
+}
+
 // DerivationWrite is everything one run writes.
 type DerivationWrite struct {
 	// Plugin owns every table written.
 	Plugin string
+	// Statements are the plugin's statements the run executes first, in order, as the plugin's role.
+	Statements []StatementRun
 	// Rows are rows of the plugin's tables, by the table's own name: ordinary tables and counter tables
 	// alike, each written as its declaration says.
 	Rows map[string][]map[string]any
@@ -78,6 +89,24 @@ func (s *PluginTableStore) WriteDerivation(ctx context.Context, write Derivation
 		return written, fmt.Errorf("store: writing a derivation of the plugin %s: %w", write.Plugin, err)
 	}
 	defer func() { _ = transaction.Rollback() }()
+	if len(write.Statements) > 0 {
+		// The plugin's own SQL, as the plugin's role: it writes in the plugin's schema and nowhere else, by
+		// privilege. The role is given back before the core writes what follows.
+		if err := sqldb.TakePluginRole(ctx, transaction, write.Plugin); err != nil {
+			return DerivationWritten{}, err
+		}
+		for _, run := range write.Statements {
+			changed, err := sqldb.ExecText(ctx, transaction, run.Name, run.Text, run.Parameters)
+			if err != nil {
+				return DerivationWritten{}, fmt.Errorf("store: the statement %s of the plugin %s: %w", run.Name, write.Plugin, err)
+			}
+			written.Rows += changed
+			written.Statements++
+		}
+		if err := sqldb.GivePluginRoleBack(ctx, transaction); err != nil {
+			return DerivationWritten{}, err
+		}
+	}
 	for _, name := range sortedKeys(write.Rows) {
 		rows := write.Rows[name]
 		if len(rows) == 0 {

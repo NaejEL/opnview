@@ -13,6 +13,7 @@ import (
 
 	"github.com/dop251/goja"
 
+	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/widget"
@@ -31,6 +32,8 @@ import (
 //
 //	t.sql(statement, parameters)     runs one statement on the test database, as its owner: the
 //	                                 arrangement of a test, never what a widget can do
+//	t.query(text, parameters)        the rows a SELECT returns, on the read role, as a test reads them
+//	t.derive(name)                   runs one of the plugin's derivations now: {ran, written, error}
 //	t.widget(type, parameters)       {status, condition, body, raw}: the response as the API writes
 //	                                 it -- body parsed, raw the exact bytes
 //	t.golden(file, raw)              compares raw with tests/<file>; with OPNVIEW_WRITE_GOLDEN=1 in the
@@ -56,6 +59,41 @@ func (w *testWorld) widgetAPI(vm *goja.Runtime, t *goja.Object, fail func(string
 			scripthost.Throw(vm, "t.sql: %v", err)
 		}
 		return goja.Undefined()
+	})
+	set("query", func(call goja.FunctionCall) goja.Value {
+		if w.database == nil {
+			scripthost.Throw(vm, "t.query needs a database: the plugin declares neither a table nor a widget")
+		}
+		parameters := map[string]any{}
+		if object, isObject := call.Argument(1).(*goja.Object); isObject {
+			parameters, _ = object.Export().(map[string]any)
+		}
+		rows, err := w.database.ReadRows(context.Background(), call.Argument(0).String(), parameters)
+		if err != nil {
+			scripthost.Throw(vm, "t.query: %v", err)
+		}
+		list := make([]any, 0, len(rows))
+		for _, row := range rows {
+			list = append(list, plugin.ReadableRow(row))
+		}
+		return vm.ToValue(list)
+	})
+	set("derive", func(call goja.FunctionCall) goja.Value {
+		outcome, err := w.plugin.RunDerivation(context.Background(), w.session(), call.Argument(0).String(),
+			w.reference.Unix())
+		var refusal *plugin.CallRefusal
+		if errors.As(err, &refusal) {
+			scripthost.Throw(vm, "t.derive: %s", refusal.Detail)
+		}
+		result := vm.NewObject()
+		_ = result.Set("ran", outcome.Ran)
+		_ = result.Set("written", outcome.Written)
+		if err != nil {
+			_ = result.Set("error", err.Error())
+		} else {
+			_ = result.Set("error", nil)
+		}
+		return result
 	})
 	set("widget", func(call goja.FunctionCall) goja.Value {
 		widgetType := call.Argument(0).String()

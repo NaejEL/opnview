@@ -29,7 +29,7 @@ change validated on the maintainer's firewall. There are no specifications.
 | [0015](0015-streams.md) | A stream is opened once and shared | Proposed |
 | [0016](0016-the-front.md) | Named canvases, widgets as plugins, themes and languages as files | Accepted |
 | [0017](0017-core-audit.md) | The package-by-package verdict on the existing Go | Accepted |
-| [0018](0018-the-write-primitive.md) | The write primitive: a plugin owns its tables, views and writes in SQL | Proposed |
+| [0018](0018-the-write-primitive.md) | The write primitive: a plugin owns its tables, views and writes in SQL | Accepted |
 
 ## Template
 

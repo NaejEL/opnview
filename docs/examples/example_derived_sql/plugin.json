@@ -1,0 +1,49 @@
+{
+  "api_version": 3,
+  "name": "example_derived_sql",
+  "version": "1.0.0",
+  "display_name": "Example derived SQL",
+  "description": "Keeps the readings an example meter sends over syslog, totals them per meter in SQL alone, and publishes the totals as a view other plugins read.",
+  "tables": [
+    {
+      "name": "readings",
+      "columns": [
+        { "name": "logged_at", "type": "instant" },
+        { "name": "meter", "type": "text" },
+        { "name": "value", "type": "integer", "role": "measure", "unit": "watt" }
+      ],
+      "retention": { "column": "logged_at" }
+    },
+    {
+      "name": "totals",
+      "columns": [
+        { "name": "meter", "type": "text" },
+        { "name": "readings", "type": "integer", "role": "measure" },
+        { "name": "total", "type": "integer", "role": "measure", "unit": "watt" }
+      ],
+      "primary_key": ["meter"]
+    }
+  ],
+  "kinds": [ { "kind": "example_derived_sql", "push": true } ],
+  "providers": [ { "kind": "example_derived_sql", "display_name": "Example meter readings", "source": "push" } ],
+  "push": [
+    {
+      "name": "readings",
+      "protocol": "syslog",
+      "filter": { "program": ["example-meter"] },
+      "pattern": "^reading meter=(?P<meter>\\S+) value=(?P<value>[0-9]+)",
+      "output_table": "readings"
+    }
+  ],
+  "statements": ["totals.statements.sql"],
+  "relations": ["totals.relations.sql"],
+  "derivations": [
+    {
+      "name": "total",
+      "after_push": ["readings"],
+      "cadence_seconds": 600,
+      "statements": ["total_readings"],
+      "outputs": { "tables": ["totals"] }
+    }
+  ]
+}

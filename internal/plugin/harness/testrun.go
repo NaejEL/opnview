@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -21,6 +23,8 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+
+	opnview "github.com/NaejEL/opnview"
 
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/collect/provider"
@@ -233,9 +237,24 @@ func newTestWorld(ctx context.Context, directory string) (*testWorld, error) {
 		APISecret: world.secret}, nil, 10*time.Second)
 	world.set = provider.NewSet()
 	name := filepath.Base(directory)
+	options := plugin.Options{DataDir: dataDir, Store: world.database, Settings: world.settings, Sealer: world.box,
+		CallTimeout: 30 * time.Second, FetchTransport: world, HostAnswers: world.heard}
+	taken := map[string]string{}
+	required, err := requiredDirectories(directory)
+	if err != nil {
+		world.close()
+		return nil, err
+	}
+	for _, each := range required {
+		if _, refusal := plugin.LoadOne(ctx, world.set, each.directory, each.name, each.origin, each.location, each.onDisk,
+			taken, options); refusal != nil {
+			world.close()
+			return nil, fmt.Errorf("the required plugin %s: %w", each.name, refusal)
+		}
+		taken[each.name] = each.origin
+	}
 	plugin, refusal := plugin.LoadOne(ctx, world.set, os.DirFS(directory), name, plugin.OriginDataDirectory, directory, directory,
-		map[string]string{}, plugin.Options{DataDir: dataDir, Store: world.database, Settings: world.settings, Sealer: world.box,
-			CallTimeout: 30 * time.Second, FetchTransport: world, HostAnswers: world.heard})
+		taken, options)
 	if refusal != nil {
 		world.close()
 		return nil, refusal
@@ -799,7 +818,50 @@ func ownsTables(directory string) bool {
 		return false
 	}
 	manifest, err := contract.DecodeManifest(raw)
-	return err == nil && (len(manifest.Tables) > 0 || len(manifest.Widgets) > 0)
+	return err == nil && (len(manifest.Tables) > 0 || len(manifest.Widgets) > 0 || len(manifest.Relations) > 0 ||
+		len(manifest.Statements) > 0 || len(manifest.Requires) > 0)
+}
+
+// requiredDirectories are the directories of the plugins a plugin under test requires (ADR 0018), each a
+// sibling directory of the plugin's, or a built-in of that name: they load into the test world first, as
+// they load into the service first.
+func requiredDirectories(directory string) ([]requiredPlugin, error) {
+	raw, err := os.ReadFile(filepath.Join(directory, contract.ManifestFile))
+	if err != nil {
+		return nil, nil
+	}
+	manifest, err := contract.DecodeManifest(raw)
+	if err != nil {
+		return nil, nil
+	}
+	var required []requiredPlugin
+	for _, name := range manifest.Requires {
+		sibling := filepath.Join(filepath.Dir(directory), name)
+		if info, err := os.Stat(sibling); err == nil && info.IsDir() {
+			required = append(required, requiredPlugin{name: name, directory: os.DirFS(sibling), location: sibling,
+				onDisk: sibling, origin: plugin.OriginDataDirectory})
+			continue
+		}
+		builtin, err := fs.Sub(opnview.BuiltinPlugins(), name)
+		if err != nil {
+			return nil, fmt.Errorf("the plugin requires %s, which is neither a sibling directory nor a built-in", name)
+		}
+		if _, err := fs.Stat(builtin, contract.ManifestFile); err != nil {
+			return nil, fmt.Errorf("the plugin requires %s, which is neither a sibling directory nor a built-in", name)
+		}
+		required = append(required, requiredPlugin{name: name, directory: builtin,
+			location: path.Join(plugin.PluginsDirectory, name), origin: plugin.OriginBuiltin})
+	}
+	return required, nil
+}
+
+// requiredPlugin is one plugin a test world loads before the plugin under test.
+type requiredPlugin struct {
+	name      string
+	directory fs.FS
+	location  string
+	onDisk    string
+	origin    string
 }
 
 // memorySettings holds a test's settings and sealed secrets in memory.

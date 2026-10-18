@@ -75,6 +75,18 @@ func (c *Collector) RunDerivation(ctx context.Context, derivation provider.Deriv
 	if err != nil {
 		return err
 	}
+	if outcome.Ran {
+		// The derivations that follow this one (ADR 0018, after_derivations) are woken, in this process: every
+		// derivation of the installation runs here.
+		ran := strings.Replace(derivation.Name(), ".", "/", 1)
+		for _, follower := range c.SourceSet.Derivations() {
+			for _, after := range follower.AfterDerivations() {
+				if after == ran {
+					follower.Note(provider.DerivationChange{Trigger: provider.TriggerDerivation, Entry: after, At: c.Now()})
+				}
+			}
+		}
+	}
 	if len(outcome.Instants) > 0 {
 		return derive.On(c.Collector).Derive(ctx, derive.Derivation{Instants: outcome.Instants})
 	}

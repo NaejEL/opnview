@@ -199,6 +199,9 @@ func (s *PluginTableStore) keepPluginTable(ctx context.Context, table plugindecl
 	if err := s.GrantReadOnSchema(ctx, plugindecl.PluginSchema(table.Plugin)); err != nil {
 		return nil, err
 	}
+	if err := s.EnsurePluginRole(ctx, table.Plugin, plugindecl.PluginSchema(table.Plugin)); err != nil {
+		return nil, err
+	}
 	s.Plugins.Lock()
 	if s.Plugins.ByName == nil {
 		s.Plugins.ByName = map[string]plugindecl.PluginTable{}

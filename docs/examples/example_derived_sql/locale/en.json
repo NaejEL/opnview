@@ -1,0 +1,4 @@
+{ "language": "en", "strings": { "provider.example_derived_sql.example_derived_sql": "Example meter readings",
+  "collection.kind.example_derived_sql": "Meter readings",
+  "plugin.example_derived_sql.dataset.readings": "Meter readings",
+  "plugin.example_derived_sql.dataset.totals": "Meter totals" } }

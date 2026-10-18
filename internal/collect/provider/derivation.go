@@ -26,6 +26,9 @@ const (
 	// TriggerCondition is a condition the decoder detected on a stream one of the plugin's push entries is fed
 	// by -- an exporter that restarted -- which no row says.
 	TriggerCondition = "condition"
+	// TriggerDerivation is a successful run of a derivation of a required plugin the derivation names in its
+	// after_derivations (ADR 0018); Entry is "<plugin>/<derivation>".
+	TriggerDerivation = "derivation"
 )
 
 // DerivationChange is one change a run is handed.
@@ -75,6 +78,8 @@ type Derivation interface {
 	Name() string
 	// AfterPasses are the passes that run it: a kind, or a kind and a provider ("kind/provider").
 	AfterPasses() []string
+	// AfterDerivations are the derivations of other plugins that run it ("plugin/derivation").
+	AfterDerivations() []string
 	// Cadence is its cadence; zero runs it on its other triggers alone.
 	Cadence() time.Duration
 	// Note records a change; Wake delivers once while a change is pending.

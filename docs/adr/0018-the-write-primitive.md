@@ -1,7 +1,7 @@
 # 0018 — The write primitive: a plugin owns its tables, its views and its writes in SQL
 
-Status: Proposed
-Proposed by the orchestrator, 18 October 2026, as the first step of the cut the maintainer ordered in ADR 0017
+Status: Accepted
+Proposed by the orchestrator, 18 October 2026, as the first step of the cut the maintainer ordered in ADR 0017; accepted by the maintainer the same day
 
 ## Context
 
@@ -88,6 +88,22 @@ The design adds to what exists; it replaces nothing a plugin uses today.
 `statement`, `view`, `function`, `role` and `schema` are PostgreSQL's words.
 `derivation` and `requires` are opnview's own, chosen in ADR 0017's audit and
 here because neither PostgreSQL nor OPNsense names the thing.
+
+## As built, 18 October 2026
+
+Two points differ from the text above, both simpler and both deliberate:
+
+- A missing, refused or circular requirement **refuses** the dependent plugin
+  (`requires_missing`), as any other load problem does; no availability state
+  is kept for a plugin that did not load.
+- Relation files are applied at every start without a recorded digest:
+  `CREATE OR REPLACE` makes an unchanged file a no-op, which is all the digest
+  would have bought.
+
+The `after_derivations` trigger is wired in the collector and validated at
+load; it is exercised on the maintainer's firewall when pf's classification
+moves (step (c) of ADR 0017), there being no second built-in derivation to
+chain it to yet.
 
 ## Consequences
 

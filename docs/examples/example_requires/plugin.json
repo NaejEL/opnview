@@ -1,0 +1,9 @@
+{
+  "api_version": 3,
+  "name": "example_requires",
+  "version": "1.0.0",
+  "display_name": "Example requires",
+  "description": "Draws the meter totals another plugin publishes: it requires that plugin, and its widget reads the plugin's view.",
+  "requires": ["example_derived_sql"],
+  "widgets": ["example_meter_totals"]
+}

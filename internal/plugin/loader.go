@@ -147,6 +147,10 @@ type Plugin struct {
 	declaredDatasets DeclaredDatasets
 	// derivations are its derivations (derivation.go).
 	derivations []*derivation
+	// statements are the statements its statement files hold, by name, and relations its relation files
+	// (sqlfiles.go, ADR 0018).
+	statements map[string]string
+	relations  []plugintables.RelationFile
 }
 
 // ProviderInfo is one provider a plugin declares.
@@ -313,6 +317,10 @@ func load(ctx context.Context, options Options) (*Loaded, error) {
 	if err != nil {
 		return nil, fmt.Errorf("plugin: reading the built-in plugins: %w", err)
 	}
+	// Built-ins load in name order, a required plugin before the plugins requiring it (ADR 0018).
+	builtinNames := []string{}
+	builtinRequires := map[string][]string{}
+	builtinDirectories := map[string]fs.FS{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -321,8 +329,14 @@ func load(ctx context.Context, options Options) (*Loaded, error) {
 		if err != nil {
 			return nil, fmt.Errorf("plugin: reading the built-in plugin %s: %w", entry.Name(), err)
 		}
-		plugin, refusal := LoadOne(ctx, loaded.Set, directory, entry.Name(), OriginBuiltin,
-			path.Join(PluginsDirectory, entry.Name()), "", taken, options)
+		builtinNames = append(builtinNames, entry.Name())
+		builtinRequires[entry.Name()] = manifestRequires(directory)
+		builtinDirectories[entry.Name()] = directory
+	}
+	for _, name := range orderByRequires(builtinNames, builtinRequires, taken) {
+		directory := builtinDirectories[name]
+		plugin, refusal := LoadOne(ctx, loaded.Set, directory, name, OriginBuiltin,
+			path.Join(PluginsDirectory, name), "", taken, options)
 		if refusal != nil {
 			refusal.Origin = OriginBuiltin
 			loaded.Refused = append(loaded.Refused, *refusal)
@@ -343,6 +357,9 @@ func load(ctx context.Context, options Options) (*Loaded, error) {
 		}
 		return nil, fmt.Errorf("plugin: reading %s: %w", root, err)
 	}
+	// The data directory's plugins load in the same order: by name, a required plugin first.
+	dataNames := []string{}
+	dataRequires := map[string][]string{}
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".") {
 			continue
@@ -354,8 +371,12 @@ func load(ctx context.Context, options Options) (*Loaded, error) {
 			loaded.Refused = append(loaded.Refused, *notDirectory)
 			continue
 		}
-		onDisk := filepath.Join(root, entry.Name())
-		plugin, refusal := LoadOne(ctx, loaded.Set, os.DirFS(onDisk), entry.Name(), OriginDataDirectory, onDisk,
+		dataNames = append(dataNames, entry.Name())
+		dataRequires[entry.Name()] = manifestRequires(os.DirFS(filepath.Join(root, entry.Name())))
+	}
+	for _, name := range orderByRequires(dataNames, dataRequires, taken) {
+		onDisk := filepath.Join(root, name)
+		plugin, refusal := LoadOne(ctx, loaded.Set, os.DirFS(onDisk), name, OriginDataDirectory, onDisk,
 			onDisk, taken, options)
 		if refusal != nil {
 			refusal.Origin = OriginDataDirectory
@@ -402,6 +423,15 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 		return nil, refusal
 	}
 	plugin.OwnTables, plugin.Tables = tables, tables
+	if refusal := checkRequires(manifest, taken); refusal != nil {
+		return nil, refusal
+	}
+	if plugin.statements, refusal = checkStatementFiles(plugin, directory); refusal != nil {
+		return nil, refusal
+	}
+	if plugin.relations, refusal = checkRelationFiles(plugin, directory); refusal != nil {
+		return nil, refusal
+	}
 	if refusal := checkSettings(manifest, taken); refusal != nil {
 		return nil, refusal
 	}
@@ -488,6 +518,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 				plugin.Events = append(plugin.Events, *event)
 			}
 		}
+	}
+	if refusal := applySQL(ctx, plugin, options); refusal != nil {
+		return nil, refusal
 	}
 	for _, endpoint := range endpoints {
 		if err := opnsense.AdmitDeclaredEndpoint(endpoint); err != nil {

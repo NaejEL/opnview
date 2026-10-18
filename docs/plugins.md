@@ -215,12 +215,67 @@ plugin's durable state is reset; the listing reports the move. A set-aside table
 widget or the data catalogue, and is purged by its retention and dropped once empty. A plugin
 removed from the data directory keeps its schema and rows, and the plugin listing names them.
 
-**Every table is a dataset of the data catalogue** (`docs/widget-api.md`, *Data catalogue*), named
+**Every table is a dataset of the data catalogue** (ADR 0011), named
 `<plugin>.<table>`, labelled by the plugin's own string `plugin.<plugin>.dataset.<table>`, and dated
 by the plugin's provider of its own kind. A chart can then read it -- a `custom_chart` series whose
 `source` is its name -- with no file of `opnview` changed. A table the catalogue could not serve --
 a measure of type text, a unit on a dimension, an aggregation its role cannot admit -- is refused
 (`table_invalid`).
+
+### Statements
+
+A plugin that writes in SQL -- a classification, a rollup, a join it would rather express as one
+statement than as rows a script returns -- lists statement files in its manifest:
+
+```json
+"statements": ["totals.statements.sql"]
+```
+
+A file holds named statements, each under a marker line `-- statement: <name>`, with `:name`
+parameters, exactly as a widget's statements (*Widgets*, *Statements*). A statement name is a
+snake_case word, once across the plugin's files. A derivation runs them (*Derivations*).
+
+**A statement writes in the plugin's own schema and nowhere else, and that is PostgreSQL's decision,
+not a parser's.** Every plugin has a role, `opnview_plugin_<name>`, that cannot log in, reads what a
+widget query reads -- the core schema, every plugin's schema, never a credential table -- and holds
+INSERT, UPDATE and DELETE on `plugin_<name>` alone. A derivation's statements run as that role, inside
+the derivation's one transaction. When the plugin loads, every statement is planned under the role
+with its parameters bound to NULL, so one that would write elsewhere, read a credential table, or not
+plan at all refuses the plugin, naming the statement (`statement_refused`). Where a parameter stands
+in a place PostgreSQL cannot type, cast it, as in a widget's statement.
+
+### Relations
+
+A plugin publishes views and functions in its own schema by listing relation files:
+
+```json
+"relations": ["totals.relations.sql"]
+```
+
+A relation file holds `CREATE OR REPLACE VIEW` and `CREATE OR REPLACE FUNCTION` statements and nothing
+else; every object is schema-qualified in the plugin's own schema (`plugin_example.meter_totals`). A
+function is `STABLE` or `IMMUTABLE`; a `VOLATILE` one, or one with `SECURITY DEFINER`, refuses the
+file (`relation_refused`). The files are applied at every start, in name order, as the plugin's role,
+once the plugin's tables are ensured; `CREATE OR REPLACE` makes an unchanged file a no-op. The read
+role is granted what was created, so any plugin's SQL, any widget's statement and the data catalogue
+read a view by its qualified name. A view the plugin's role could not read -- one that names a
+credential table -- cannot be created.
+
+A relation another plugin reads is a contract of the plugin publishing it: renaming one of its columns
+is a breaking change, said in the plugin's changelog. opnview versions nothing beyond that.
+
+### Requires
+
+A plugin whose SQL reads another plugin's schema says so:
+
+```json
+"requires": ["example_derived_sql"]
+```
+
+Required plugins load first, built-ins then the data directory's, each in name order among those that
+are ready. A required plugin that is absent, refused, or requiring this one back refuses this one
+(`requires_missing`), and nothing else of the installation is affected. A plugin's tests load the
+plugins it requires before it: each from the sibling directory of that name, or from the built-ins.
 
 ### Kinds of the plugin's own
 
@@ -452,7 +507,14 @@ measure's per-connection figures, a summary table, counters. It is a function th
 | `after_push` | The plugin's own push entries whose stored batches run it. |
 | `cadence_seconds` | Runs it on a cadence too; 0 runs it on its other triggers alone. At least one trigger is named. |
 | `datasets` | The datasets it reads, each also under the manifest's `datasets` (*Datasets a plugin reads*). |
-| `outputs` | What it may write: tables of the plugin's own, each with a primary key (counter tables among them, *Tables*), and measures the plugin declares (*Measures*). |
+| `after_derivations` | Derivations of required plugins that run it, each `<plugin>/<derivation>`, after each successful run of theirs (*Requires*). |
+| `statements` | Makes the derivation **SQL-only**: the plugin's statements it runs, in this order, each handed `:since` and `:now`, inside its one transaction, with no script function at all (*Statements*). Exclusive with `function`. |
+| `outputs` | What it may write: tables of the plugin's own, each with a primary key (counter tables among them, *Tables*), measures the plugin declares (*Measures*), and `statements` a script run may return to run. |
+
+A script derivation may return, beside its rows, `statements: [{name, parameters}]`: each one the
+declaration's `outputs.statements` names, run in that order, as the plugin's role, before the rows are
+written, in the same transaction. A SQL-only derivation needs no script: `docs/examples/example_derived_sql`
+totals readings per meter with one `INSERT ... ON CONFLICT` and no line of JavaScript.
 
 ```js
 exports.derivations = {
@@ -901,6 +963,8 @@ applied. Besides the functions of *Testing a plugin*:
 | Function | What it does |
 |---|---|
 | `t.sql(statement, parameters)` | Runs one statement on the test's database, to arrange the rows a widget reads. |
+| `t.query(text, parameters)` | The rows a `SELECT` returns, on the read role, instants as epoch seconds: what a derivation wrote, what a view serves. |
+| `t.derive(name)` | Runs one of the plugin's derivations now, as a cadence tick would, and writes as the collector writes: `{ran, written, error}`. |
 | `t.widget(type, parameters)` | Asks a widget as `GET /api/widget/{type}` asks it: `{status, condition, body, raw}`, `body` parsed and `raw` the exact bytes. A script that failed answers its reason in `body.reason`, which only a test sees. |
 | `t.golden(file, raw)` | Compares an answer with `tests/<file>`, byte for byte once both are compact. Run the tests once with `OPNVIEW_WRITE_GOLDEN=1` in the environment to write the file instead, then read it before keeping it. |
 
@@ -912,10 +976,11 @@ every run.
 `api_version` is the version of everything this document describes: the manifest, the host, the
 contracts and the test API. A change a plugin written for the current version would not survive
 raises it, and a build reads a range of versions. A plugin targeting a version outside the range is
-refused, naming both, so a format change is never half understood. This build reads version 2 alone:
+refused, naming both, so a format change is never half understood. This build reads versions 2 and 3:
 version 2 made kinds, datasets, derivations, measures and pages declarations, and removed the
 source-specific host helpers, so a version-1 plugin would not survive it, and no compatibility code
-reads one.
+reads one; version 3 (ADR 0018) added `statements`, `relations`, `requires` and `after_derivations`
+and removed nothing, so a version-2 plugin loads as it did.
 
 ## Kinds
 
@@ -1178,6 +1243,8 @@ passes its own tests, and a test of the repository does exactly that for every d
 | `docs/examples/example_latency` | A widget computing what a query cannot -- each target ranked by a percentile of its samples -- with its statements, its script and a golden answer written once with `OPNVIEW_WRITE_GOLDEN=1`. |
 | `docs/examples/example_logins` | A syslog program into a table with a regular expression, and no script. |
 | `docs/examples/example_pairs` | A syslog parse function, for messages of `key=value` pairs no regular expression of fixed groups expresses. |
+| `docs/examples/example_derived_sql` | The write primitive (ADR 0018) with no JavaScript at all: readings received over syslog, a SQL-only derivation totalling them per meter in its own schema, and a relation file publishing a view and a function. |
+| `docs/examples/example_requires` | A plugin that `requires` the one above and whose widget reads its view by its qualified name; its tests load the required plugin first. |
 | `docs/examples/example_flows` | A NetFlow subscriber keeping each flow record's volume. A packet can be exported more than once -- on the interface it arrived by, translated on the one it left by, again by its VLAN's parent (survey, *Push sources*, S5 and S11) -- so a sum of this table counts such a packet once per copy; the netflow plugin's `netflow.flow_record` names each copy. |
 | `internal/plugin/testdata/plugins/example_reporter` | The third-party proof of PA20: a `datagram` push entry decoded by its script, a derivation run after each batch and on a cadence that reads `leg`, `this_firewall_address` and `interface`, a measure with a covered and an uncovered state and a marker, a settings page, and a widget declaring `volumes` whose statement declares its `_measured` twin. |
 | `internal/plugin/testdata/example_decoded` | `datagram` and `line` entries decoded by a JavaScript `decode` function. |

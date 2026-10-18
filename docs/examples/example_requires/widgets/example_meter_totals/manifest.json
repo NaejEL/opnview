@@ -1,0 +1,12 @@
+{
+  "manifest_version": 1,
+  "type": "example_meter_totals",
+  "shape": "table",
+  "windowed": true,
+  "parameters": [
+    { "key": "period", "kind": "enum", "values": ["1h", "24h"], "default": "24h" },
+    { "key": "limit", "kind": "integer", "min": 1, "default": 10 }
+  ],
+  "queries": ["totals.statements.sql"],
+  "script": "totals.js"
+}

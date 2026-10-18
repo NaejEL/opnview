@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,6 +41,10 @@ type derivation struct {
 	// tables are its output tables, by their own name; measures its output measures, by name.
 	tables   map[string]plugindecl.PluginTable
 	measures map[string]vocab.DeclaredMeasure
+	// statements are the plugin's statements a script run may return to run, by name (ADR 0018); sqlOnly,
+	// when set, is the ordered list a SQL-only derivation runs instead of a script.
+	statements map[string]string
+	sqlOnly    []string
 	// availability is the provider a failure is recorded on.
 	availabilityKind, availabilityKey string
 	// providerOf is the plugin's provider key of each kind, for a measure's intervals.
@@ -97,12 +102,35 @@ func checkDerivations(plugin *Plugin, exports map[string]map[string]string, prov
 		if function == "" {
 			function = declaration.Name
 		}
-		if exports[derivationNamespace][function] != "function" {
+		if len(declaration.Statements) > 0 {
+			// SQL-only (ADR 0018): the statements run in order, and no function is named or called.
+			if declaration.Function != "" {
+				return nil, refuse("the derivation %s names both statements and a function; it is one or the other",
+					declaration.Name)
+			}
+			function = ""
+			for _, name := range declaration.Statements {
+				if _, held := plugin.statements[name]; !held {
+					return nil, refuse("the derivation %s runs the statement %q, which no statement file of the plugin holds",
+						declaration.Name, name)
+				}
+			}
+		} else if exports[derivationNamespace][function] != "function" {
 			return nil, refuse("the derivation %s runs %s.%s, which the script does not export", declaration.Name,
 				derivationNamespace, function)
 		}
-		if len(declaration.AfterPasses) == 0 && len(declaration.AfterPush) == 0 && declaration.CadenceSeconds <= 0 {
-			return nil, refuse("the derivation %s names no trigger: a pass, a push entry or a cadence", declaration.Name)
+		if len(declaration.AfterPasses) == 0 && len(declaration.AfterPush) == 0 && declaration.CadenceSeconds <= 0 &&
+			len(declaration.AfterDerivations) == 0 {
+			return nil, refuse("the derivation %s names no trigger: a pass, a push entry, a derivation or a cadence",
+				declaration.Name)
+		}
+		for _, after := range declaration.AfterDerivations {
+			requiredPlugin, requiredDerivation, scoped := strings.Cut(after, "/")
+			if !scoped || !contract.NamePattern.MatchString(requiredPlugin) || !contract.NamePattern.MatchString(requiredDerivation) ||
+				!slices.Contains(manifest.Requires, requiredPlugin) {
+				return nil, refuse("the derivation %s runs after %q, which is not <plugin>/<derivation> of a plugin the "+
+					"manifest requires", declaration.Name, after)
+			}
 		}
 		if declaration.CadenceSeconds < 0 {
 			return nil, refuse("the derivation %s has a negative cadence", declaration.Name)
@@ -128,8 +156,17 @@ func checkDerivations(plugin *Plugin, exports map[string]map[string]string, prov
 		}
 		d := &derivation{plugin: plugin, declaration: declaration, function: function, database: options.Store,
 			tables: map[string]plugindecl.PluginTable{}, measures: map[string]vocab.DeclaredMeasure{},
+			statements: map[string]string{}, sqlOnly: append([]string(nil), declaration.Statements...),
 			availabilityKind: availability.Kind, availabilityKey: availability.ProviderKey, providerOf: providerOf,
 			wake: make(chan struct{}, 1)}
+		for _, name := range declaration.Outputs.Statements {
+			text, held := plugin.statements[name]
+			if !held {
+				return nil, refuse("the derivation %s may run the statement %q, which no statement file of the plugin holds",
+					declaration.Name, name)
+			}
+			d.statements[name] = text
+		}
 		for _, name := range declaration.Outputs.Tables {
 			table, owned := tables[name]
 			if !owned {
@@ -150,7 +187,7 @@ func checkDerivations(plugin *Plugin, exports map[string]map[string]string, prov
 			}
 			d.measures[name] = measure
 		}
-		if len(d.tables) == 0 && len(d.measures) == 0 {
+		if len(d.tables) == 0 && len(d.measures) == 0 && len(d.statements) == 0 && len(d.sqlOnly) == 0 {
 			return nil, refuse("the derivation %s declares no output", declaration.Name)
 		}
 		checked = append(checked, d)
@@ -174,6 +211,11 @@ func (d *derivation) Name() string { return d.plugin.Name + "." + d.declaration.
 // AfterPasses are the passes that run it.
 func (d *derivation) AfterPasses() []string {
 	return append([]string(nil), d.declaration.AfterPasses...)
+}
+
+// AfterDerivations are the derivations of required plugins that run it.
+func (d *derivation) AfterDerivations() []string {
+	return append([]string(nil), d.declaration.AfterDerivations...)
 }
 
 // Cadence is its cadence.
@@ -296,6 +338,18 @@ func (d *derivation) compute(ctx context.Context, session provider.Session, now,
 	write := plugintables.DerivationWrite{Plugin: d.plugin.Name, Rows: map[string][]map[string]any{},
 		Measures: map[string][]plugintables.ConnectionMeasureRow{}, Intervals: map[string][]plugintables.MeasureInterval{},
 		ComputedAt: now}
+	var previous any
+	if since > 0 {
+		previous = since
+	}
+	if len(d.sqlOnly) > 0 {
+		// SQL-only: the statements, in order, each handed the run's :since and :now; no script.
+		for _, name := range d.sqlOnly {
+			write.Statements = append(write.Statements, plugintables.StatementRun{Name: name, Text: d.plugin.statements[name],
+				Parameters: map[string]any{"since": previous, "now": now}})
+		}
+		return write, nil
+	}
 	if d.plugin.script == nil {
 		return write, d.failed(vocab.OutcomeScriptFailed, "the plugin has no script")
 	}
@@ -310,12 +364,10 @@ func (d *derivation) compute(ctx context.Context, session provider.Session, now,
 				change.From, change.To
 		case provider.TriggerCondition:
 			object["entry"], object["reason"], object["scope"] = change.Entry, change.Reason, change.Scope
+		case provider.TriggerDerivation:
+			object["derivation"] = change.Entry
 		}
 		handed = append(handed, object)
-	}
-	var previous any
-	if since > 0 {
-		previous = since
 	}
 	run := map[string]any{"derivation": d.declaration.Name, "now": now, "since": previous, "changes": handed}
 	answer, _, failed := d.plugin.script.RunWith(ctx, session, derivationNamespace, d.function, scripthost.RunOptions{}, run)
@@ -330,9 +382,13 @@ func (d *derivation) compute(ctx context.Context, session provider.Session, now,
 		return write, d.failed(vocab.OutcomeRecordsInvalid, "returned no object")
 	}
 	for key := range object {
-		if key != "rows" && key != "measures" && key != "intervals" {
-			return write, d.failed(vocab.OutcomeRecordsInvalid, "returned %q, which is not rows, measures or intervals", key)
+		if key != "rows" && key != "measures" && key != "intervals" && key != "statements" {
+			return write, d.failed(vocab.OutcomeRecordsInvalid, "returned %q, which is not rows, measures, intervals or statements",
+				key)
 		}
+	}
+	if failure := d.statementRuns(object["statements"], &write); failure != nil {
+		return write, failure
 	}
 	if failure := d.tableRows(object["rows"], write.Rows); failure != nil {
 		return write, failure
@@ -344,6 +400,44 @@ func (d *derivation) compute(ctx context.Context, session provider.Session, now,
 		return write, failure
 	}
 	return write, nil
+}
+
+// statementRuns checks the statements a run returned to run: each {name, parameters}, the name one the
+// declaration's outputs name, run in the order returned before the rows are written.
+func (d *derivation) statementRuns(value any, write *plugintables.DerivationWrite) *provider.DerivationFailure {
+	if value == nil {
+		return nil
+	}
+	list, isList := value.([]any)
+	if !isList {
+		return d.failed(vocab.OutcomeRecordsInvalid, "statements is not a list of {name, parameters}")
+	}
+	for index, item := range list {
+		object, isObject := item.(map[string]any)
+		name, _ := object["name"].(string)
+		if !isObject || name == "" {
+			return d.failed(vocab.OutcomeRecordsInvalid, "statements[%d] is not {name, parameters}", index)
+		}
+		text, allowed := d.statements[name]
+		if !allowed {
+			return d.failed(vocab.OutcomeRecordsInvalid, "statements[%d] runs %q, which it does not declare as an output", index, name)
+		}
+		parameters := map[string]any{}
+		if given, present := object["parameters"]; present && given != nil {
+			typed, isMap := given.(map[string]any)
+			if !isMap {
+				return d.failed(vocab.OutcomeRecordsInvalid, "statements[%d].parameters is not an object", index)
+			}
+			parameters = typed
+		}
+		for key := range object {
+			if key != "name" && key != "parameters" {
+				return d.failed(vocab.OutcomeRecordsInvalid, "statements[%d] holds %q, which is not name or parameters", index, key)
+			}
+		}
+		write.Statements = append(write.Statements, plugintables.StatementRun{Name: name, Text: text, Parameters: parameters})
+	}
+	return nil
 }
 
 // tableRows checks the rows a run returned for its tables, typing each by its table.

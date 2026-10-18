@@ -129,6 +129,17 @@ const (
 	// RefusalPushDecodeMissing is a decode function the script does not export under push, an entry of a
 	// protocol whose messages carry no structure that names none, or one of any other protocol that names one.
 	RefusalPushDecodeMissing = "push_decode_missing"
+	// RefusalStatementRefused is a statement file that cannot be read or parsed, a statement named twice or
+	// not a snake_case word, or one PostgreSQL will not plan under the plugin's role: a write outside the
+	// plugin's own schema, a read of a credential table (ADR 0018).
+	RefusalStatementRefused = "statement_refused"
+	// RefusalRelationRefused is a relation file holding anything but CREATE OR REPLACE VIEW and CREATE OR
+	// REPLACE FUNCTION statements naming objects of the plugin's own schema, a function that is VOLATILE or
+	// SECURITY DEFINER, or one PostgreSQL refuses (ADR 0018).
+	RefusalRelationRefused = "relation_refused"
+	// RefusalRequiresMissing is a plugin the manifest requires that is absent, refused, or requires this one
+	// back (ADR 0018).
+	RefusalRequiresMissing = "requires_missing"
 )
 
 // Refusal is one plugin the loader would not load, with its closed code.
