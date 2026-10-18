@@ -183,6 +183,7 @@
       return opnview.strings.load(opnview.appearance.language());
     }).then(function () {
       startPolling();
+      opnview.events.open();
       loadDashboards();
       return go(safeReturn(state.query.next), { replace: true });
     });
@@ -196,6 +197,7 @@
 
   function afterSignOut() {
     stopPolling();
+    opnview.events.close();
     state.defaultOffer = null;
     // What one session edited and can undo is not the next one's.
     opnview.editing.reset();
@@ -290,11 +292,16 @@
     return routeLink("outages", "/sources", t("indicator.no_outage"), { "class": "outages" });
   }
 
+  /* The pill says whether the canvas hears the server's events (front/core/events.js) -- live or
+   * disconnected -- and the time of the header's last answer. */
   function livePill() {
     var at = state.lastAnswerAt;
-    return h("span", { key: "live", "class": "live-pill" + (state.sourcesFailed ? " is-stale" : ""),
+    var connection = opnview.events.connection();
+    return h("span", { key: "live", "class": "live-pill" + (state.sourcesFailed ? " is-stale" : "") +
+      (connection === "live" ? " is-live" : " is-disconnected"), "data-stream": connection,
       title: state.sourcesFailed ? t("header.live.failed") : t("header.live.answered") }, [
       h("span", { "class": "live-dot", "aria-hidden": "true" }),
+      h("span", { "class": "live-stream" }, connection === "live" ? t("header.stream.live") : t("header.stream.disconnected")),
       state.sourcesFailed ? h("span", { "class": "live-label" }, t("header.live.failed_short")) : null,
       at ? h("span", { "class": "live-clock" }, opnview.format.clock(at)) : null
     ]);
@@ -524,10 +531,13 @@
     start: function (container) {
       state.container = container;
       followLinks(container);
+      // The header says whether the canvas hears the server: drawn again when that changes.
+      opnview.events.watch(function () { if (state.container) { render({ refresh: true }); } });
       opnview.api.onUnauthorized(function () {
         if (!state.session.signed_in) { return; }
         var from = state.path;
         stopPolling();
+        opnview.events.close();
         state.session.signed_in = false;
         opnview.api.session().then(function (result) {
           if (result.status === 200 && result.body) { state.session = result.body; }
@@ -565,6 +575,7 @@
       }).then(function () {
         if (state.session.signed_in) {
           startPolling();
+          opnview.events.open();
           loadDashboards();
         }
         var location = root.location;

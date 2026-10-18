@@ -117,6 +117,10 @@ button, select, input, textarea { font-family: inherit; font-size: 0.8125rem; fo
 /* New here: the server stopped answering the header's read. The hue moves
    to the warning slot; the word beside it says so. */
 .live-pill.is-stale .live-dot { background: var(--status-warn); }
+/* New here: the event stream is not heard. The dot is hollow; the word
+   beside it says so. */
+.live-pill.is-disconnected .live-dot { background: var(--bg-surface); }
+.live-stream { text-transform: uppercase; letter-spacing: 0.05em; }
 
 /* New here: the outage indicator of every view, a link to the Sources view. */
 .outages {
@@ -956,6 +960,11 @@ svg .graph-node { fill: var(--accent); stroke: var(--border-strong); }
 
 /* The card the dock is about, and the card previewing the form. */
 .card.is-selected { border-color: var(--accent); }
+/* The time of a card's last answer. */
+.card-updated {
+  font-size: 0.625rem; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 .card.is-pending { outline: var(--border-width-thick) solid var(--status-ref); outline-offset: -1px; }
 .card-pending {
   font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.05em;

@@ -334,6 +334,35 @@ func (r *Runtime) install() error {
     return { matches: query.indexOf("dark") >= 0 ? root.__prefersDark : !root.__prefersDark,
       addEventListener: function () {} };
   };
+  // The event stream: every EventSource the page opens is kept, and a test speaks for the server
+  // through __emit and __streamError on the newest one still open.
+  root.__eventSources = [];
+  root.EventSource = function (url) {
+    this.url = url; this.readyState = 0; this.closed = false; this.listeners = {}; this.onerror = null;
+    root.__eventSources.push(this);
+  };
+  root.EventSource.prototype.addEventListener = function (type, handler) {
+    (this.listeners[type] || (this.listeners[type] = [])).push(handler);
+  };
+  root.EventSource.prototype.close = function () { this.closed = true; this.readyState = 2; };
+  root.__openStream = function () {
+    for (var index = root.__eventSources.length - 1; index >= 0; index--) {
+      if (!root.__eventSources[index].closed) { return root.__eventSources[index]; }
+    }
+    return null;
+  };
+  root.__emit = function (type, data) {
+    var source = root.__openStream();
+    if (!source) { throw new Error("no event stream is open"); }
+    source.readyState = 1;
+    var message = { type: type, data: data === undefined ? "" : JSON.stringify(data) };
+    (source.listeners[type] || []).slice().forEach(function (handler) { handler(message); });
+  };
+  root.__streamError = function () {
+    var source = root.__openStream();
+    if (!source) { throw new Error("no event stream is open"); }
+    if (source.onerror) { source.onerror({ type: "error" }); }
+  };
   root.fetch = function (path, init) {
     var settings = init || {};
     var answer = root.__fetch(settings.method || "GET", path, JSON.stringify(settings.headers || {}),
@@ -432,6 +461,31 @@ func (r *Runtime) Start(path string) {
 func (r *Runtime) Go(path string) {
 	r.t.Helper()
 	r.Run(fmt.Sprintf(`opnview.shell.go(%q);`, path))
+}
+
+// Emit sends one event of GET /api/events on the stream the page holds open: its type, and its
+// data as JSON text, or "" for none.
+func (r *Runtime) Emit(eventType, data string) {
+	r.t.Helper()
+	if data == "" {
+		r.Run(fmt.Sprintf(`__emit(%q);`, eventType))
+		return
+	}
+	r.Run(fmt.Sprintf(`__emit(%q, %s);`, eventType, data))
+}
+
+// StreamError fails the stream the page holds open, as a dropped connection does.
+func (r *Runtime) StreamError() {
+	r.t.Helper()
+	r.Run(`__streamError();`)
+}
+
+// Streams counts the event streams the page opened, and those still open.
+func (r *Runtime) Streams() (opened, open int) {
+	r.t.Helper()
+	opened = int(r.Run(`__eventSources.length`).ToInteger())
+	open = int(r.Run(`__eventSources.filter(function (s) { return !s.closed; }).length`).ToInteger())
+	return opened, open
 }
 
 // Path is the address bar's path.

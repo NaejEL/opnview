@@ -73,6 +73,13 @@
         return result;
       });
     },
+    /* The event stream of this server, GET /api/events (docs/widget-api.md, "Events"): an
+     * EventSource on this page's own origin, sending the session cookie as any read does; null where
+     * the browser has none. */
+    events: function () {
+      if (typeof root.EventSource !== "function") { return null; }
+      try { return new root.EventSource("/api/events"); } catch (e) { return null; }
+    },
     /* A body already written as JSON text, sent as it is. */
     raw: function (text) { return new Raw(text); },
     /* Keeps the form token a setup or a sign-in answered. */

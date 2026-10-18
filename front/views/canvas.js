@@ -68,7 +68,7 @@
 
   function load(context) {
     var state = context.state;
-    if (state.scheduler) { state.scheduler.stop(); }
+    halt(state);
     return Promise.all([context.reloadDashboards(), opnview.widgets.load(context.api)]).then(function (loaded) {
       var dashboards = loaded[0] || [];
       var wanted = context.params;
@@ -179,16 +179,41 @@
     return found;
   }
 
-  /* Starts the canvas: every widget asked once, then on its schedule. */
+  /* Starts the canvas: every widget asked once, then again on each event of the stream that
+   * concerns it (front/core/scheduler.js), by polling only while the stream is disconnected. */
   function start(context) {
     var state = context.state;
-    if (state.scheduler) { state.scheduler.stop(); }
-    state.scheduler = opnview.scheduler.create({
+    halt(state);
+    var scheduler = opnview.scheduler.create({
       hidden: hidden,
-      fetch: function (id) { fetchWidget(context, id); }
+      connection: opnview.events.connection,
+      fetch: function (id) { fetchWidget(context, id); },
+      entries: function () { return entriesOf(state); }
     });
+    state.scheduler = scheduler;
+    state.unlisten = [
+      opnview.events.listen(function (event) { scheduler.event(event); }),
+      opnview.events.watch(function (connection) { scheduler.connection(connection); })
+    ];
     state.generation = (state.generation || 0) + 1;
     widgetsOf(currentCanvas(state)).forEach(function (widget) { fetchWidget(context, widget.id); });
+  }
+
+  /* Stops the canvas's refresh: its timers, and its hold on the event stream. */
+  function halt(state) {
+    if (state.scheduler) { state.scheduler.stop(); state.scheduler = null; }
+    (state.unlisten || []).forEach(function (remove) { remove(); });
+    state.unlisten = [];
+  }
+
+  /* What the scheduler reads of each widget on screen: its registry row, the parameters it was last
+   * asked with, and its last answer. */
+  function entriesOf(state) {
+    return widgetsOf(currentCanvas(state)).map(function (widget) {
+      var record = state.answers[widget.id];
+      return { id: widget.id, row: widget.type ? opnview.widgets.row(widget.type) : null,
+        parameters: record && record.parameters, answer: record && record.answer };
+    });
   }
 
   /* Asks for one widget's answer, through the widget API or, for a front-only widget, through the
@@ -208,13 +233,14 @@
     var asked = state.pending && state.pending.id === id
       ? { id: widget.id, type: widget.type, placement: widget.placement, parameters: state.pending.parameters } : widget;
     var built = focused(state, id, model.request(row, asked, currentCanvas(state)));
+    if (state.scheduler) { state.scheduler.asked(id); }
     var settle = function (record) {
       if (state.generation !== generation) { return; }
       record.notes = built.notes;
       record.parameters = built.parameters;
+      // The time of this answer, which the card states.
+      record.at = new Date();
       state.answers[id] = record;
-      if (record.answer) { state.scheduler.track(id, record.answer); }
-      else { state.scheduler.track(id, null); }
       schedule(context);
     };
     if (row.backend === false) {
@@ -821,6 +847,8 @@
         chips(record, widget, row),
         focusChip(context, widget),
         pending ? h("span", { key: "pending", "class": "card-pending", "data-chip": "unapplied" }, t("card.unapplied")) : null,
+        record && record.at ? h("span", { key: "updated", "class": "card-updated", "data-updated": widget.id },
+          t("card.updated", { time: opnview.format.clock(record.at) })) : null,
         h("button", { key: "gear", type: "button", "class": "card-gear", "data-configure": widget.id,
           "aria-label": t("card.configure", { name: title }), title: t("card.configure", { name: title }),
           on: { click: function () { configure(context, widget.id, "form"); } } }, t("card.configure_mark"))
@@ -1509,7 +1537,7 @@
     },
     /* Leaving the canvas stops its refresh. */
     leave: function (context) {
-      if (context.state.scheduler) { context.state.scheduler.stop(); }
+      halt(context.state);
       context.state.drag = null;
     },
     visible: function (context) {

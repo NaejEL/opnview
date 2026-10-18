@@ -643,76 +643,48 @@ func TestEveryConditionIsADesignedPanel(t *testing.T) {
 	}
 }
 
-// TestTheSchedulerRefreshesAtItsCadenceOnlyWhileShown (F7-AC27): windowed widgets every 60 s, a
-// widget carrying a live figure at its reported cadence; nothing while the document is hidden, and
-// nothing for a canvas not shown.
-func TestTheSchedulerRefreshesAtItsCadenceOnlyWhileShown(t *testing.T) {
+// TestTheSchedulerRefreshesOnEventsOnlyWhileShown (F7-AC27, read with D21 as amended): while the
+// stream is live, neither a windowed widget nor one carrying a live figure is asked by time -- the
+// live widget at its reported cadence no more than the windowed one every minute -- but each is
+// asked on the event that concerns it; nothing while the document is hidden, and nothing for a
+// canvas not shown.
+func TestTheSchedulerRefreshesOnEventsOnlyWhileShown(t *testing.T) {
 	t.Parallel()
-	fixture := newCanvasFixture(t, `{"format_version": 1, "canvases": [
-  {"id": "main", "title": "Main", "widgets": [
-    {"id": "sites", "type": "top_sites", "placement": {"x": 0, "y": 0, "w": 6, "h": 6}},
-    {"id": "composition", "type": "traffic_composition", "placement": {"x": 6, "y": 0, "w": 6, "h": 6}}
-  ]},
-  {"id": "other", "title": "Other", "widgets": [
-    {"id": "freshness", "type": "aggregate_freshness", "placement": {"x": 0, "y": 0, "w": 6, "h": 6}}
-  ]}]}`)
-	fixture.recordedFor(t, "top_sites")
-	fixture.recordedFor(t, "aggregate_freshness")
-	live := firstDrawable(t, "traffic_composition").Raw
-	fixture.answer("traffic_composition", func(map[string]any) frontjsAnswer {
-		var body map[string]any
-		_ = json.Unmarshal(live, &body)
-		data := body["data"].(map[string]any)
-		data["current_rates"] = map[string]any{"by_direction": []any{map[string]any{"key": "outbound", "rate": map[string]any{
-			"state": "current", "measure": "sampled", "in_bits_per_second": 8000, "out_bits_per_second": 4000, "out_measured": true,
-			"sampled_at": 1790001795, "span_seconds": 2, "cadence_seconds": 5, "lower_bound": true}}},
-			"outbound_unsplit": map[string]any{"state": "no_current_sample", "measure": "sampled"}, "by_member": []any{}}
-		return ok(body)
-	})
-	page := fixture.canvasPage(t, "/canvas/1/main")
-	if widgetRequests(page, "top_sites") != 1 || widgetRequests(page, "traffic_composition") != 1 {
-		t.Fatalf("the canvas did not ask each widget once: %d %d", widgetRequests(page, "top_sites"),
-			widgetRequests(page, "traffic_composition"))
-	}
-	page.Advance(5000)
+	page := liveCanvas(t)
+	before := counts(page)
+	page.Advance(60000)
 	page.Advance(0)
-	if got := widgetRequests(page, "traffic_composition"); got != 2 {
-		t.Errorf("after 5 s the live widget was asked %d times, not twice", got)
+	if asked := askedSince(page, before); len(asked) != 0 {
+		t.Errorf("live, a minute alone asked %v", asked)
 	}
-	if got := widgetRequests(page, "top_sites"); got != 1 {
-		t.Errorf("after 5 s the windowed widget was asked %d times", got)
-	}
-	page.Advance(55000)
+	page.Emit("live_sample", `{"type": "live_sample", "at": 1790001810, "kind": "measurement_sample",
+	  "provider_key": "top", "sampled_at": 1790001809}`)
 	page.Advance(0)
-	if got := widgetRequests(page, "top_sites"); got != 2 {
-		t.Errorf("after 60 s the windowed widget was asked %d times, not twice", got)
+	if asked := askedSince(page, before); fmt.Sprint(asked) != fmt.Sprint(map[string]int{"traffic_composition": 1}) {
+		t.Errorf("a live sample asked %v", asked)
 	}
-	// Hidden: nothing is sent; shown again, what fell due is asked once.
+	// Hidden: nothing is sent.
 	page.Run(`document.visibilityState = "hidden";`)
-	before := len(page.Requests())
+	page.Advance(debounceMS(page))
+	sent := len(page.Requests())
+	page.Emit("resync", `{"type": "resync", "at": 1790001820}`)
 	page.Advance(120000)
-	if sent := page.Requests()[before:]; len(sent) != 0 {
-		for _, request := range sent {
-			if strings.HasPrefix(request.Path, "/api/widget/") {
-				t.Errorf("a hidden page asked %s", request.Path)
-			}
+	for _, request := range page.Requests()[sent:] {
+		if strings.HasPrefix(request.Path, "/api/widget/") {
+			t.Errorf("a hidden page asked %s", request.Path)
 		}
 	}
-	page.Run(`document.visibilityState = "visible"; (function () { var e = __makeEvent("visibilitychange");
-  document.body.dispatchEvent(e); })();`)
-	page.Advance(0)
-	if got := widgetRequests(page, "top_sites"); got != 3 {
-		t.Errorf("shown again, the windowed widget was asked %d times in all, not three", got)
-	}
+	page.Run(`document.visibilityState = "visible";`)
 	// Another canvas: the first one's widgets are asked no more.
 	page.Go("/canvas/1/other")
 	page.Advance(0)
 	sites := widgetRequests(page, "top_sites")
+	page.Emit("resync", `{"type": "resync", "at": 1790001830}`)
 	page.Advance(180000)
 	if got := widgetRequests(page, "top_sites"); got != sites {
 		t.Errorf("a canvas not shown was refreshed: %d requests after %d", got, sites)
 	}
-	if widgetRequests(page, "aggregate_freshness") < 2 {
+	if widgetRequests(page, "public_address") < 2 {
 		t.Errorf("the canvas shown was not refreshed")
 	}
 }
@@ -752,8 +724,10 @@ func TestAnAnswerThatChangedIsDrawnAtTheNextRefresh(t *testing.T) {
 	if text := page.Text(card); !strings.Contains(text, before) {
 		t.Fatalf("the first answer is not drawn: %.300s", text)
 	}
-	interval := page.Run(`opnview.scheduler.WINDOWED_MS`).ToInteger()
-	page.Advance(interval)
+	page.Emit("hello", hello)
+	page.Advance(debounceMS(page))
+	page.Emit("aggregate_refresh", `{"type": "aggregate_refresh", "at": 1790001810, "periods": ["hour"],
+	  "families": ["volume"], "ranges": [{"period": "hour", "from": 1790000000, "to": 1790001800}]}`)
 	page.Advance(0)
 	if widgetRequests(page, "top_sites") < 2 {
 		t.Fatalf("the refresh did not ask the widget again")

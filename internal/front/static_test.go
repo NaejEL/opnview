@@ -71,6 +71,9 @@ func renderers(t *testing.T) map[string]string {
 	return files
 }
 
+// eventSourceOpened is every construction of an EventSource, with its first argument.
+var eventSourceOpened = regexp.MustCompile(`new\s+(?:[A-Za-z_$][\w$]*\.)*EventSource\s*\(\s*([^,)]*)`)
+
 var fetchingPosition = regexp.MustCompile(`(?i)(src\s*=|href\s*=|url\(|fetch\(|import\s*\(?|@import)\s*["']?\s*https?://`)
 
 func TestNoFrontFileLoadsAnythingFromAnotherOrigin(t *testing.T) {
@@ -81,9 +84,24 @@ func TestNoFrontFileLoadsAnythingFromAnotherOrigin(t *testing.T) {
 		if match := fetchingPosition.FindString(text); match != "" {
 			t.Errorf("%s loads from another origin: %q", path, match)
 		}
-		for _, forbidden := range []string{"@font-face", "XMLHttpRequest", "WebSocket", "EventSource", "@import"} {
+		for _, forbidden := range []string{"@font-face", "XMLHttpRequest", "WebSocket", "@import"} {
 			if strings.Contains(text, forbidden) {
 				t.Errorf("%s holds %s", path, forbidden)
+			}
+		}
+		// The one event stream (D21 as amended): opened by the API module alone, on this server's own
+		// /api/events, never on another origin.
+		if strings.Contains(text, "EventSource") {
+			if path != "core/api.js" {
+				t.Errorf("%s holds EventSource: only core/api.js opens the event stream", path)
+			}
+			for _, opened := range eventSourceOpened.FindAllStringSubmatch(text, -1) {
+				if opened[1] != `"/api/events"` {
+					t.Errorf("%s opens an EventSource on %s, not on this server's \"/api/events\"", path, opened[1])
+				}
+			}
+			if !eventSourceOpened.MatchString(text) {
+				t.Errorf("%s names EventSource but never opens it on a literal path", path)
 			}
 		}
 	}
