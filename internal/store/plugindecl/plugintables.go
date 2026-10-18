@@ -123,6 +123,17 @@ type PluginTable struct {
 	// primary key is a number, and a row written with a key already held adds its figures to the held
 	// row's. Only a derivation writes one.
 	Counters bool
+	// WritableBy are the other plugins granted a write on the table (ADR 0019): each on the columns it
+	// names (UPDATE), or on the whole table (INSERT, UPDATE, DELETE) when it names none. Not part of the
+	// declaration a rebuild is decided on: a grant that changes is re-granted, never a reason to set the
+	// table aside.
+	WritableBy []WriteGrant
+}
+
+// WriteGrant is one plugin allowed to write a table of another (ADR 0019).
+type WriteGrant struct {
+	Plugin  string
+	Columns []string
 }
 
 // Growing reports whether the table grows with time, as the schema checks classify every table:

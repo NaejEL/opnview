@@ -634,6 +634,22 @@ func declaredTables(manifest contract.Manifest) ([]plugindecl.PluginTable, *cont
 		for _, index := range declaration.Indexes {
 			table.Indexes = append(table.Indexes, plugindecl.PluginIndex{Columns: index.Columns, Unique: index.Unique})
 		}
+		grantees := map[string]bool{}
+		for _, grant := range declaration.WritableBy {
+			if !contract.NamePattern.MatchString(grant.Plugin) || grant.Plugin == manifest.Name || grantees[grant.Plugin] {
+				return nil, contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "the table %q is writable by %q, which "+
+					"is not another plugin's name named once", declaration.Name, grant.Plugin)
+			}
+			grantees[grant.Plugin] = true
+			for _, column := range grant.Columns {
+				if !slices.ContainsFunc(declaration.Columns, func(c contract.ColumnDeclaration) bool { return c.Name == column }) {
+					return nil, contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "the table %q grants %s the column %q, "+
+						"which it does not declare", declaration.Name, grant.Plugin, column)
+				}
+			}
+			table.WritableBy = append(table.WritableBy, plugindecl.WriteGrant{Plugin: grant.Plugin,
+				Columns: append([]string(nil), grant.Columns...)})
+		}
 		if declaration.Retention != nil {
 			table.TimeColumn = declaration.Retention.Column
 			table.RetentionSeconds = declaration.Retention.Seconds

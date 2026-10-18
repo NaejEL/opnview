@@ -1,7 +1,7 @@
 # 0019 — Who owns the flow, the client and the classification
 
-Status: Proposed
-Proposed by the orchestrator, 18 October 2026, after reading `internal/store/flows` for step (c) of ADR 0017
+Status: Accepted
+Proposed by the orchestrator, 18 October 2026, after reading `internal/store/flows` for step (c) of ADR 0017; accepted by the maintainer the same day
 
 ## Context
 

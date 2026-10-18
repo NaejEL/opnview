@@ -275,6 +275,16 @@ type TableDeclaration struct {
 	// covered bucket with no row is a true zero) or sample (a gap); empty is sample, which never
 	// draws a zero it did not read.
 	Nature string `json:"nature,omitempty"`
+	// WritableBy names the other plugins that may write the table, and on which columns (ADR 0019):
+	// the owner's declaration, turned into PostgreSQL's own grants on the other plugin's role.
+	WritableBy []WriteGrant `json:"writable_by,omitempty"`
+}
+
+// WriteGrant is one plugin allowed to write a table of another (ADR 0019): with Columns, UPDATE of
+// those columns alone; without, INSERT, UPDATE and DELETE of the whole table.
+type WriteGrant struct {
+	Plugin  string   `json:"plugin"`
+	Columns []string `json:"columns,omitempty"`
 }
 
 // ColumnDeclaration is one column.

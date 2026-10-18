@@ -30,7 +30,7 @@ change validated on the maintainer's firewall. There are no specifications.
 | [0016](0016-the-front.md) | Named canvases, widgets as plugins, themes and languages as files | Accepted |
 | [0017](0017-core-audit.md) | The package-by-package verdict on the existing Go | Accepted |
 | [0018](0018-the-write-primitive.md) | The write primitive: a plugin owns its tables, views and writes in SQL | Accepted |
-| [0019](0019-who-owns-the-flow-and-the-client.md) | Who owns the flow, the client and the classification; granted writes | Proposed |
+| [0019](0019-who-owns-the-flow-and-the-client.md) | Who owns the flow, the client and the classification; granted writes | Accepted |
 
 ## Template
 

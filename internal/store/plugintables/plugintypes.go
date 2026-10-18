@@ -202,6 +202,13 @@ func (s *PluginTableStore) keepPluginTable(ctx context.Context, table plugindecl
 	if err := s.EnsurePluginRole(ctx, table.Plugin, plugindecl.PluginSchema(table.Plugin)); err != nil {
 		return nil, err
 	}
+	grants := make([]sqldb.TableWriteGrant, 0, len(table.WritableBy))
+	for _, grant := range table.WritableBy {
+		grants = append(grants, sqldb.TableWriteGrant{Plugin: grant.Plugin, Columns: grant.Columns})
+	}
+	if err := s.ApplyWriteGrants(ctx, plugindecl.PluginSchema(table.Plugin), table.Table, grants); err != nil {
+		return nil, err
+	}
 	s.Plugins.Lock()
 	if s.Plugins.ByName == nil {
 		s.Plugins.ByName = map[string]plugindecl.PluginTable{}
