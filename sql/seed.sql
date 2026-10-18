@@ -2884,6 +2884,24 @@ SELECT n,
        :now - n * 604800 + 300
 FROM generate_series(CAST(1 AS BIGINT), greatest(2, (:flow_rows * 97) / 604800)) AS n;
 
+-- What the active filter log provider exports beside its functions, and how far its source has been
+-- read (schema.sql, provider_value and provider_read_through), as its registration and its passes write
+-- them: the core datasets provider_value and read_through answer from these rows, and the data
+-- catalogue's budgets time a read of each that returns rows (P-AC20).
+INSERT INTO provider_value (provider_id, name, value, recorded_at)
+SELECT p.id, v.name, CAST(v.value AS JSONB), :now - 60
+FROM provider AS p
+CROSS JOIN (VALUES ('tcp_established_seconds', '86400'), ('udp_multiple_seconds', '60'),
+                   ('state_policy', '"if-bound"')) AS v (name, value)
+WHERE p.kind = 'firewall_log' AND p.provider_key = 'pf'
+ON CONFLICT (provider_id, name) DO NOTHING;
+
+INSERT INTO provider_read_through (provider_id, read_through, recorded_at)
+SELECT p.id, :now - 120, :now - 60
+FROM provider AS p
+WHERE p.kind = 'firewall_log' AND p.provider_key = 'pf'
+ON CONFLICT (provider_id) DO NOTHING;
+
 DROP TABLE synth_address;
 
 COMMIT;

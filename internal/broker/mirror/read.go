@@ -75,34 +75,51 @@ type storedTable struct {
 	parent string
 }
 
-// tablesOf reads the tables of an endpoint.
+// tablesOf reads the tables of an endpoint, each with its columns, in one statement: a datum served
+// from the mirror reads its tables on every call, and a statement per table and per column list was
+// most of what serving a fresh datum waited for (BR-AC17's serve-fresh budget).
 func (m *Mirror) tablesOf(ctx context.Context, endpointID int64) (map[string]*storedTable, error) {
-	rows, err := m.db.QueryContext(ctx, `SELECT name, row_set, coalesce(parent_row_set, '') FROM opnsense.mirror_table
-		WHERE endpoint_id = $1`, endpointID)
+	rows, err := m.db.QueryContext(ctx, `SELECT t.name, t.row_set, coalesce(t.parent_row_set, ''), c.path, c.column_name,
+			c.type, c.carries_domain
+		FROM opnsense.mirror_table AS t
+		LEFT JOIN opnsense.mirror_column AS c ON c.table_name = t.name
+		WHERE t.endpoint_id = $1`, endpointID)
 	if err != nil {
 		return nil, err
 	}
-	type row struct{ name, rowSet, parent string }
-	var listed []row
+	tables := map[string]*storedTable{}
+	byName := map[string]*tableInfo{}
+	var names []string
 	for rows.Next() {
-		var item row
-		if err := rows.Scan(&item.name, &item.rowSet, &item.parent); err != nil {
+		var (
+			name, rowSet, parent string
+			path, column, kind   *string
+			domains              *bool
+		)
+		if err := rows.Scan(&name, &rowSet, &parent, &path, &column, &kind, &domains); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		listed = append(listed, item)
+		info, known := byName[name]
+		if !known {
+			info = &tableInfo{name: name, rowSet: rowSet, columns: map[string]*columnInfo{}}
+			byName[name] = info
+			names = append(names, name)
+			tables[rowSet] = &storedTable{info: info, parent: parent}
+		}
+		if path != nil && column != nil && kind != nil && domains != nil {
+			info.columns[*path] = &columnInfo{path: *path, name: *column, kind: *kind, domains: *domains}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	_ = rows.Close()
-	tables := map[string]*storedTable{}
-	for _, item := range listed {
-		info, err := m.loadTable(ctx, item.name)
-		if err != nil || info == nil {
+	for _, name := range names {
+		if err := m.bringUpToDate(ctx, name); err != nil {
 			return nil, err
 		}
-		if err := m.bringUpToDate(ctx, item.name); err != nil {
-			return nil, err
-		}
-		tables[item.rowSet] = &storedTable{info: info, parent: item.parent}
 	}
 	return tables, nil
 }

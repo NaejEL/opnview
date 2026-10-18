@@ -220,12 +220,16 @@ func timeWidgets(ctx context.Context, database *store.Store, service *widget.Ser
 		// an empty answer; beside the logged line, the difference is what reading the measured
 		// volumes -- flow_measures and measure_parts_sum -- costs.
 		if preset, found := service.Preset(widgetType); found && offersVolumeMeasure(preset) {
-			netflow := map[string]any{"volume_measure": "netflow"}
+			netflow, name := map[string]any{"volume_measure": "netflow"}, widgetType+"+netflow"
 			for key, value := range parameters {
 				netflow[key] = value
 			}
-			cases = append(cases, timedCase{name: widgetType + "+netflow", widgetType: widgetType,
-				parameters: netflow})
+			if widgetType == "custom_chart" {
+				// custom_chart draws no series at its defaults, so its netflow answer is timed drawing one series
+				// of every source, as its second logged case is: a line that reads nothing measures nothing.
+				netflow["series"], name = everySourceSeries, "custom_chart+every_source+netflow"
+			}
+			cases = append(cases, timedCase{name: name, widgetType: widgetType, parameters: netflow})
 		}
 	}
 	for _, timed := range cases {

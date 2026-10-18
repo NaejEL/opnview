@@ -157,16 +157,14 @@ func (v *Value) write(buffer *bytes.Buffer) {
 	case Bool, Number:
 		buffer.WriteString(v.Text)
 	case String:
-		encoded, _ := json.Marshal(v.Text)
-		buffer.Write(encoded)
+		writeString(buffer, v.Text)
 	case Object:
 		buffer.WriteByte('{')
 		for index, key := range v.Keys {
 			if index > 0 {
 				buffer.WriteByte(',')
 			}
-			encoded, _ := json.Marshal(key)
-			buffer.Write(encoded)
+			writeString(buffer, key)
 			buffer.WriteByte(':')
 			v.Fields[key].write(buffer)
 		}
@@ -273,4 +271,22 @@ func CanonicalNumber(text string) bool {
 		return false // negative zero prints back as 0
 	}
 	return !strings.HasSuffix(unsigned, ".") && !strings.HasPrefix(unsigned, ".")
+}
+
+// writeString writes a string exactly as encoding/json writes it: one of printable ASCII in which it
+// escapes nothing between quotes as it is -- most of an answer's keys and values, which encoding/json
+// was most of the time writing a served answer took -- and any other by encoding/json itself.
+func writeString(buffer *bytes.Buffer, text string) {
+	for index := 0; index < len(text); index++ {
+		character := text[index]
+		if character < 0x20 || character >= 0x7f || character == '"' || character == '\\' || character == '<' ||
+			character == '>' || character == '&' {
+			encoded, _ := json.Marshal(text)
+			buffer.Write(encoded)
+			return
+		}
+	}
+	buffer.WriteByte('"')
+	buffer.WriteString(text)
+	buffer.WriteByte('"')
 }
