@@ -17,6 +17,15 @@ function withSiteNames(row, names) {
   return grouped;
 }
 
+// flowsOf is the flows a list of site or address rows sums to: the flows of the row they make.
+function flowsOf(rows) {
+  var flows = 0;
+  rows.forEach(function (row) {
+    flows += row.flows;
+  });
+  return flows;
+}
+
 // firstRanked is the first `limit` rows of a list in the order `rank` gives them, a total order: what
 // sorting the list and keeping its head gives, with each row compared with the rows kept so far rather
 // than the whole list sorted.
@@ -81,15 +90,14 @@ exports.widget = {
       entry.rows.push(row);
       entry.members.set(row.site, true);
     });
+    // Each name and address is ranked by its flows -- the sum of its rows' -- before any is summed into
+    // the row it is written as: only the rows shown are (host.sites.accumulate).
     var list = [];
     var totalFlows = 0;
     byName.forEach(function (entry, name) {
-      var row = host.sites.accumulate(name, entry.rows);
-      if (groups !== null) {
-        row = withSiteNames(row, Array.from(entry.members.keys()).sort(compare));
-      }
-      totalFlows += row.flows.value;
-      list.push(row);
+      var flows = flowsOf(entry.rows);
+      totalFlows += flows;
+      list.push({ kind: "site", name: name, members: entry.members, rows: entry.rows, flows: { value: flows } });
     });
     // A destination no name was inferred for is a row of its own, by its address with its operator
     // and country, ranked with the names: never one unnamed bucket (C2).
@@ -101,9 +109,9 @@ exports.widget = {
       byAddress.get(row.address).push(row);
     });
     byAddress.forEach(function (rows, address) {
-      var row = host.sites.accumulateAddress(address, rows);
-      totalFlows += row.flows.value;
-      list.push(row);
+      var flows = flowsOf(rows);
+      totalFlows += flows;
+      list.push({ kind: "address", address: address, rows: rows, flows: { value: flows } });
     });
     // A site row and an address row are told apart by kind; within a kind, names and addresses are
     // distinct, so no two rows tie.
@@ -133,7 +141,28 @@ exports.widget = {
     });
     // The rows shown are the first `limit` of the eligible ones in rank order: only they are ranked
     // among themselves, so the window's thousands of names are never sorted whole.
-    var shown = firstRanked(eligible, limit, rank);
+    var first = firstRanked(eligible, limit, rank);
+    var isShown = new Map();
+    first.forEach(function (entry) {
+      isShown.set(entry, true);
+    });
+    var shown = first.map(function (entry) {
+      if (entry.kind === "address") {
+        return host.sites.accumulateAddress(entry.address, entry.rows);
+      }
+      var row = host.sites.accumulate(entry.name, entry.rows);
+      return groups === null ? row : withSiteNames(row, Array.from(entry.members.keys()).sort(compare));
+    });
+    // The rows of every name and address not shown are judged as the rows shown are
+    // (host.figures.cover): their flows are counted in the remainders. A logged answer has nothing to
+    // judge.
+    if (host.figures.measure !== host.figures.measures.logged) {
+      list.forEach(function (entry) {
+        if (!isShown.has(entry)) {
+          host.figures.cover(entry.rows);
+        }
+      });
+    }
     var restMembers = eligible.length - shown.length;
     var rest = eligibleFlows;
     shown.forEach(function (row) {
