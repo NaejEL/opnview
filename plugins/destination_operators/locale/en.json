@@ -1,0 +1,9 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.destination_operators.widget.destination_operators.title": "Destination operators",
+    "plugin.destination_operators.widget.destination_operators.question": "Which operators and autonomous systems is this network's traffic actually reaching?",
+    "plugin.destination_operators.widget.destination_operators.asn": "AS{asn}",
+    "plugin.destination_operators.widget.destination_operators.operator_asn": "{operator} · AS{asn}"
+  }
+}

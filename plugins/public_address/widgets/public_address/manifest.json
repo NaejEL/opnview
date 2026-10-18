@@ -45,6 +45,6 @@
   "queries": [],
   "script": "public_address.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

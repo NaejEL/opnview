@@ -76,6 +76,6 @@
   ],
   "script": "firewall_health_overview.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

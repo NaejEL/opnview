@@ -1,0 +1,7 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.traffic_sankey.widget.traffic_sankey.title": "Traffic Sankey",
+    "plugin.traffic_sankey.widget.traffic_sankey.question": "Who talks to whom, at a glance — which interfaces send their volume to which other interfaces, and to which operators outside?"
+  }
+}

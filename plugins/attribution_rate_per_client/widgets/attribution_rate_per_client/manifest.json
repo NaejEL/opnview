@@ -63,6 +63,6 @@
   "queries": [],
   "script": "attribution_rate_per_client.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

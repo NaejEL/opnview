@@ -97,8 +97,15 @@ func loadPluginWidget(ctx context.Context, database *store.Store, source Source,
 	if source.Builtin {
 		origin = request.OriginBuiltin
 	}
+	if manifest.FrontOnly() {
+		return frontOnlyPreset(source.Files, source.Location, manifest, origin)
+	}
 	if manifest.Script == "" {
-		return loadPluginDeclarative(ctx, database, source, manifest, origin)
+		preset, refusal := loadPluginDeclarative(ctx, database, source, manifest, origin)
+		if refusal != nil {
+			return request.Preset{}, refusal
+		}
+		return withRenderer(source.Files, source.Location, manifest, preset)
 	}
 
 	text, err := fs.ReadFile(source.Files, manifest.Script)
@@ -117,7 +124,7 @@ func loadPluginWidget(ctx context.Context, database *store.Store, source Source,
 	script := &script.ScriptWidget{Plugin: source.Plugin, File: manifest.Script, Program: program, Statements: statements,
 		Builtin: source.Builtin, Datasets: script.DatasetsAdmitted(source.Plugin, source.Datasets)}
 	preset.Serve = script.Serve
-	return preset, nil
+	return withRenderer(source.Files, source.Location, manifest, preset)
 }
 
 // loadPluginDeclarative loads a plugin widget with no script: one query, served by the declarative
@@ -350,9 +357,11 @@ func loadPluginWidgets(ctx context.Context, database *store.Store, sources []Sou
 				return nil, nil, fmt.Errorf("widget: the built-in widget %q of the plugin %s is broken: %w",
 					source.Type, source.Plugin, refusal)
 			}
+			refusal.Path = source.Location
 			refusals = append(refusals, *refusal)
 			continue
 		}
+		preset.Plugin, preset.Location = source.Plugin, source.Location
 		taken[preset.Type] = preset
 		loaded = append(loaded, preset)
 	}

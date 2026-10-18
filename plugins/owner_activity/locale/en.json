@@ -1,0 +1,19 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.owner_activity.widget.owner_activity.title": "Per-person activity",
+    "plugin.owner_activity.widget.owner_activity.question": "What did one person's machines do, taken together?",
+    "plugin.owner_activity.widget.owner_activity.blocked.one": "{count} blocked",
+    "plugin.owner_activity.widget.owner_activity.blocked.other": "{count} blocked",
+    "plugin.owner_activity.widget.owner_activity.machines.one": "{count} client",
+    "plugin.owner_activity.widget.owner_activity.machines.other": "{count} clients",
+    "plugin.owner_activity.widget.owner_activity.machines_label": "Clients",
+    "plugin.owner_activity.widget.owner_activity.no_data_in_period": "no data in the period",
+    "plugin.owner_activity.widget.owner_activity.no_owner_assigned": "no owner assigned",
+    "plugin.owner_activity.widget.owner_activity.now": "Now",
+    "plugin.owner_activity.widget.owner_activity.timeline": "Period",
+    "plugin.owner_activity.widget.owner_activity.totals_exclude_unassigned": "Totals leave out the unassigned clients",
+    "plugin.owner_activity.widget.owner_activity.unassigned": "Unassigned",
+    "plugin.owner_activity.widget.owner_activity.out_not_measured": "Outbound not measured"
+  }
+}

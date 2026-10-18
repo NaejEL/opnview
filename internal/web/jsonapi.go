@@ -15,13 +15,12 @@ import (
 
 // The JSON API's shared pieces (docs/widget-api.md, "Settings API" and "Write endpoints").
 //
-// EVERY PAGE HAS A JSON EQUIVALENT, for the step-7 application (C5 of the backend-completion
-// cycle). A surface answers its JSON routes beside its page routes, with the same validation, the
-// same access level and the same CSRF rule, and with closed codes rather than catalogue sentences:
-// a refusal a page draws as a catalogue key is answered as that key's last part
-// (ConditionOf), the identifier an interface translates.
+// EVERY ANSWER IS JSON, for the front (C5 of the backend-completion cycle; the pages it replaced are
+// gone, specs/SPEC-step-7-frontend.md, F7-15). A surface answers with closed codes rather than
+// catalogue sentences: a refusal a handler chooses as a catalogue key is answered as that key's last
+// part (ConditionOf), the identifier the front translates.
 
-// The conditions the JSON API answers that are not a page's catalogue key.
+// The conditions the JSON API answers that are not a catalogue key's last part.
 const (
 	// ConditionMalformedBody is a write whose body is not one JSON object.
 	ConditionMalformedBody = "malformed_body"
@@ -37,7 +36,7 @@ const (
 // maxJSONBody bounds a JSON write's body.
 const maxJSONBody = 64 << 10
 
-// ConditionOf is the closed code of a catalogue key a page refuses or reports with: its last
+// ConditionOf is the closed code of a catalogue key a handler refuses or reports with: its last
 // dot-separated part, so "error.firewall_url_invalid" is "firewall_url_invalid".
 func ConditionOf(key MessageKey) string {
 	text := string(key)
@@ -89,10 +88,10 @@ func DecodeJSONObject(body io.Reader) (map[string]any, bool) {
 	return object, true
 }
 
-// JSONText is one member of a decoded object as the text a form field would carry: a string as
+// JSONText is one member of a decoded object as text: a string as
 // it is, a number as it was written, a boolean as "true" or "false". sent is false when the member
 // is absent or null; a member of any other shape is sent as text no rule accepts, so it is refused
-// by the same validation a page's mistyped field is.
+// by the same validation as any mistyped value.
 func JSONText(object map[string]any, key string) (text string, sent bool) {
 	value, present := object[key]
 	if !present || value == nil {
@@ -113,8 +112,8 @@ func JSONText(object map[string]any, key string) (text string, sent bool) {
 }
 
 // FormToken is the form token a request's reader writes with: the session's own, or, with no
-// session, the one in this browser's own cookie, set now when there is none. It is what a page's
-// form carries, and what a JSON write sends in the X-CSRF-Token header.
+// session, the one in this browser's own cookie, set now when there is none. It is what a JSON
+// write sends in the X-CSRF-Token header.
 func (s *Server) FormToken(writer http.ResponseWriter, request *http.Request) (string, error) {
 	return s.formToken(writer, request, sessionFrom(request))
 }

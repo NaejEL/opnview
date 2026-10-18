@@ -109,6 +109,12 @@ mockup proved*).
 The **sentences** are a property of the source and are in Part 3; what the shape
 decides is the **rendering**, below. A zero is drawn only for the fourth
 condition, and only when a measurement actually says zero.
+*Deviation, recorded:* the built front draws `reachable_no_rows` as a designed
+panel keeping the card's footprint and title, named in a word or two and linking
+to Sources, like the other three, rather than as each shape's own empty drawing
+(`specs/SPEC-step-7-frontend.md`, F7-22; orchestrator's decision, 17 October
+2026), because no rows in the period is a fact about the source that a blank
+chart would not say.
 
 **Repeat.** Every shape accepts `repeat`: draw one instance per member of a
 **runtime-discovered** key set — per discovered interface, per discovered

@@ -10,8 +10,9 @@ func CoreKeys() []string {
 	return append([]string{
 		KeyRetentionSeconds, KeyAggregateMode, KeyDiscoveryInterval, KeyPurgeInterval, KeyAttributionMaxDelay,
 		KeyCacheAnswerDelay, KeyLegPairingWindow, KeyLeaseBackendFailurePassLimit, KeyHeartbeatInterval,
-		KeyDowntimeThreshold, KeyOPNsenseBaseURL, KeyOPNsenseAPIKey, KeyOPNsenseCertificateFingerprint, KeyTheme,
-		KeyLiveInterestSeconds, KeyLiveSampleRetentionSeconds,
+		KeyDowntimeThreshold, KeyOPNsenseBaseURL, KeyOPNsenseAPIKey, KeyOPNsenseCertificateFingerprint,
+		KeyLiveInterestSeconds, KeyLiveSampleRetentionSeconds, KeyAppearancePalette, KeyAppearanceMode,
+		KeyAppearanceLanguage, KeyDashboardDefaultSeeded,
 	}, KindSettingKeys()...)
 }
 

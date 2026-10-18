@@ -4,108 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"sort"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/web/messages"
-
-	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/vocab"
-	"github.com/NaejEL/opnview/internal/web/settingfields"
 	"github.com/NaejEL/opnview/internal/web/surfaces/sources"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
-// The Sources surface's JSON equivalent (C-AC9) and coverage row 39 (C-AC16): every figure of the
-// page in the JSON answer, and when each provider's state began, bounded by opnview's own checks.
-
-// TestTheSourcesJSONCarriesEveryFigureOfThePage is C-AC9's figures for the Sources page and its
-// outage indicator, on an installation with an outage, a provider turned on and failing, one
-// installed and not collecting, a detail and recent gaps.
-func TestTheSourcesJSONCarriesEveryFigureOfThePage(t *testing.T) {
-	t.Parallel()
-	h := collectiontest.SignedInHarness(t)
-	webtest.Discard(t, settingstest.StoreCredentials(h, webtest.RandomHex(t, 8), webtest.RandomHex(t, 16)))
-	ctx := context.Background()
-	now := h.Clock.Now().Unix()
-	detail := "the collector's own words"
-	if err := h.Store.SetAvailability(ctx, collectiontest.ProviderID(h, "dhcp_lease", "kea"), vocab.StatePresentButDisabled,
-		vocab.AvailabilityOutcome("present_but_disabled"), "/api/kea/service/status", &detail, now-60); err != nil {
-		t.Fatalf("recording an availability: %v", err)
-	}
-	collectiontest.SetAvailability(h, "firewall_log", "pf", vocab.StateUnavailable)
-	collectiontest.SetAvailability(h, "dns_lookup", "unbound", vocab.StateReachable)
-	collectiontest.SetAvailability(h, "dns_lookup", "dnsmasq", vocab.StateUnavailable)
-	collectiontest.SetSelection(h, "dns_lookup", "dnsmasq", config.SelectionOn)
-	collectiontest.RecordGap(h, "firewall_log", "pf", vocab.GapDigestOutsideWindow, now-1800, now-1740)
-
-	figures, err := sources.PageFigures(ctx, h.Server)
-	if err != nil {
-		t.Fatalf("reading the page's figures: %v", err)
-	}
-	answer := settingstest.GetJSON(h, sources.PathAPISources)
-	yesNo := func(value any) string {
-		if value == true {
-			return "state.yes"
-		}
-		return "state.no"
-	}
-	var expected []string
-	for _, raw := range settingstest.Path(answer, "providers").([]any) {
-		kind, provider := settingstest.Path(raw, "kind").(string), settingstest.Path(raw, "provider_key").(string)
-		checked := "state.source.never_checked"
-		if at, ok := settingstest.Path(raw, "checked_at").(float64); ok {
-			checked = settingfields.Instant(int64(at))
-		}
-		detailText := "state.source.no_detail"
-		if text, ok := settingstest.Path(raw, "detail").(string); ok {
-			detailText = text
-		}
-		line := fmt.Sprintf("source %s %s state.availability.%s active %s selection state.sizing.selection_%s "+
-			"outage %s checked %s probe %s detail %s", messages.KindLabelKey(kind), messages.ProviderLabelKey(kind, provider),
-			settingstest.Path(raw, "availability"), yesNo(settingstest.Path(raw, "active")), settingstest.Path(raw, "selection"),
-			yesNo(settingstest.Path(raw, "in_outage")), checked, settingstest.Path(raw, "probe"), detailText)
-		for _, page := range settingstest.Path(raw, "opnsense_pages").([]any) {
-			line += fmt.Sprintf(" page %s %s", settingstest.Path(page, "url"), settingstest.Path(page, "page"))
-		}
-		expected = append(expected, line)
-	}
-	for _, raw := range settingstest.Path(answer, "outages").([]any) {
-		kind := settingstest.Path(raw, "kind").(string)
-		providerLabel, state := "", "state.outage.kind"
-		if provider, ok := settingstest.Path(raw, "provider_key").(string); ok {
-			providerLabel, state = string(messages.ProviderLabelKey(kind, provider)), "state.outage.provider"
-		}
-		expected = append(expected, fmt.Sprintf("outage %s %s %s", messages.KindLabelKey(kind), providerLabel, state))
-	}
-	for _, raw := range settingstest.Path(answer, "recent_gaps").([]any) {
-		kind, provider := settingstest.Path(raw, "kind").(string), settingstest.Path(raw, "provider_key").(string)
-		detailText := "state.source.no_detail"
-		if text, ok := settingstest.Path(raw, "detail").(string); ok {
-			detailText = text
-		}
-		expected = append(expected, fmt.Sprintf("gap %s %s gap_reason.%s %s %s %v detail %s", messages.KindLabelKey(kind),
-			messages.ProviderLabelKey(kind, provider), settingstest.Path(raw, "reason"),
-			settingfields.Instant(int64(settingstest.Path(raw, "start_at").(float64))),
-			settingfields.Instant(int64(settingstest.Path(raw, "end_at").(float64))),
-			settingfields.SpelledDuration(int64(settingstest.Path(raw, "missed_seconds").(float64))), detailText))
-	}
-	sort.Strings(figures)
-	sort.Strings(expected)
-	if fmt.Sprint(figures) != fmt.Sprint(expected) {
-		t.Errorf("the page draws\n%s\nand the answer carries\n%s", fmt.Sprint(figures), fmt.Sprint(expected))
-	}
-	count, err := sources.CountOutages(ctx, h.Server)
-	if err != nil {
-		t.Fatalf("counting the outages: %v", err)
-	}
-	if settingstest.Path(answer, "outage_count") != float64(count) || count == 0 {
-		t.Errorf("the answer counts %v outages and the indicator %d", settingstest.Path(answer, "outage_count"), count)
-	}
-}
+// The Sources surface's JSON answer (C-AC9) and coverage row 39 (C-AC16): when each provider's
+// state began, bounded by opnview's own checks. sources_test.go holds the answer's figures.
 
 // sinceOf is one provider's since bounds in an answer listing providers.
 func sinceOf(providers any, kind, providerKey string) any {

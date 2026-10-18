@@ -4526,3 +4526,39 @@ CREATE TABLE IF NOT EXISTS opnsense.mirror_gap (
 );
 CREATE INDEX IF NOT EXISTS idx_mirror_gap_datum ON opnsense.mirror_gap (datum_id, from_at);
 CREATE INDEX IF NOT EXISTS idx_mirror_gap_stream ON opnsense.mirror_gap (stream, from_at);
+
+-- ---------------------------------------------------------------------------
+-- dashboard — one dashboard the user composed, imported or was given as the
+-- default (specs/SPEC-step-7-frontend.md, A7). Bounded: one row per dashboard,
+-- each document at most 1 MiB.
+--
+-- `dashboard` is opnview's OWN term. OPNsense's own dashboard is one fixed page
+-- of widgets; opnview's is a named set of canvases, described as a file whose
+-- format is docs/dashboard-format.md. The row holds that file's model.
+--
+-- THE DOCUMENT IS `json`, NOT `jsonb`, AND THAT IS THE POINT. A dashboard
+-- exported again without repair must come back unchanged, member order and
+-- unknown keys included, and `json` keeps its input text as it was given where
+-- `jsonb` reorders members and drops duplicates. Nothing queries inside it, so
+-- no index inside it is lost. Its structure is validated by internal/dashboard
+-- before it is written, fail-closed; its references are never checked here.
+--
+-- It is user input, as an owner is: the retention purge never touches it, the
+-- read role holds no privilege on it (internal/store/sqldb, unreadableObjects),
+-- and a backup carries it.
+--
+-- position orders the dashboards, lowest first; revision counts the saves, from
+-- 1, and a save naming a stale revision is refused; origin says how the row came
+-- to exist, and source_name is the imported file's name, null otherwise.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dashboard (
+    id          BIGINT PRIMARY KEY,
+    position    BIGINT NOT NULL CHECK (position >= 0),
+    document    JSON NOT NULL,
+    revision    BIGINT NOT NULL CHECK (revision >= 1),
+    origin      TEXT NOT NULL CHECK (origin IN ('created', 'imported', 'default')),
+    source_name TEXT CHECK (source_name IS NULL OR length(source_name) > 0),
+    created_at  BIGINT NOT NULL CHECK (created_at >= 0 AND created_at < 4102444800),
+    updated_at  BIGINT NOT NULL CHECK (updated_at >= created_at AND updated_at < 4102444800)
+);
+SELECT install_assign_id('dashboard'::regclass);

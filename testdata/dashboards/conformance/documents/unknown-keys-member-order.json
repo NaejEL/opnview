@@ -1,0 +1,13 @@
+{"canvases": [
+    {"widgets": [
+        {"placement": {"h": 4, "w": 6, "y": 0, "x": 0}, "x_future_widget_key": {"kept": [1, 2]},
+         "type": "top_sites", "id": "sites", "parameters": {"limit": 15, "period": "24h", "x_future_parameter": "kept"}},
+        {"id": "a-type-from-a-newer-build", "type": "client_activity_timeline",
+         "placement": {"x": 6, "y": 0, "w": 6, "h": 4}}
+      ],
+     "x_future_canvas_key": true, "title": "Order kept", "id": "order-kept"}],
+ "zz_last_but_written_first": "kept as written",
+ "format_version": 1,
+ "title": "Members out of order, unknown keys kept",
+ "aa_unknown_top_level": {"nested": {"deeper": ["kept"]}}
+}

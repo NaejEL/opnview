@@ -2,14 +2,17 @@
 
 opnview is modular at every layer. **A kind of thing is a seam, and an implementation is
 a directory behind it**, discovered at start: nothing that ships with the product is edited to add
-one. This document is the whole procedure for the three things a third party adds most often. It is
-written to be followed by somebody who has never read the source.
+one. This document is the whole procedure for the three things a third party adds most often on the
+server side; the parts of the interface -- a theme, a language, a widget renderer, a front-only
+widget -- have their own procedure in `docs/front-plugins.md`. It is written to be followed by
+somebody who has never read the source.
 
 | You add | You create | You edit |
 |---|---|---|
 | a provider (a lease source, a lookup source, a log source...) | one plugin directory | nothing |
-| a widget | one directory holding `manifest.json` and a query | nothing |
-| a web surface | one directory holding a handler, a template and its catalogue keys | nothing |
+| a widget | one directory holding `manifest.json` and a query, and its renderer when it draws itself | nothing |
+| a theme, a language, or a widget drawn by the front alone | one file, or one widget directory, in the data directory (`docs/front-plugins.md`) | nothing |
+| a web surface | one directory holding its Go handlers, which answer JSON only, and its catalogue keys | nothing |
 
 "Nothing" is literal for the source tree; the two places a Go build needs a regenerated file are
 named where they occur (`go generate ./...`), and a test fails, naming the command, when the generated
@@ -138,17 +141,20 @@ the test suite fails.
 
 ## Adding a surface
 
-A **surface** is one part of the interface: a page or a few, the routes that serve them, the
-words they use. It is **a directory** below `internal/web/surfaces/`. The core (`internal/web`)
-owns what every surface shares -- the server and its route table, sessions, the form token, the
-layout and its top bar, the themes, the stylesheet, the string catalogue -- and hands a surface
-what it may use through one interface, `web.Host`. A surface depends on `internal/web` and on
-nothing in another surface, so a directory can be copied between installations.
+A **surface** is one part of the interface's server side: the JSON routes it answers and the words
+the front shows for its codes. It is **a directory** below `internal/web/surfaces/`. The core
+(`internal/web`) owns what every surface shares -- the server and its route table, sessions, the
+form token, the string catalogue -- and hands a surface what it may use through one interface,
+`web.Host`. A surface depends on `internal/web` and on nothing in another surface, so a directory
+can be copied between installations.
 
-The six surfaces that ship are the worked examples of every case: `sources` (a read-only page, a
-tab and a top-bar indicator), `interfaces` (forms and refusals), `settings` and `collection`
-(cards in one form), `account` (public pages and the key-file route) and `widgetapi` (routes
-with no page at all).
+**No surface draws a page.** The interface is the front (`front/`, served by the `frontend`
+surface): one shell document, and views drawn in the browser from the JSON routes. A surface
+answers data and closed codes, never a sentence; the front translates a code through the
+catalogue. The surfaces that ship are the worked examples of every case: `sources` (a read-only
+answer), `interfaces` (edits and refusals), `settings` and `collection` (saves validated by
+`config.Load`), `account` (public routes and the key-file route) and `widgetapi` (a route per
+widget type).
 
 ### The directory
 
@@ -156,7 +162,6 @@ with no page at all).
 internal/web/surfaces/hello/
     surface.json            the marker: the surface's name (its directory's) and what it is
     surface.go              package hello: the registration and the handlers
-    template/hello.gohtml   one file per page; the page's name is the file's base name
     locale/en.json          the surface's own catalogue keys, one file per language
 ```
 
@@ -168,63 +173,45 @@ beside it (`hello_test.go`, package `hello_test`) and drive it over HTTP through
 
 1. **Create the directory** and its `surface.json`. The name must be the directory's name, and
    the description says in a sentence what the surface is.
-2. **Write the template** for each page. A page is a `body` template drawn inside the layout:
-   `{{define "body" -}} ... {{- end}}`. The data it reads is a pointer to a struct that embeds
-   `web.Base`, so every field of the base (`.CSRFToken`, `.SignedIn`, `.Error`...) is available,
-   and so are the surface's own. **No text is a literal**: a template asks the catalogue for
-   every word, `{{t "hello.heading"}}`, and a test strips the tags and the actions of every
-   template and fails when anything but whitespace is left.
-3. **Write the catalogue file** `locale/en.json`: `{"language": "en", "strings": {...}}`. English
-   is the source language. A key is unique across the product: a key another surface or the core
-   defines is refused, so prefix yours with the surface's name. To reuse a word the layout and
-   several surfaces share (`action.save`, `field.login`, the duration units), use the core's key
-   (`internal/web/locale/en.json`) and do not redefine it. A second language is a second file,
-   `locale/fr.json`, of the same shape.
-4. **Write `surface.go`**: embed the three, register the surface in an `init()`, and write the
-   handlers. A handler asks the host for the common part of its page (`NewBase`), adds its own
-   data, and renders (`Render`); it answers a failure with `FailInternal`, which writes a status
-   and a catalogue string and sends the detail to the console, never to the page.
-5. **Declare each route's access level.** `AccessAuthenticated` turns away a request with no
-   session (a redirect to sign-in, or to setup before the first account); `AccessPublic` is for
-   the few pages a reader without a session needs; `AccessKeyFile` is the password reset's. A
-   route with none is refused. The middleware does the rest: every `POST` must carry the form
-   token (`{{.CSRFToken}}` in the form, name `csrf_token`) or it is refused before the handler
-   runs. A handler never checks either.
-6. **Link it into the binary**: run `go generate ./...`. It rewrites
+2. **Write the catalogue file** `locale/en.json`: `{"language": "en", "strings": {...}}`, the
+   words the front shows for the surface's codes and figures. English is the source language. A
+   key is unique across the product: a key another surface or the core defines is refused, so
+   prefix yours with the surface's name. A second language is a second file, `locale/fr.json`, of
+   the same shape.
+3. **Write `surface.go`**: embed the two, register the surface in an `init()`, and write the
+   handlers. A handler answers with `web.WriteJSON`, refuses with `web.RefuseJSON` and a closed
+   code, and answers a failure with `web.FailJSON`, which sends the detail to the console and
+   never into the answer.
+4. **Declare each route's access level.** `AccessAuthenticated` turns away a request with no
+   session (`401`, `no_session` or `session_expired`); `AccessPublic` is for the few routes a
+   reader without a session needs; `AccessKeyFile` is the password reset's. A route with none is
+   refused. The middleware does the rest: every `POST` must be a JSON body carrying the form token
+   in the `X-CSRF-Token` header (read from `GET /api/session`) or it is refused `403`
+   `csrf_refused` before the handler runs. A handler never checks either.
+5. **Link it into the binary**: run `go generate ./...`. It rewrites
    `internal/web/surfaces/surfaces_gen.go`, the one file that imports the surface directories --
    generated from the tree, never edited, and checked by `TestTheGeneratedLinkFileIsCurrent`,
    which fails, naming this command, when a directory was added without it.
-7. **Test it** with `webtest.New(t)` (a server over a fresh database and a fake firewall),
-   `h.CompleteSetup()` (an account, signed in) and `h.Get` / `h.Post`.
+6. **Test it** with `webtest.New(t)` (a server over a fresh database and a fake firewall),
+   `h.CompleteSetup()` (an account, signed in), `h.Get` and `h.PostWithToken`.
 
 ### A complete worked example
 
 The surface below is real: it is `internal/web/webtest/examples/hello`, and
 `internal/web/modularity_test.go` registers it, mounts it on a server, requests it over HTTP and
-asserts that it is drawn inside the layout, with its own translated words, behind the sign-in,
-with its tab in the top bar. `TestTheDocumentationShowsTheWorkedExampleVerbatim` fails when this
-page and those files differ. The example lives beside the tests rather than below
-`internal/web/surfaces` only so that it is never linked into the product; a shipped surface is
-the same files in `internal/web/surfaces/<name>/`.
+asserts that it answers its figure behind the sign-in, with its own words merged into the
+catalogue. `TestTheDocumentationShowsTheWorkedExampleVerbatim` fails when this page and those
+files differ. The example lives beside the tests rather than below `internal/web/surfaces` only so
+that it is never linked into the product; a shipped surface is the same files in
+`internal/web/surfaces/<name>/`.
 
 `surface.json`
 
 ```json
 {
   "name": "hello",
-  "description": "A worked example: one page that says how many accounts the installation has."
+  "description": "A worked example: one JSON route that answers how many accounts the installation has."
 }
-```
-
-`template/hello.gohtml`
-
-```
-{{define "body" -}}
-<section class="card">
-<h1>{{t "hello.heading"}}</h1>
-<p>{{t "hello.greeting"}} <span class="figure">{{.Accounts}}</span></p>
-</section>
-{{- end}}
 ```
 
 `locale/en.json`
@@ -234,7 +221,6 @@ the same files in `internal/web/surfaces/<name>/`.
   "language": "en",
   "strings": {
     "hello.title": "Hello",
-    "hello.heading": "Hello",
     "hello.greeting": "Accounts on this installation"
   }
 }
@@ -243,75 +229,58 @@ the same files in `internal/web/surfaces/<name>/`.
 `surface.go`
 
 ```go
-// Package hello is the worked example of docs/extending.md, "Adding a surface": one page,
-// /hello, that says how many accounts the installation has. It is a complete surface -- a
-// marker, a template, a catalogue file and a handler -- and it is exercised by
-// internal/web/modularity_test.go, which imports it for its effect exactly as
-// internal/web/surfaces imports the shipped ones. It lives here, and not below
-// internal/web/surfaces, so that it is tested but never linked into the product.
 package hello
 
 import (
 	"embed"
 	"net/http"
-	"strconv"
 
 	"github.com/NaejEL/opnview/internal/web"
 )
 
-//go:embed template locale surface.json
+//go:embed locale surface.json
 var files embed.FS
 
-// PathHello is where the page lives.
-const PathHello = "/hello"
+// PathHello is where the answer lives.
+const PathHello = "/api/hello"
 
-// The page and the catalogue keys its code chooses. The words are in locale/en.json.
+// The catalogue keys the front uses to name the figure. The words are in locale/en.json.
 const (
-	pageHello                    = "hello"
-	msgTitleHello web.MessageKey = "hello.title"
+	msgTitleHello    web.MessageKey = "hello.title"
+	msgGreetingHello web.MessageKey = "hello.greeting"
 )
 
 func init() {
 	web.RegisterSurface(web.Surface{
 		Name:  "hello",
 		Files: files,
-		Pages: []web.Page{{Name: pageHello, TitleKey: msgTitleHello}},
 		Routes: func(host web.Host) []web.Route {
 			s := &surface{host}
 			return []web.Route{
-				{Method: http.MethodGet, Pattern: PathHello, Access: web.AccessAuthenticated, Handler: s.handle},
+				{Method: http.MethodGet, Pattern: PathHello, Access: web.AccessAuthenticated, JSON: true,
+					Handler: s.handle},
 			}
 		},
-		Tab:  &web.Tab{Page: pageHello, Path: PathHello, TitleKey: msgTitleHello, Order: 90},
-		Keys: func() []web.MessageKey { return []web.MessageKey{msgTitleHello} },
+		Keys: func() []web.MessageKey { return []web.MessageKey{msgTitleHello, msgGreetingHello} },
 	})
 }
 
 // surface is the handlers, over what the host grants.
 type surface struct{ web.Host }
 
-// view is everything the template may read: the common part, and the one figure.
-type view struct {
-	web.Base
-	Accounts string
+// Answer is the route's answer: the one figure.
+type Answer struct {
+	Accounts int `json:"accounts"`
 }
 
-// handle draws the page.
+// handle answers the figure.
 func (s *surface) handle(writer http.ResponseWriter, request *http.Request) {
-	base, err := s.NewBase(writer, request, web.SessionFrom(request), msgTitleHello)
-	if err != nil {
-		s.FailInternal(writer, request, err)
-		return
-	}
 	count, err := s.Store().CountAccounts(request.Context())
 	if err != nil {
-		s.FailInternal(writer, request, err)
+		web.FailJSON(writer, request, err)
 		return
 	}
-	built := view{Base: base, Accounts: strconv.Itoa(count)}
-	if err := s.Render(writer, http.StatusOK, pageHello, &built); err != nil {
-		s.FailInternal(writer, request, err)
-	}
+	web.WriteJSON(writer, http.StatusOK, Answer{Accounts: count})
 }
 ```
 
@@ -322,44 +291,35 @@ func (s *surface) handle(writer http.ResponseWriter, request *http.Request) {
 | Field | Meaning |
 |---|---|
 | `Name` | the surface's name, unique, the directory's |
-| `Files` | an `fs.FS` holding `template/<page>.gohtml` and `locale/<language>.json` -- embed them |
-| `Pages` | each page's `Name` (the template's base name, unique across the product), its `TitleKey`, and optionally `Refusal`, which builds the page's data when the core must draw it with a refusal on it (a missing form token) |
-| `Routes` | called once with the host; returns the surface's `web.Route` rows (`Method`, `Pattern`, `Access`, `Handler`, and `Page`, the page a middleware refusal is drawn on) |
-| `Tab` | the surface's link in the top bar: page, path, title key, order |
-| `Indicator`, `IndicatorUnknown` | a figure or state drawn in the bar of every signed-in page, and the state shown when reading it fails |
-| `Notices`, `Refusals` | the catalogue keys a redirect of the surface may carry in the flash cookie; the list is closed |
+| `Files` | an `fs.FS` holding `locale/<language>.json` -- embed it |
+| `Routes` | called once with the host; returns the surface's `web.Route` rows (`Method`, `Pattern`, `Access`, `JSON`, `RequiresNoAccount`, `Handler`) |
 | `Keys` | every catalogue key the surface's Go code chooses, for the tests that hold the catalogue to its code |
 
 `web.Host` (what a handler may ask for): `Store`, `Now`, `DataDir`, `Box`, `Credentials`,
 `Client`, `SetupToken`, `Sessions`, `PasswordParams`, `DecoyPassword`, `LiveSettings`,
-`Collector`, `GeoIP`, `PublicSuffix`, `Widgets`, `Configuration`, `ApplyConfiguration`,
-`AccountExists`, `ReadTheme`, `NewBase`, `Render`, `RenderRefusal`, `FailInternal`,
-`RedirectWithNotice`, `RedirectWithError`, `RefuseSetupClosed`. A surface cannot reach the route
-table, the renderer or the middleware. `web.SessionFrom(request)` returns the session the
-middleware resolved.
+`Collector`, `GeoIP`, `PublicSuffix`, `Widgets`, `Plugins`, `Broker`, `Configuration`,
+`ApplyConfiguration`, `AccountExists`, `CatalogueStrings` and `FormToken`. A surface cannot reach
+the route table or the middleware. `web.SessionFrom(request)` returns the session the middleware
+resolved.
 
-The shared building blocks of a page with settings are in the core, and are the same on every
-surface that has them: `web.SettingField`, `web.DurationField`, `web.TypedDuration`,
-`web.SpelledDuration`, `web.ChoiceOption`, `web.Instant`, the `setting-field` template of the
-layout, `web.AcceptedByLoad` (every save is validated by `config.Load` itself), and the keys
-composed from a registry row (`web.KindLabelKey`, `web.ProviderLabelKey`, `web.GapReasonKey`).
+A settings save is validated by `config.Load` itself (`settingfields.AcceptedByLoad`), and a
+source is named by the keys composed from its registry row (`messages.KindLabelKey`,
+`messages.ProviderLabelKey`, `messages.GapReasonKey`).
 
 ### When a surface is refused
 
 A surface that cannot be served is left out, the server starts without it, and the reason is
 printed on the console and returned by `Server.RefusedSurfaces()`. The reasons are specific:
-the surface declares no name; its name is taken; a page has no name or no title key; a page has
-no template; a template does not compile; its tab names a page it does not declare, or no path;
-a catalogue file is malformed; a catalogue key is already defined by the core or by another
-surface; a route has no method or path, no access level, no handler, repeats a row, or is
-refused by the router; building its routes panicked.
+the surface declares no name; its name is taken; a catalogue file is malformed; a catalogue key is
+already defined by the core or by another surface; a route has no method or path, no access level,
+no handler, repeats a row, or is refused by the router; building its routes panicked.
 
 ### What is not "only a directory", and why
 
 Go links packages, not directories, so exactly one thing outside the new directory changes, and
 it is generated rather than written: `internal/web/surfaces/surfaces_gen.go`, by
-`go generate ./...`. Nothing is added to any route table, tab list, catalogue file, template
-list or switch; a test (`TestNoShippedFileKeepsAListOfSurfacesByHand`) fails when a shipped file
-lists two surfaces by name. The next cycle turns these directories into a plugin format loaded
-from the data directory without recompiling; a surface that depends only on `web.Host` and its
-own files, as these do, moves there unchanged.
+`go generate ./...`. Nothing is added to any route table, catalogue file or switch; a test
+(`TestNoShippedFileKeepsAListOfSurfacesByHand`) fails when a shipped file lists two surfaces by
+name. The next cycle turns these directories into a plugin format loaded from the data directory
+without recompiling; a surface that depends only on `web.Host` and its own files, as these do,
+moves there unchanged.

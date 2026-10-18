@@ -56,6 +56,42 @@ func (p *pushListens) Set(value string) error {
 	return nil
 }
 
+// pushExtraSenders is the --push-extra-senders flag: addresses accepted as push senders beside the
+// firewall's own (open question 10 (b) of the push amendment, added on the evidence of live
+// validation). IT IS EMPTY BY DEFAULT, and only the configured firewall's addresses are then accepted.
+//
+// It exists for one deployment shape: a container network that rewrites the source address of what
+// reaches a published port. Docker Desktop's port publishing does, for UDP and TCP alike, so every
+// datagram and connection from the firewall arrives from the bridge network's gateway. Naming that
+// gateway here accepts EVERYTHING that reaches the published port, from any host: the host running
+// opnview must then filter the port to the firewall's address (README, "Push sources").
+type pushExtraSenders []netip.Addr
+
+func (p *pushExtraSenders) String() string {
+	parts := make([]string, 0, len(*p))
+	for _, address := range *p {
+		parts = append(parts, address.String())
+	}
+	return strings.Join(parts, ",")
+}
+
+// Set reads a comma-separated list of IP addresses. An empty value adds none, so an environment
+// variable passed through empty names no sender at all.
+func (p *pushExtraSenders) Set(value string) error {
+	for _, field := range strings.Split(value, ",") {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		address, err := netip.ParseAddr(field)
+		if err != nil {
+			return fmt.Errorf("%q is not an IP address: %w", field, err)
+		}
+		*p = append(*p, address.Unmap())
+	}
+	return nil
+}
+
 // sendersRefresh is how often the accepted senders are derived again: the base URL's host is
 // resolved and the firewall's own addresses read from what discovery stored.
 const sendersRefresh = time.Minute
@@ -83,7 +119,7 @@ type livenessEvent struct {
 
 // startPush builds the hub, subscribes every push declaration of the loaded plugins, opens the
 // listeners asked for and starts it. It returns once every socket is bound; ctx stops it.
-func startPush(ctx context.Context, listens pushListens, database *store.Store, collector *collect.Collector,
+func startPush(ctx context.Context, listens pushListens, extraSenders pushExtraSenders, database *store.Store, collector *collect.Collector,
 	plugins *plugin.Loaded, credentials *config.FirewallCredentials, report func(error)) (*pushService, error) {
 	service := &pushService{database: database, collector: collector, providers: plugins.PushProviders(),
 		replacing: map[string]bool{}, events: make(chan livenessEvent, 1024), report: report,
@@ -138,6 +174,7 @@ func startPush(ctx context.Context, listens pushListens, database *store.Store, 
 	})
 	plugins.AttachPushHub(service.hub)
 	collector.Broker().SetPushCatalogue(service.hub.Catalogue)
+	service.hub.Senders().SetExtra(extraSenders)
 	service.refreshSenders(ctx, credentials)
 	service.hub.Start(ctx)
 	for _, listen := range listens {
@@ -171,7 +208,8 @@ func (s *pushService) loop(ctx context.Context, credentials *config.FirewallCred
 }
 
 // refreshSenders derives the accepted senders: the configured base URL's host, resolved, and the
-// firewall's own addresses as discovery read them. Nothing else is accepted.
+// firewall's own addresses as discovery read them. Nothing else is accepted but the operator's
+// --push-extra-senders, which the set keeps apart and this refresh leaves in place.
 func (s *pushService) refreshSenders(ctx context.Context, credentials *config.FirewallCredentials) {
 	var addresses []netip.Addr
 	if base := credentials.Credentials().BaseURL; base != "" {

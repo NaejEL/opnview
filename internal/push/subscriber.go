@@ -21,9 +21,13 @@ type subscriber struct {
 	lastAccepted time.Time
 	alive        bool
 	aliveSince   time.Time
-	gaps         map[string]*pendingGap
-	flushes      int64
-	stored       int64
+	// listeningFrom is when a listener feeding the subscription first opened in this process, and
+	// silenceAnnounced whether its silence since then, with no record ever admitted, was announced.
+	listeningFrom    time.Time
+	silenceAnnounced bool
+	gaps             map[string]*pendingGap
+	flushes          int64
+	stored           int64
 }
 
 // pendingGap is a run of drops of one reason, merged while they are closer than GapMergeWindow.
@@ -100,18 +104,40 @@ func (s *subscriber) count(name string, delta int64) {
 }
 
 // evaluateLiveness ends the alive state once nothing was admitted for the span plus its hysteresis.
+//
+// A subscription that has admitted nothing since its listener opened was never alive, so it has no
+// alive state to end; its silence is announced once, from the instant the listener opened, after the
+// same span plus hysteresis. Without it a source silent since the process started -- every datagram
+// refused, or the export never switched on -- would record no gap at all, and a direction it should
+// have measured would read as a measured absence rather than as a gap.
 func (s *subscriber) evaluateLiveness(now time.Time) {
 	s.mutex.Lock()
 	ended := false
-	if s.alive && now.Sub(s.lastAccepted) > s.Liveness+s.Liveness/2 {
+	span := s.Liveness + s.Liveness/2
+	if s.alive && now.Sub(s.lastAccepted) > span {
 		s.alive = false
 		ended = true
 	}
 	last := s.lastAccepted
+	if !s.alive && last.IsZero() && !s.silenceAnnounced && !s.listeningFrom.IsZero() &&
+		now.Sub(s.listeningFrom) > span {
+		s.silenceAnnounced = true
+		ended = true
+		last = s.listeningFrom
+	}
 	s.mutex.Unlock()
 	if ended && s.hub.options.OnLiveness != nil {
 		s.hub.options.OnLiveness(s.ID, false, last)
 	}
+}
+
+// listening notes the instant a listener feeding the subscription opened, the first time only.
+func (s *subscriber) listening(at time.Time) {
+	s.mutex.Lock()
+	if s.listeningFrom.IsZero() {
+		s.listeningFrom = at
+	}
+	s.mutex.Unlock()
 }
 
 // Liveness is a subscription's liveness: whether it is alive, since when, and the last record.

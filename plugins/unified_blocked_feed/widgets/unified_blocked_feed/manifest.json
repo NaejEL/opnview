@@ -84,6 +84,6 @@
   ],
   "script": "unified_blocked_feed.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

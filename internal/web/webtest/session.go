@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"strings"
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/web"
@@ -19,20 +18,12 @@ func AssertRefusesUnauthenticated(t *testing.T, harness *Harness, route web.Rout
 	if route.Method == http.MethodGet {
 		answer = anonymous.Get(route.Pattern)
 	} else {
-		// The form token comes from a page this anonymous client can actually load, so
-		// the refusal under test is the missing session and not the missing token.
-		answer = anonymous.PostRaw(route.Pattern, url.Values{
-			"csrf_token": {anonymous.FormToken(web.PathSignIn)},
-		})
+		// The form token comes from the session state this anonymous client can actually read,
+		// so the refusal under test is the missing session and not the missing token.
+		answer = anonymous.PostWithToken(route.Pattern, "{}")
 	}
 	defer func() { _ = answer.Body.Close() }()
 	switch answer.StatusCode {
-	case http.StatusSeeOther:
-		if location := answer.Header.Get("Location"); location != web.PathSignIn &&
-			location != web.PathSetup {
-			t.Errorf("%s %s sent an unauthenticated reader to %q rather than to a sign-in surface",
-				route.Method, route.Pattern, location)
-		}
 	case http.StatusUnauthorized, http.StatusForbidden:
 	default:
 		t.Errorf("%s %s answered %d to an unauthenticated request rather than refusing it",
@@ -90,34 +81,4 @@ func AssertSameSet(t *testing.T, what string, expected, seen map[string]bool) {
 			t.Errorf("%s gained %s, which nobody decided on", what, name)
 		}
 	}
-}
-
-// PageSource fetches one page's HTML.
-func PageSource(t *testing.T, harness *Harness, path string) string {
-	t.Helper()
-	answer := harness.Get(path)
-	body := ReadBody(t, answer)
-	_ = answer.Body.Close()
-	if answer.StatusCode != http.StatusOK {
-		t.Fatalf("%s answered %d", path, answer.StatusCode)
-	}
-	return body
-}
-
-// Followed reads the answer to a submission: a 303 back to a surface is followed, and
-// the page it lands on returned with the 303; any other answer is read as it is.
-func Followed(t *testing.T, h *Harness, answer *http.Response) (int, string) {
-	t.Helper()
-	status, body := StatusAndBody(t, answer)
-	if status != http.StatusSeeOther {
-		return status, body
-	}
-	location := answer.Header.Get("Location")
-	if cut := strings.Index(location, "#"); cut >= 0 {
-		location = location[:cut]
-	}
-	if !strings.HasPrefix(location, "/") {
-		t.Fatalf("a save redirected off the surface, to %q", location)
-	}
-	return status, PageSource(t, h, location)
 }

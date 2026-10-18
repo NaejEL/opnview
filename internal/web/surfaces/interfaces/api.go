@@ -8,10 +8,9 @@ import (
 	"github.com/NaejEL/opnview/internal/web"
 )
 
-// The Interfaces surface's JSON equivalents (docs/widget-api.md, "Settings API"): per interface
+// The Interfaces surface's JSON routes (docs/widget-api.md, "Settings API"): per interface its label,
 // its networks, with their origin, removal, whether each counts and why not, the overlaps, and the
-// link-local rule; and every edit the page's forms make, applied by the function the page uses
-// (applyEdit), so the two refuse the same inputs and make the same change.
+// link-local rule; and every edit, applied by applyEdit (edits.go).
 
 // The JSON path, for the listing and for an edit.
 const PathAPIInterfaceNetworks = "/api/interface-networks"
@@ -24,7 +23,7 @@ func (s *surface) apiRoutes() []web.Route {
 	}
 }
 
-// InterfacesAnswer is every figure of the page.
+// InterfacesAnswer is every interface.
 type InterfacesAnswer struct {
 	Interfaces []InterfaceState `json:"interfaces"`
 }
@@ -39,6 +38,9 @@ type InterfaceState struct {
 	// Upstream is whether a gateway sits behind the interface; an upstream interface carries no
 	// network and takes no edit.
 	Upstream bool `json:"upstream"`
+	// UserLabel is the label the user gave the interface (POST /api/interfaces/{id}/label), null
+	// when none was given. It is never derived from the description.
+	UserLabel *string `json:"user_label"`
 	// LinkLocal is the link-local rule.
 	LinkLocal bool           `json:"link_local"`
 	Networks  []NetworkState `json:"networks"`
@@ -65,7 +67,7 @@ type OverlapState struct {
 	OtherDescription string `json:"other_description"`
 }
 
-// interfacesAnswer reads every figure of the page from the reads the page draws from.
+// interfacesAnswer reads every interface.
 func (s *surface) interfacesAnswer(ctx context.Context) (InterfacesAnswer, error) {
 	answer := InterfacesAnswer{Interfaces: []InterfaceState{}}
 	rows, err := s.store.Interfaces(ctx)
@@ -82,7 +84,7 @@ func (s *surface) interfacesAnswer(ctx context.Context) (InterfacesAnswer, error
 	}
 	for _, row := range rows {
 		state := InterfaceState{ID: row.ID, Description: row.Description, Identifier: row.Identifier,
-			Device: row.Device, Upstream: row.IsUpstream, LinkLocal: row.LinkLocalEvidence,
+			Device: row.Device, Upstream: row.IsUpstream, UserLabel: row.UserLabel, LinkLocal: row.LinkLocalEvidence,
 			Networks: []NetworkState{}, Overlaps: []OverlapState{}}
 		if !row.IsUpstream {
 			for _, network := range networks {
@@ -105,7 +107,8 @@ func (s *surface) interfacesAnswer(ctx context.Context) (InterfacesAnswer, error
 	return answer, nil
 }
 
-// overlapStates are overlapsOf's rows, with the other interface named by its id.
+// overlapStates lists every counting network of one interface that overlaps a counting network of
+// another, in the order the store returns them, the other interface named by its id.
 func overlapStates(interfaceID int64, networks []flows.InterfaceNetwork,
 	descriptions map[int64]string) []OverlapState {
 	overlaps := []OverlapState{}
@@ -128,7 +131,7 @@ func (s *surface) handleAPIInterfaceNetworks(writer http.ResponseWriter, request
 	s.answerInterfaces(writer, request)
 }
 
-// answerInterfaces answers with every figure of the page as it now stands.
+// answerInterfaces answers with every interface as it now stands.
 func (s *surface) answerInterfaces(writer http.ResponseWriter, request *http.Request) {
 	answer, err := s.interfacesAnswer(request.Context())
 	if err != nil {

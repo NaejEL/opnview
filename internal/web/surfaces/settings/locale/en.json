@@ -6,7 +6,6 @@
     "action.fetch_certificate": "Fetch from the firewall",
     "field.api_key": "API key",
     "field.api_secret": "API secret",
-    "field.theme": "Theme",
 
     "settings.title": "Settings",
     "settings.heading.firewall": "OPNsense",
@@ -35,9 +34,21 @@
     "error.firewall_url_required": "Enter the firewall URL first",
     "error.certificate_not_fetched": "No certificate could be read from that address",
     "error.api_key_required": "An API key is required beside an API secret.",
-    "error.theme_unknown": "That theme does not exist.",
 
-    "error.settings_card_unknown": "That settings card does not exist.",
+    "settings.label.public_suffix_state": "Last refresh",
+    "settings.label.public_suffix_in_use": "Copy in use",
+    "settings.label.public_suffix_confirmed": "Last confirmed current",
+    "settings.label.public_suffix_version": "Version",
+    "settings.label.public_suffix_rules": "Rules",
+    "field.public_suffix_interval": "Refresh interval",
+    "state.public_suffix.downloaded": "A newer copy was downloaded",
+    "state.public_suffix.not_modified": "The copy held was current",
+    "state.public_suffix.failed": "The download failed",
+    "state.public_suffix.malformed": "The download was not the list",
+    "state.public_suffix.not_yet_refreshed": "Not refreshed yet",
+    "state.public_suffix.never_confirmed": "Never",
+    "state.public_suffix.version_not_stated": "Not stated",
+
     "state.secret_not_kept": "Typed, not saved: type it again"
   }
 }

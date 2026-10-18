@@ -25,13 +25,19 @@ const (
 	// ChannelPluginPass is a pass of a plugin's own kind that stored its rows:
 	// {"plugin": ..., "provider": ...}.
 	ChannelPluginPass = "opnview_plugin_pass"
-	// ChannelAggregateRefresh is an aggregate refresh that rewrote slots: {"periods": [...]}.
+	// ChannelAggregateRefresh is an aggregate refresh that rewrote slots: {"periods": [...],
+	// "ranges": [{"period", "from", "to"}], "families": [...]}, each range spanning the slots of
+	// one period the refresh rewrote.
 	ChannelAggregateRefresh = "opnview_aggregate_refresh"
+	// ChannelLiveSample is a live pass of a measurement_sample provider that stored fine samples:
+	// {"kind": "measurement_sample", "provider_key": ..., "sampled_at": ...}. The baseline pass of
+	// the same kind is a collection pass.
+	ChannelLiveSample = "opnview_live_sample"
 )
 
 // Channels are every channel the core publishes on.
 func Channels() []string {
-	return []string{ChannelCollectionPass, ChannelPluginPass, ChannelAggregateRefresh}
+	return []string{ChannelCollectionPass, ChannelPluginPass, ChannelAggregateRefresh, ChannelLiveSample}
 }
 
 // Notification is one notification heard.
@@ -57,6 +63,13 @@ func Notify(ctx context.Context, q Querier, channel string, payload any) error {
 // rows.
 func (s *Handle) NotifyCollectionPass(ctx context.Context, kind, providerKey string) error {
 	return Notify(ctx, s.SQL, ChannelCollectionPass, map[string]string{"kind": kind, "provider_key": providerKey})
+}
+
+// NotifyLiveSample publishes that a live pass of one provider of kind stored fine samples, the
+// newest taken at sampledAt.
+func (s *Handle) NotifyLiveSample(ctx context.Context, kind, providerKey string, sampledAt int64) error {
+	return Notify(ctx, s.SQL, ChannelLiveSample, map[string]any{"kind": kind, "provider_key": providerKey,
+		"sampled_at": sampledAt})
 }
 
 // Listen holds a connection of its own listening on the channels and hands every notification to

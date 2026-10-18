@@ -6,25 +6,25 @@ import (
 	"os"
 	"strings"
 
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
-// The settings surface's JSON equivalents (docs/widget-api.md, "Settings API"): every figure the
-// page draws, and every save of its cards. A plugin's settings -- the MaxMind and Public Suffix
-// List ones included -- are the plugin's own, served and written by /api/plugins/{name}/settings.
+// The settings surface's JSON routes (docs/widget-api.md, "Settings API"): every figure of the
+// settings, and every save of its cards. A plugin's settings -- the MaxMind and Public Suffix List
+// ones included -- are the plugin's own, served and written by /api/plugins/{name}/settings; the
+// appearance is the frontend surface's.
 
 // The JSON paths.
 const (
-	// PathAPISettings is every figure of the page.
+	// PathAPISettings is every figure of the settings.
 	PathAPISettings = "/api/settings"
 	// PathAPIFirewall saves the firewall card and verifies it.
 	PathAPIFirewall = "/api/settings/firewall"
 	// PathAPIFirewallCertificate reads the fingerprint of the certificate a firewall presents,
 	// and stores nothing.
 	PathAPIFirewallCertificate = "/api/settings/firewall/certificate"
-	// PathAPITheme saves the theme preference.
-	PathAPITheme = "/api/settings/theme"
 )
 
 // apiRoutes are the surface's JSON rows of the route table.
@@ -33,14 +33,12 @@ func (s *surface) apiRoutes() []web.Route {
 		web.JSONRoute(http.MethodGet, PathAPISettings, s.handleAPISettings),
 		web.JSONRoute(http.MethodPost, PathAPIFirewall, s.handleAPIFirewall),
 		web.JSONRoute(http.MethodPost, PathAPIFirewallCertificate, s.handleAPIFirewallCertificate),
-		web.JSONRoute(http.MethodPost, PathAPITheme, s.handleAPITheme),
 	}
 }
 
-// SettingsAnswer is every figure of the settings page.
+// SettingsAnswer is every figure of the settings answer.
 type SettingsAnswer struct {
 	Firewall FirewallState `json:"firewall"`
-	Theme    ThemeState    `json:"theme"`
 }
 
 // FirewallState is the firewall card. No secret is ever in it: the API secret is reported by the
@@ -57,12 +55,6 @@ type FirewallState struct {
 	Verification string `json:"verification"`
 }
 
-// ThemeState is the appearance card: the preference in force and the values offered.
-type ThemeState struct {
-	Value   string   `json:"value"`
-	Choices []string `json:"choices"`
-}
-
 // CertificateAnswer is the fingerprint a firewall presented.
 type CertificateAnswer struct {
 	PresentedFingerprint string `json:"presented_fingerprint"`
@@ -76,22 +68,34 @@ func nullable(value string) *string {
 	return &value
 }
 
-// settingsAnswer reads every figure of the page, as fillSettings reads them for the page.
+// settingsAnswer reads every figure of the answer.
+//
+// IT READS NO SECRET INTO THE ANSWER. What it reads is whether each one is there and whether it
+// can be opened, which are states, and it reports them as closed codes.
 func (s *surface) settingsAnswer(request *http.Request, verification messageKey) (SettingsAnswer, error) {
-	var built view
-	if err := s.fillSettings(request, &built, verification); err != nil {
+	ctx := request.Context()
+	text := func(key string) (*string, error) {
+		value, _, err := s.store.Setting(ctx, key)
+		return nullable(value), err
+	}
+	var answer SettingsAnswer
+	var err error
+	if answer.Firewall.URL, err = text(config.KeyOPNsenseBaseURL); err != nil {
 		return SettingsAnswer{}, err
 	}
-	answer := SettingsAnswer{
-		Firewall: FirewallState{URL: nullable(built.FirewallURL), APIKey: nullable(built.APIKey),
-			CertificateFingerprint: nullable(built.CertificateFingerprint),
-			CredentialState:        web.ConditionOf(built.CredentialState),
-			Verification:           web.ConditionOf(built.VerificationState)},
-		Theme: ThemeState{Value: string(s.ReadTheme(request.Context()))},
+	if answer.Firewall.APIKey, err = text(config.KeyOPNsenseAPIKey); err != nil {
+		return SettingsAnswer{}, err
 	}
-	for _, option := range built.Themes {
-		answer.Theme.Choices = append(answer.Theme.Choices, string(option.Value))
+	if answer.Firewall.CertificateFingerprint, err = text(config.KeyOPNsenseCertificateFingerprint); err != nil {
+		return SettingsAnswer{}, err
 	}
+	_, state, err := config.LoadFirewallCredentials(ctx, s.store, s.unsealer())
+	if err != nil {
+		return SettingsAnswer{}, err
+	}
+	answer.Firewall.CredentialState = web.ConditionOf(credentialStateKey(state))
+	answer.Firewall.Verification = web.ConditionOf(verification)
+
 	return answer, nil
 }
 
@@ -119,8 +123,7 @@ func member(body map[string]any, key string) string {
 	return value
 }
 
-// handleAPIFirewall saves the firewall card: the body is the card's whole content, as the page's
-// form carries it -- an absent or empty url, api_key or certificate_fingerprint removes that
+// handleAPIFirewall saves the firewall card: the body is the card's whole content, as one card -- an absent or empty url, api_key or certificate_fingerprint removes that
 // setting, and an absent or empty api_secret keeps the one stored.
 func (s *surface) handleAPIFirewall(writer http.ResponseWriter, request *http.Request) {
 	body, ok := readBody(writer, request)
@@ -153,8 +156,7 @@ func (s *surface) handleAPIFirewall(writer http.ResponseWriter, request *http.Re
 }
 
 // handleAPIFirewallCertificate connects to the firewall at the given URL and answers the
-// fingerprint of the certificate it presents. It stores nothing and verifies nothing, as the
-// page's fetch control.
+// fingerprint of the certificate it presents. It stores nothing and verifies nothing, as a fetch control.
 func (s *surface) handleAPIFirewallCertificate(writer http.ResponseWriter, request *http.Request) {
 	body, ok := readBody(writer, request)
 	if !ok {
@@ -178,25 +180,7 @@ func (s *surface) handleAPIFirewallCertificate(writer http.ResponseWriter, reque
 	web.WriteJSON(writer, http.StatusOK, CertificateAnswer{PresentedFingerprint: presented})
 }
 
-// handleAPITheme saves the theme preference.
-func (s *surface) handleAPITheme(writer http.ResponseWriter, request *http.Request) {
-	body, ok := readBody(writer, request)
-	if !ok {
-		return
-	}
-	refusal, err := s.saveTheme(request.Context(), member(body, "theme"), s.now().UTC().Unix())
-	if err != nil {
-		web.FailJSON(writer, request, err)
-		return
-	}
-	if refusal != "" {
-		web.RefuseJSON(writer, http.StatusBadRequest, web.ConditionOf(refusal), "theme")
-		return
-	}
-	s.answerSaved(writer, request, msgVerifyNotAttempted)
-}
-
-// answerSaved answers a save with every figure of the page as it now stands.
+// answerSaved answers a save with every figure as it now stands.
 func (s *surface) answerSaved(writer http.ResponseWriter, request *http.Request, verification messageKey) {
 	answer, err := s.settingsAnswer(request, verification)
 	if err != nil {

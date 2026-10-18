@@ -70,6 +70,6 @@
   ],
   "script": "blocked_by_firewall_rule.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

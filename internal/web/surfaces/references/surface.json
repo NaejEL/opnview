@@ -1,0 +1,4 @@
+{
+  "name": "references",
+  "description": "The candidates of each reference kind, and the resolution of reference objects, in JSON."
+}

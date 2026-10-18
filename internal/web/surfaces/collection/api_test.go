@@ -1,26 +1,28 @@
 package collection_test
 
 import (
-	"fmt"
+	"context"
 	"net/http"
-	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/NaejEL/opnview/internal/web/messages"
+	"time"
 
 	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/sizing"
+	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/vocab"
-	"github.com/NaejEL/opnview/internal/web/settingfields"
+	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/surfaces/collection"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
-// The collection surface's JSON equivalents (C-AC9): every figure of the page in the JSON answer,
-// and every save of a card made, and refused, as the page makes and refuses it.
+// The collection surface's JSON routes (C-AC9): every figure of the collection in the JSON answer,
+// and every save made, and refused, with nothing stored and nothing handed to the running service
+// by a refusal.
 
 // settingRows renders every setting row.
 func settingRows(t *testing.T, h *webtest.Harness) string {
@@ -41,172 +43,248 @@ func settingRows(t *testing.T, h *webtest.Harness) string {
 	return builder.String()
 }
 
-// collectionInput is one input given to a page route and to its JSON route, on two installations.
-type collectionInput struct {
-	what     string
-	pagePath string
-	form     url.Values
-	jsonPath string
-	body     map[string]any
-	refused  bool
+// kindPath is the save of one kind's edit.
+func kindPath(kind string) string {
+	return strings.Replace(collection.PathAPICollectionKind, "{kind}", kind, 1)
 }
 
-// assertSameCollectionChange gives each input to the page on one installation and to its JSON
-// route on another, and asserts both stored the same rows and told the running collector the
-// same kinds, or both refused it and stored nothing.
-func assertSameCollectionChange(t *testing.T, inputs []collectionInput) {
+// cardPath is the save of one group of settings.
+func cardPath(card string) string {
+	return strings.Replace(collection.PathAPICollectionSettings, "{card}", card, 1)
+}
+
+// suggestedHarness is a signed-in harness whose filter log is reachable and holds enough
+// records, spread over an hour, for a suggestion.
+func suggestedHarness(t *testing.T) *webtest.Harness {
 	t.Helper()
-	for _, input := range inputs {
+	h := collectiontest.SignedInHarness(t)
+	collectiontest.SetAvailability(h, "firewall_log", "pf", vocab.StateReachable)
+	now := h.Clock.Now().Unix()
+	var instants []int64
+	for minute := int64(60); minute > 0; minute-- {
+		instants = append(instants, now-minute*60, now-minute*60+7)
+	}
+	collectiontest.StoreFlows(h, instants...)
+	return h
+}
+
+// kindOf is one sized kind of the collection answer, failing when it is absent.
+func kindOf(t *testing.T, answer map[string]any, kind string) any {
+	t.Helper()
+	for _, raw := range settingstest.Path(answer, "kinds").([]any) {
+		if settingstest.Path(raw, "kind") == kind {
+			return raw
+		}
+	}
+	t.Fatalf("the collection answer has no kind %s", kind)
+	return nil
+}
+
+// hasKind reports whether the answer lists a sized or polled kind.
+func hasKind(answer map[string]any, list, kind string) bool {
+	for _, raw := range settingstest.Path(answer, list).([]any) {
+		if settingstest.Path(raw, "kind") == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// refusal is one input refused with its code and its field.
+type refusal struct {
+	what      string
+	path      string
+	body      map[string]any
+	condition string
+	field     string
+}
+
+// TestEveryRefusedSaveNamesItsCodeAndFieldAndChangesNothing is C-AC9's refusals, each against the
+// member that caused it.
+func TestEveryRefusedSaveNamesItsCodeAndFieldAndChangesNothing(t *testing.T) {
+	t.Parallel()
+	for _, input := range []refusal{
+		{"an interval of nought", kindPath("firewall_log"), map[string]any{"page_size": 250, "interval_seconds": 0},
+			"collection_value_invalid", "interval_seconds"},
+		{"an interval that is no number", kindPath("firewall_log"),
+			map[string]any{"page_size": 250, "interval_seconds": "soon"}, "collection_value_invalid", "interval_seconds"},
+		{"an interval of one and a half", kindPath("firewall_log"),
+			map[string]any{"page_size": 800, "interval_seconds": 1.5}, "collection_value_invalid", "interval_seconds"},
+		{"an interval no duration holds", kindPath("dns_lookup"),
+			map[string]any{"interval_seconds": config.MaxIntervalSeconds + 1}, "collection_interval_too_large",
+			"interval_seconds"},
+		{"a page of nought", kindPath("firewall_log"), map[string]any{"page_size": 0, "interval_seconds": 30},
+			"collection_value_invalid", "page_size"},
+		{"a page that is no number", kindPath("firewall_log"), map[string]any{"page_size": "lots", "interval_seconds": 30},
+			"collection_value_invalid", "page_size"},
+		{"a negative page", kindPath("firewall_log"), map[string]any{"page_size": -3, "interval_seconds": 20},
+			"collection_value_invalid", "page_size"},
+		{"a selection that is no selection", kindPath("dhcp_lease"), map[string]any{"page_size": 600,
+			"interval_seconds": 120, "selections": map[string]any{"kea": "maybe"}}, "collection_value_invalid",
+			"selections.kea"},
+		{"a polled kind's interval of nought", kindPath("resolver_cache"), map[string]any{"interval_seconds": 0},
+			"collection_value_invalid", "interval_seconds"},
+		{"a polled kind's selection that is no selection", kindPath("resolver_cache"),
+			map[string]any{"interval_seconds": 60, "selections": map[string]any{"unbound": "maybe"}},
+			"collection_value_invalid", "selections.unbound"},
+		{"a lease failure limit of nought", cardPath("lease_backends"),
+			map[string]any{config.KeyLeaseBackendFailurePassLimit: 0}, "collection_value_invalid",
+			config.KeyLeaseBackendFailurePassLimit},
+		{"an unknown site-name mode", cardPath("storage"), map[string]any{config.KeyRetentionSeconds: 0,
+			config.KeyAggregateMode: "partial"}, "aggregate_mode_unknown", config.KeyAggregateMode},
+		{"a negative pairing window", cardPath("pairing"), map[string]any{config.KeyLegPairingWindow: -1},
+			"value_out_of_range", config.KeyLegPairingWindow},
+		{"an unknown kind", kindPath("no_such_kind"), map[string]any{"interval_seconds": 30},
+			"collection_kind_unknown", "kind"},
+		{"an unknown card", cardPath("no_such_card"), map[string]any{}, "collection_kind_unknown", "card"},
+	} {
 		t.Run(input.what, func(t *testing.T) {
 			t.Parallel()
-			pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
-			pageBefore, jsonBefore := settingRows(t, pageSide), settingRows(t, jsonSide)
-			answer := pageSide.Post(input.pagePath, input.form)
-			webtest.Discard(t, answer)
-			status, decoded := settingstest.SendJSON(jsonSide, input.jsonPath, input.body)
-			if input.refused {
-				if answer.StatusCode != http.StatusBadRequest {
-					t.Errorf("the page answered %d rather than refusing", answer.StatusCode)
-				}
-				if status != http.StatusBadRequest || decoded["condition"] == nil {
-					t.Errorf("the JSON route answered %d %v rather than refusing", status, decoded)
-				}
-				if settingRows(t, pageSide) != pageBefore || settingRows(t, jsonSide) != jsonBefore {
-					t.Error("a refused input changed a row")
-				}
-				return
+			h := collectiontest.SignedInHarness(t)
+			before := settingRows(t, h)
+			status, answer := settingstest.SendJSON(h, input.path, input.body)
+			if status != http.StatusBadRequest || answer["condition"] != input.condition {
+				t.Errorf("answered %d %v rather than refusing %s", status, answer, input.condition)
 			}
-			if answer.StatusCode != http.StatusSeeOther {
-				t.Errorf("the page answered %d rather than saving", answer.StatusCode)
+			if field, _ := answer["field"].(string); field != input.field {
+				t.Errorf("the refusal names %q rather than %q", field, input.field)
 			}
-			if status != http.StatusOK {
-				t.Errorf("the JSON route answered %d %v rather than saving", status, decoded)
+			if settingRows(t, h) != before {
+				t.Error("a refused input changed a row")
 			}
-			if page, json := settingRows(t, pageSide), settingRows(t, jsonSide); page != json {
-				t.Errorf("the page and the JSON route stored different rows:\npage:\n%s\njson:\n%s", page, json)
-			}
-			if page, json := fmt.Sprint(pageSide.Collector.ReselectedKinds()),
-				fmt.Sprint(jsonSide.Collector.ReselectedKinds()); page != json {
-				t.Errorf("the page applied the selections of %s and the JSON route of %s", page, json)
+			if len(h.Collector.Received()) != 0 || len(h.Collector.ReselectedKinds()) != 0 {
+				t.Error("a refused input reached the running collector")
 			}
 		})
 	}
 }
 
-// TestTheCollectionJSONSavesMakeThePagesChangeAndRefuseItsInputs is C-AC9 for POST /collection and
-// POST /collection/settings.
-func TestTheCollectionJSONSavesMakeThePagesChangeAndRefuseItsInputs(t *testing.T) {
-	t.Parallel()
-	kindPath := strings.Replace(collection.PathAPICollectionKind, "{kind}", "firewall_log", 1)
-	sized := func(what, pageSize, interval, selection string, refused bool) collectionInput {
-		form := collectiontest.PairForm("firewall_log", pageSize, interval)
-		body := map[string]any{"page_size": pageSize, "interval_seconds": interval}
-		if number, err := strconv.Atoi(pageSize); err == nil {
-			body["page_size"] = number
-		}
-		if number, err := strconv.Atoi(interval); err == nil {
-			body["interval_seconds"] = number
-		}
-		if selection != "" {
-			form.Set(webtest.CardFieldName("firewall_log", webtest.FieldSelectionPrefix+"pf"), selection)
-			body["selections"] = map[string]any{"pf": selection}
-		}
-		return collectionInput{what: what, pagePath: webtest.PathCollection, form: form, jsonPath: kindPath,
-			body: body, refused: refused}
-	}
-	polledPath := strings.Replace(collection.PathAPICollectionKind, "{kind}", "resolver_cache", 1)
-	polled := func(what, interval, selection string, refused bool) collectionInput {
-		form := url.Values{webtest.FieldCard: {"resolver_cache"},
-			webtest.CardFieldName("resolver_cache", webtest.FieldInterval): {interval}}
-		body := map[string]any{"interval_seconds": interval}
-		if number, err := strconv.Atoi(interval); err == nil {
-			body["interval_seconds"] = number
-		}
-		if selection != "" {
-			form.Set(webtest.CardFieldName("resolver_cache", webtest.FieldSelectionPrefix+"unbound"), selection)
-			body["selections"] = map[string]any{"unbound": selection}
-		}
-		return collectionInput{what: what, pagePath: webtest.PathCollectionSettings, form: form,
-			jsonPath: polledPath, body: body, refused: refused}
-	}
-	cardPath := func(card string) string {
-		return strings.Replace(collection.PathAPICollectionSettings, "{card}", card, 1)
-	}
-	setting := func(what, card string, values map[string]string, refused bool) collectionInput {
-		form := url.Values{webtest.FieldCard: {card}}
-		body := map[string]any{}
-		for key, value := range values {
-			form.Set(key, value)
-			if number, err := strconv.ParseInt(value, 10, 64); err == nil {
-				body[key] = number
-			} else {
-				body[key] = value
-			}
-		}
-		return collectionInput{what: what, pagePath: webtest.PathCollectionSettings, form: form,
-			jsonPath: cardPath(card), body: body, refused: refused}
-	}
-	assertSameCollectionChange(t, []collectionInput{
-		sized("a sized kind's pair", "250", "30", "", false),
-		sized("a sized kind's pair and a selection", "250", "30", "off", false),
-		sized("an interval of nought", "250", "0", "", true),
-		sized("an interval that is no number", "250", "soon", "", true),
-		sized("a page of nought", "0", "30", "", true),
-		sized("a selection that is no selection", "250", "30", "maybe", true),
-		polled("a polled kind's interval and selection", "90", "on", false),
-		polled("a polled kind's interval of nought", "0", "", true),
-		setting("the attribution delays", "attribution", map[string]string{
-			config.KeyAttributionMaxDelay: "40", config.KeyCacheAnswerDelay: "600"}, false),
-		setting("a lease failure limit of nought", "lease_backends",
-			map[string]string{config.KeyLeaseBackendFailurePassLimit: "0"}, true),
-		setting("an unknown site-name mode", "storage", map[string]string{
-			config.KeyRetentionSeconds: "0", config.KeyAggregateMode: "partial"}, true),
-		setting("the site-name mode", "storage", map[string]string{
-			config.KeyRetentionSeconds: "0", config.KeyAggregateMode: "no_domains"}, false),
-	})
-
-	t.Run("an unknown kind or card is refused by both", func(t *testing.T) {
-		t.Parallel()
-		h := collectiontest.SignedInHarness(t)
-		before := settingRows(t, h)
-		status, answer := settingstest.SendJSON(h, strings.Replace(collection.PathAPICollectionKind, "{kind}", "no_such_kind", 1),
-			map[string]any{"interval_seconds": 30})
-		if status != http.StatusBadRequest || answer["condition"] != "collection_kind_unknown" {
-			t.Errorf("an unknown kind answered %d %v", status, answer)
-		}
-		status, answer = settingstest.SendJSON(h, cardPath("no_such_card"), map[string]any{})
-		if status != http.StatusBadRequest || answer["condition"] != "collection_kind_unknown" {
-			t.Errorf("an unknown card answered %d %v", status, answer)
-		}
-		if settingRows(t, h) != before {
-			t.Error("a refused input changed a row")
-		}
-	})
-}
-
-// TestAShorterRetentionIsConfirmedThroughTheJSONRouteAsOnThePage is C-AC9 for the retention
-// confirmation: a shorter horizon stores nothing until the save confirms that very horizon.
-func TestAShorterRetentionIsConfirmedThroughTheJSONRouteAsOnThePage(t *testing.T) {
+// TestASavedPairIsStoredAndReachesTheRunningServiceWithoutARestart: a save writes the two rows,
+// and the live holder and the running collector have the new pair as soon as it answers.
+func TestASavedPairIsStoredAndReachesTheRunningServiceWithoutARestart(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
-	path := strings.Replace(collection.PathAPICollectionSettings, "{card}", "storage", 1)
+	status, answer := settingstest.SendJSON(h, kindPath("security_event"),
+		map[string]any{"page_size": 1200, "interval_seconds": 45})
+	if status != http.StatusOK {
+		t.Fatalf("saving a pair answered %d %v", status, answer)
+	}
+	if collectiontest.Setting(h, "page_size_security_event") != "1200" ||
+		collectiontest.Setting(h, "poll_interval_security_event_seconds") != "45" {
+		t.Error("the pair was not stored under its two rows")
+	}
+	live := h.Live.Get()
+	if live.PageSize("security_event") != 1200 || live.Interval("security_event", "poll") != 45*time.Second {
+		t.Errorf("the live configuration holds %d records every %s after the save",
+			live.PageSize("security_event"), live.Interval("security_event", "poll"))
+	}
+	received := h.Collector.Received()
+	if len(received) != 1 || received[0].PageSize("security_event") != 1200 ||
+		received[0].Interval("security_event", "poll") != 45*time.Second {
+		t.Errorf("the running collector was handed %d configurations without the saved pair", len(received))
+	}
+	// The answer is every figure as it now stands.
+	inForce := settingstest.Path(kindOf(t, answer, "security_event"), "in_force")
+	if settingstest.Path(inForce, "page_size") != float64(1200) || settingstest.Path(inForce, "interval_seconds") != float64(45) {
+		t.Errorf("the save's answer reports %v in force", inForce)
+	}
+
+	// The largest interval a duration holds is accepted.
+	largest := config.MaxIntervalSeconds
+	if status, answer := settingstest.SendJSON(h, kindPath("dns_lookup"), map[string]any{"interval_seconds": largest}); status != http.StatusOK {
+		t.Fatalf("the largest interval a duration holds answered %d %v", status, answer)
+	}
+	if got := collectiontest.Setting(h, "poll_interval_dns_lookup_seconds"); got != strconv.FormatInt(largest, 10) {
+		t.Errorf("the stored interval is %q, want %d", got, largest)
+	}
+}
+
+// TestAPageSizeAboveTheCeilingIsStoredAndReported: a page above the firewall's ceiling is stored,
+// and answered as above it.
+func TestAPageSizeAboveTheCeilingIsStoredAndReported(t *testing.T) {
+	t.Parallel()
+	h := collectiontest.SignedInHarness(t)
+	above := ceilingOf("security_event") + 1
+	status, answer := settingstest.SendJSON(h, kindPath("security_event"),
+		map[string]any{"page_size": above, "interval_seconds": 60})
+	if status != http.StatusOK {
+		t.Fatalf("a page above the ceiling answered %d %v", status, answer)
+	}
+	if got := collectiontest.Setting(h, "page_size_security_event"); got != strconv.Itoa(above) {
+		t.Errorf("the stored page size is %q, want %d", got, above)
+	}
+	inForce := settingstest.Path(kindOf(t, answer, "security_event"), "in_force")
+	if settingstest.Path(inForce, "page_size") != float64(above) ||
+		settingstest.Path(inForce, "page_state") != web.ConditionOf(msgPageAboveCeiling) {
+		t.Errorf("the page in force is answered %v, not above the ceiling", inForce)
+	}
+}
+
+// TestASavedSelectionIsStoredAndAppliedAtOnce: a save stores each selection sent and hands the
+// kind to the running collector; a save that sends none leaves them as they are.
+func TestASavedSelectionIsStoredAndAppliedAtOnce(t *testing.T) {
+	t.Parallel()
+	h := collectiontest.SignedInHarness(t)
+	status, answer := settingstest.SendJSON(h, kindPath("dhcp_lease"), map[string]any{"page_size": 500,
+		"interval_seconds": 300, "selections": map[string]any{"kea": "on", "isc": "off", "dnsmasq": "auto"}})
+	if status != http.StatusOK {
+		t.Fatalf("saving a selection answered %d %v", status, answer)
+	}
+	for key, want := range map[string]string{"kea": "on", "isc": "off", "dnsmasq": "auto"} {
+		if got := collectiontest.Setting(h, config.KeySourceSelection("dhcp_lease", key)); got != want {
+			t.Errorf("the stored selection of %s is %q, want %q", key, got, want)
+		}
+	}
+	if got := h.Collector.ReselectedKinds(); len(got) != 1 || got[0] != "dhcp_lease" {
+		t.Errorf("the running collector applied the selections of %v, want [dhcp_lease]", got)
+	}
+	lease := kindOf(t, answer, "dhcp_lease")
+	if settingstest.Path(lease, "source_state", "selection") != "on" {
+		t.Errorf("the kind's selection is answered %v, not on", settingstest.Path(lease, "source_state"))
+	}
+	for _, implementation := range settingstest.Path(lease, "implementations").([]any) {
+		if settingstest.Path(implementation, "provider_key") == "kea" && settingstest.Path(implementation, "selection") != "on" {
+			t.Errorf("kea's selection is answered %v", implementation)
+		}
+	}
+
+	if status, answer := settingstest.SendJSON(h, kindPath("dhcp_lease"),
+		map[string]any{"page_size": 500, "interval_seconds": 300}); status != http.StatusOK {
+		t.Fatalf("saving with no selection answered %d %v", status, answer)
+	}
+	if got := collectiontest.Setting(h, config.KeySourceSelection("dhcp_lease", "kea")); got != "on" {
+		t.Errorf("a save that sent no selection changed one to %q", got)
+	}
+}
+
+// TestAShorterRetentionIsConfirmedForTheValueItWarnedAbout: the next purge deletes what is older
+// than the new horizon, so a shorter one stores nothing until the save confirms that very horizon;
+// the confirmation states both horizons and every other change the save applies.
+func TestAShorterRetentionIsConfirmedForTheValueItWarnedAbout(t *testing.T) {
+	t.Parallel()
+	h := collectiontest.SignedInHarness(t)
+	path := cardPath("storage")
+	inForce := collectiontest.Setting(h, config.KeyRetentionSeconds)
 	before := settingRows(t, h)
 	status, answer := settingstest.SendJSON(h, path, map[string]any{config.KeyRetentionSeconds: 86400,
 		config.KeyAggregateMode: "no_domains"})
 	if status != http.StatusConflict || answer["condition"] != collection.ConditionRetentionConfirmationRequired ||
-		answer["requested_retention_seconds"] != float64(86400) {
+		answer["requested_retention_seconds"] != float64(86400) ||
+		strconv.FormatFloat(answer["in_force_retention_seconds"].(float64), 'f', 0, 64) != inForce {
 		t.Fatalf("a shorter horizon answered %d %v rather than asking for its confirmation", status, answer)
 	}
 	changes, _ := answer["changes"].([]any)
-	if len(changes) != 1 || settingstest.Path(changes[0], "key") != config.KeyAggregateMode {
+	if len(changes) != 1 || settingstest.Path(changes[0], "key") != config.KeyAggregateMode ||
+		settingstest.Path(changes[0], "in_force") != "full" || settingstest.Path(changes[0], "requested") != "no_domains" {
 		t.Errorf("the confirmation lists %v, not the site-name mode the same save changes", changes)
 	}
 	if settingRows(t, h) != before {
 		t.Fatal("a horizon waiting for its confirmation was stored")
 	}
-	status, answer = settingstest.SendJSON(h, path, map[string]any{config.KeyRetentionSeconds: 86400,
-		config.KeyAggregateMode: "full", "confirm": 172800})
-	if status != http.StatusConflict {
+	// THE CONFIRMATION IS FOR THE HORIZON IT SHOWED. Another one is asked about again.
+	status, answer = settingstest.SendJSON(h, path, map[string]any{config.KeyRetentionSeconds: 7000000,
+		config.KeyAggregateMode: "full", "confirm": 86400})
+	if status != http.StatusConflict || answer["requested_retention_seconds"] != float64(7000000) {
 		t.Errorf("a confirmation of another horizon answered %d %v rather than asking again", status, answer)
 	}
 	status, answer = settingstest.SendJSON(h, path, map[string]any{config.KeyRetentionSeconds: 86400,
@@ -215,143 +293,215 @@ func TestAShorterRetentionIsConfirmedThroughTheJSONRouteAsOnThePage(t *testing.T
 		t.Errorf("the confirmed horizon answered %d %v and stored %q", status, answer,
 			collectiontest.Setting(h, config.KeyRetentionSeconds))
 	}
+	// A longer one, or unlimited, purges nothing more and needs no confirmation.
+	status, answer = settingstest.SendJSON(h, path, map[string]any{config.KeyRetentionSeconds: 0,
+		config.KeyAggregateMode: "full"})
+	if status != http.StatusOK || collectiontest.Setting(h, config.KeyRetentionSeconds) != "0" {
+		t.Errorf("an unlimited retention answered %d %v and was not stored", status, answer)
+	}
 }
 
-// TestTheCollectionJSONCarriesEveryFigureOfThePage is C-AC9's figures: every figure the page draws
-// is in the JSON answer, compared value by value on a measured installation.
-func TestTheCollectionJSONCarriesEveryFigureOfThePage(t *testing.T) {
+// TestTheCollectionAnswerReportsEveryFigureItMeasures: every figure the measurement carries is in
+// the answer, in the form the measurement gives it, and a figure with no answer is null beside its
+// named state.
+func TestTheCollectionAnswerReportsEveryFigureItMeasures(t *testing.T) {
+	t.Parallel()
+	h := suggestedHarness(t)
+	now := h.Clock.Now().Unix()
+	collectiontest.RecordGap(h, "firewall_log", "pf", vocab.GapDigestOutsideWindow, now-900, now-840)
+	collectiontest.RecordGap(h, "firewall_log", "pf", vocab.GapDigestOutsideWindow, now-600, now-570)
+
+	kind, _ := collection.KindNamed("firewall_log")
+	measured, err := h.Store.MeasureRecordRate(context.Background(), kind.Spec,
+		sizing.Window(h.Clock.Now(), config.DefaultRetentionSeconds), sizing.BucketSeconds)
+	if err != nil {
+		t.Fatalf("measuring the filter log: %v", err)
+	}
+	if !measured.HasRecords || !measured.MeanRate.Known || !measured.IngestedMeanRate.Known {
+		t.Fatal("the stored records do not make a measurement with every figure, so this assertion is vacuous")
+	}
+
+	answer := settingstest.GetJSON(h, collection.PathAPICollection)
+	log := kindOf(t, answer, "firewall_log")
+	rate := func(r attribution.Rate) float64 { return r.PerSecond }
+	for _, row := range []struct {
+		path []any
+		want any
+	}{
+		{[]any{"measurement", "window_start_at"}, float64(now - sizing.NominalWindowSeconds)},
+		{[]any{"measurement", "window_end_at"}, float64(now)},
+		{[]any{"measurement", "covered_from_at"}, float64(now - 3600)},
+		{[]any{"measurement", "covered_to_at"}, float64(now - 60 + 7)},
+		{[]any{"measurement", "record_count"}, float64(120)},
+		{[]any{"measurement", "mean_rate", "per_second"}, rate(measured.MeanRate)},
+		{[]any{"measurement", "ingested_mean_rate", "per_second"}, rate(measured.IngestedMeanRate)},
+		{[]any{"measurement", "peak_rate", "per_second"}, rate(measured.PeakRate)},
+		{[]any{"measurement", "gap_count"}, float64(2)},
+		{[]any{"measurement", "missed_seconds"}, float64(90)},
+		{[]any{"measurement", "retention_seconds"}, float64(config.DefaultRetentionSeconds)},
+		{[]any{"in_force", "page_size"}, float64(config.Defaults().PageSize("firewall_log"))},
+		{[]any{"in_force", "interval_seconds"}, float64(config.Defaults().Interval("firewall_log", "poll") / time.Second)},
+		{[]any{"in_force", "page_ceiling"}, float64(ceilingOf("firewall_log"))},
+		{[]any{"in_force", "page_state"}, web.ConditionOf(msgPageWithinCeiling)},
+		{[]any{"suggestion", "state"}, web.ConditionOf(msgSuggestionAvailable)},
+		{[]any{"source_state", "availability"}, web.ConditionOf(msgAvailabilityHealthy)},
+		{[]any{"source_state", "selection"}, "auto"},
+	} {
+		if got := settingstest.Path(log, row.path...); got != row.want {
+			t.Errorf("%v is %#v, want %#v", row.path, got, row.want)
+		}
+	}
+	gaps, _ := settingstest.Path(log, "measurement", "gaps").([]any)
+	if len(gaps) != 1 || settingstest.Path(gaps[0], "reason") != string(vocab.GapDigestOutsideWindow) ||
+		settingstest.Path(gaps[0], "count") != float64(2) || settingstest.Path(gaps[0], "missed_seconds") != float64(90) {
+		t.Errorf("the gaps of the window are answered %v", gaps)
+	}
+	if settingstest.Path(log, "suggestion", "interval_seconds") == nil {
+		t.Error("a suggestion was made and no suggested interval is answered")
+	}
+
+	// A table with no ingested clock, and a window with no record, are states, never noughts.
+	lease := kindOf(t, answer, "dhcp_lease")
+	for _, row := range []struct {
+		path []any
+		want any
+	}{
+		{[]any{"measurement", "ingested_mean_rate", "state"}, web.ConditionOf(msgNoIngestedClock)},
+		{[]any{"measurement", "ingested_mean_rate", "per_second"}, nil},
+		{[]any{"measurement", "mean_rate", "state"}, web.ConditionOf(msgRateNotMeasured)},
+		{[]any{"measurement", "covered_from_at"}, nil},
+		{[]any{"measurement", "covered_to_at"}, nil},
+		{[]any{"in_force", "page_ceiling"}, nil},
+		{[]any{"in_force", "page_state"}, nil},
+	} {
+		if got := settingstest.Path(lease, row.path...); got != row.want {
+			t.Errorf("the lease kind's %v is %#v, want %#v", row.path, got, row.want)
+		}
+	}
+}
+
+// TestASourceThatIsNotCollectedIsItsOwnStateAndGetsNoSuggestion: records on the table do not make
+// a suggestion for a kind nobody reads.
+func TestASourceThatIsNotCollectedIsItsOwnStateAndGetsNoSuggestion(t *testing.T) {
+	t.Parallel()
+	h := suggestedHarness(t)
+	collectiontest.SetAvailability(h, "firewall_log", "pf", vocab.StateUnavailable)
+	log := kindOf(t, settingstest.GetJSON(h, collection.PathAPICollection), "firewall_log")
+	if settingstest.Path(log, "source_state", "availability") != web.ConditionOf(msgAvailabilityUnavailable) ||
+		settingstest.Path(log, "suggestion", "state") != web.ConditionOf(msgSuggestionSourceNotCollected) ||
+		settingstest.Path(log, "suggestion", "interval_seconds") != nil {
+		t.Errorf("an unreachable source is answered %v", log)
+	}
+
+	// Reachable but turned off by the operator: the same outcome, and the selection is a fact of
+	// its own.
+	collectiontest.SetAvailability(h, "firewall_log", "pf", vocab.StateReachable)
+	collectiontest.SetSelection(h, "firewall_log", "pf", config.SelectionOff)
+	log = kindOf(t, settingstest.GetJSON(h, collection.PathAPICollection), "firewall_log")
+	if settingstest.Path(log, "source_state", "availability") != web.ConditionOf(msgAvailabilityHealthy) ||
+		settingstest.Path(log, "source_state", "selection") != "off" ||
+		settingstest.Path(log, "suggestion", "state") != web.ConditionOf(msgSuggestionSourceNotCollected) {
+		t.Errorf("a source turned off is answered %v", log)
+	}
+}
+
+// TestAKindWithNoProviderRowIsNotAnswered: the kinds are those the provider table holds, read at
+// run time, and a kind the registry does not hold takes no save.
+func TestAKindWithNoProviderRowIsNotAnswered(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
-	collectiontest.SetAvailability(h, "firewall_log", "pf", vocab.StateReachable)
-	collectiontest.SetSelection(h, "dhcp_lease", "kea", config.SelectionOff)
-	collectiontest.SetSelection(h, "resolver_cache", "unbound", config.SelectionOn)
-	now := h.Clock.Now().Unix()
-	var instants []int64
-	for minute := int64(60); minute > 0; minute-- {
-		instants = append(instants, now-minute*60, now-minute*60+7)
-	}
-	collectiontest.StoreFlows(h, instants...)
-	collectiontest.RecordGap(h, "firewall_log", "pf", vocab.GapDigestOutsideWindow, now-1800, now-1740)
-
-	figures, err := collection.PageFigures(t.Context(), h.Server)
-	if err != nil {
-		t.Fatalf("reading the page's figures: %v", err)
-	}
-	if len(figures) == 0 {
-		t.Fatal("the page draws no figure, so this assertion is vacuous")
+	db := h.Store.DB()
+	for _, kind := range []string{"security_event", "resolver_cache"} {
+		for _, statement := range []string{
+			`DELETE FROM source_availability WHERE provider_id IN (SELECT id FROM provider WHERE kind = '` + kind + `')`,
+			`DELETE FROM provider WHERE kind = '` + kind + `'`,
+		} {
+			if _, err := db.Exec(statement); err != nil {
+				t.Fatalf("removing the %s registry rows: %v", kind, err)
+			}
+		}
 	}
 	answer := settingstest.GetJSON(h, collection.PathAPICollection)
-	expected := map[collection.PageFigure]bool{}
-	add := func(card, label, text string) {
-		expected[collection.PageFigure{Card: card, Label: label, Text: text}] = true
+	if hasKind(answer, "kinds", "security_event") || hasKind(answer, "polled_kinds", "resolver_cache") {
+		t.Error("a kind with no provider row is still answered")
 	}
-	spelled := func(value any) string {
-		seconds, _ := value.(float64)
-		return fmt.Sprint(settingfields.SpelledDuration(int64(seconds)))
+	for _, kind := range []string{"firewall_log", "dhcp_lease", "dns_lookup"} {
+		kindOf(t, answer, kind)
 	}
-	whole := func(value any) string {
-		number, _ := value.(float64)
-		return strconv.FormatInt(int64(number), 10)
+	if !hasKind(answer, "polled_kinds", "resolver_local_data") {
+		t.Error("removing one kind's rows removed the other polled kind")
 	}
-	instant := func(value any, absent string) string {
-		number, ok := value.(float64)
-		if !ok {
-			return absent
-		}
-		return settingfields.Instant(int64(number))
+	if status, refused := settingstest.SendJSON(h, kindPath("resolver_cache"), map[string]any{"interval_seconds": 90}); status != http.StatusBadRequest {
+		t.Errorf("saving a kind the registry does not hold answered %d %v", status, refused)
 	}
-	field := func(value any) string {
-		number, _ := value.(float64)
-		figure, unit := settingfields.FieldDuration(int64(number))
-		return figure + " " + unit
+}
+
+// TestEachImplementationIsAnsweredWithItsSelection: every implementation of a kind is answered
+// with the selection stored, and no implementation of another kind.
+func TestEachImplementationIsAnsweredWithItsSelection(t *testing.T) {
+	t.Parallel()
+	h := collectiontest.SignedInHarness(t)
+	collectiontest.SetSelection(h, "dhcp_lease", "kea", config.SelectionOn)
+	lease := kindOf(t, settingstest.GetJSON(h, collection.PathAPICollection), "dhcp_lease")
+	seen := map[string]any{}
+	for _, implementation := range settingstest.Path(lease, "implementations").([]any) {
+		seen[settingstest.Path(implementation, "provider_key").(string)] = settingstest.Path(implementation, "selection")
 	}
-	rate := func(value any) string {
-		if state, ok := settingstest.Path(value, "state").(string); ok {
-			return "state:state.sizing." + state
-		}
-		perSecond, _ := settingstest.Path(value, "per_second").(float64)
-		return strconv.FormatFloat(perSecond, 'f', 3, 64)
+	want := map[string]any{"dnsmasq": "auto", "isc": "auto", "kea": "on"}
+	if len(seen) != len(want) {
+		t.Errorf("the lease kind answers the implementations %v", seen)
 	}
-	for _, raw := range settingstest.Path(answer, "kinds").([]any) {
-		kind, _ := settingstest.Path(raw, "kind").(string)
-		label := func(name string) string { return "collection.label." + name }
-		add(kind, label("source_state"), "state:state.availability."+settingstest.Path(raw, "source_state", "availability").(string))
-		add(kind, label("selection"), "state:state.sizing.selection_"+settingstest.Path(raw, "source_state", "selection").(string))
-		if settingstest.Path(raw, "page_size_adjustable") == true {
-			add(kind, label("page_size_in_force"), whole(settingstest.Path(raw, "in_force", "page_size")))
-			if ceiling := settingstest.Path(raw, "in_force", "page_ceiling"); ceiling != nil {
-				add(kind, label("page_ceiling"), whole(ceiling))
-				add(kind, label("page_state"), "state:state.sizing."+settingstest.Path(raw, "in_force", "page_state").(string))
-			} else {
-				add(kind, label("page_ceiling"), "state:state.sizing.no_page_ceiling")
-			}
-		}
-		add(kind, label("interval_in_force"), spelled(settingstest.Path(raw, "in_force", "interval_seconds")))
-		measurement := settingstest.Path(raw, "measurement")
-		add(kind, label("window_start"), instant(settingstest.Path(measurement, "window_start_at"), ""))
-		add(kind, label("window_end"), instant(settingstest.Path(measurement, "window_end_at"), ""))
-		if retention := settingstest.Path(measurement, "retention_seconds"); retention != nil {
-			add(kind, label("retention_horizon"), spelled(retention))
-		} else {
-			add(kind, label("retention_horizon"), "state:state.sizing.retention_unlimited")
-		}
-		add(kind, label("covered_from"), instant(settingstest.Path(measurement, "covered_from_at"), "state:state.sizing.no_records_in_window"))
-		add(kind, label("covered_to"), instant(settingstest.Path(measurement, "covered_to_at"), "state:state.sizing.no_records_in_window"))
-		add(kind, label("record_count"), whole(settingstest.Path(measurement, "record_count")))
-		add(kind, label("mean_rate_source"), rate(settingstest.Path(measurement, "mean_rate")))
-		add(kind, label("mean_rate_ingested"), rate(settingstest.Path(measurement, "ingested_mean_rate")))
-		add(kind, label("peak_rate"), rate(settingstest.Path(measurement, "peak_rate")))
-		add(kind, label("gap_count"), whole(settingstest.Path(measurement, "gap_count")))
-		add(kind, label("missed_seconds"), spelled(settingstest.Path(measurement, "missed_seconds")))
-		for _, gap := range settingstest.Path(measurement, "gaps").([]any) {
-			add(kind, "gap_reason."+settingstest.Path(gap, "reason").(string),
-				whole(settingstest.Path(gap, "count"))+" "+spelled(settingstest.Path(gap, "missed_seconds")))
-		}
-		if pageSize := settingstest.Path(raw, "suggestion", "page_size"); pageSize != nil {
-			add(kind, label("suggested_page_size"), whole(pageSize))
-		}
-		if interval := settingstest.Path(raw, "suggestion", "interval_seconds"); interval != nil {
-			add(kind, label("suggested_interval"), spelled(interval))
-		}
-		add(kind, label("suggestion_state"), "state:state.sizing."+settingstest.Path(raw, "suggestion", "state").(string))
-		for _, implementation := range settingstest.Path(raw, "implementations").([]any) {
-			add(kind, string(messages.ProviderLabelKey(kind, settingstest.Path(implementation, "provider_key").(string))),
-				settingstest.Path(implementation, "selection").(string))
+	for key, selection := range want {
+		if seen[key] != selection {
+			t.Errorf("the selection of %s is answered %v, want %v", key, seen[key], selection)
 		}
 	}
-	for _, raw := range settingstest.Path(answer, "polled_kinds").([]any) {
-		kind, _ := settingstest.Path(raw, "kind").(string)
-		for _, implementation := range settingstest.Path(raw, "implementations").([]any) {
-			provider := string(messages.ProviderLabelKey(kind, settingstest.Path(implementation, "provider_key").(string)))
-			add(kind, "availability "+provider, "state:state.availability."+settingstest.Path(implementation, "availability").(string))
-			add(kind, provider, settingstest.Path(implementation, "selection").(string))
-		}
-		add(kind, webtest.CardFieldName(kind, webtest.FieldInterval), field(settingstest.Path(raw, "interval_seconds")))
+}
+
+// TestAnsweringAndMeasuringWriteNothingAndContactNothing: the collection is answered and measured
+// from the database without changing a byte of it, and nothing calls the firewall. The session row
+// is left out: it records the reader's activity, which every signed-in request moves.
+func TestAnsweringAndMeasuringWriteNothingAndContactNothing(t *testing.T) {
+	t.Parallel()
+	h := suggestedHarness(t)
+	before := webtest.DatabaseBytesExcept(t, h, "session")
+	calls := len(h.Fake.Requests())
+	settingstest.GetJSON(h, collection.PathAPICollection)
+	if webtest.DatabaseBytesExcept(t, h, "session") != before {
+		t.Error("answering or measuring the collection wrote to the database")
 	}
-	durations := map[string]bool{}
-	for _, spec := range collection.SettingCardSpecs() {
-		for _, setting := range spec.Settings {
-			durations[setting.Key] = setting.Duration
-		}
+	settingstest.SendJSON(h, kindPath("firewall_log"), map[string]any{"page_size": 600, "interval_seconds": 15})
+	settingstest.SendJSON(h, kindPath("firewall_log"), map[string]any{"page_size": "x", "interval_seconds": 15})
+	if after := len(h.Fake.Requests()); after != calls {
+		t.Errorf("the collection made %d calls to the firewall", after-calls)
 	}
-	for _, raw := range settingstest.Path(answer, "settings").([]any) {
-		card, _ := settingstest.Path(raw, "card").(string)
-		for _, setting := range settingstest.Path(raw, "settings").([]any) {
-			key, _ := settingstest.Path(setting, "key").(string)
-			value := settingstest.Path(setting, "value")
-			switch {
-			case durations[key]:
-				add(card, key, field(value))
-			case key == config.KeyAggregateMode:
-				add(card, key, value.(string))
-			default:
-				add(card, key, whole(value))
-			}
-		}
+}
+
+// TestTheLowerBoundCaveatIsDocumented: the record rate counts what opnview stored, so it is a
+// lower bound of what the source produced. That is written in docs/data-model.md; the front prints
+// it nowhere.
+func TestTheLowerBoundCaveatIsDocumented(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("../../../../docs/data-model.md")
+	if err != nil {
+		t.Fatalf("reading docs/data-model.md: %v", err)
 	}
-	for _, figure := range figures {
-		if !expected[figure] {
-			t.Errorf("the page draws %+v, which the JSON answer does not carry", figure)
-		}
+	document := string(raw)
+	start := strings.Index(document, "\n## Record rate\n")
+	if start < 0 {
+		t.Fatal("docs/data-model.md has no Record rate section")
 	}
+	section := document[start+1:]
+	if end := strings.Index(section[1:], "\n## "); end >= 0 {
+		section = section[:end+1]
+	}
+	if !strings.Contains(strings.ToLower(section), "lower bound") {
+		t.Error("the Record rate section does not say the rate is a lower bound")
+	}
+}
+
+// ceilingOf is the page ceiling a sized kind's file declares.
+func ceilingOf(kind string) int {
+	sized, _ := sizing.Named(kind)
+	return sized.PageCeiling
 }

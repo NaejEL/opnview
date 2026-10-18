@@ -1,0 +1,14 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.title": "Attribution rate per client",
+    "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.question": "How much of this client's traffic can be named at all, and how much should I therefore distrust the site lists?",
+    "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.no_eligible_flow": "No eligible flow",
+    "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.column.rate": "Named",
+    "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.column.named": "Named flows",
+    "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.column.eligible": "Eligible flows",
+    "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.eligible_bytes": "Eligible bytes",
+    "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.resolver_not_covered": "Resolver lookups not read over the whole window",
+    "plugin.attribution_rate_per_client.widget.attribution_rate_per_client.cache_not_covered": "Resolver cache not read over the whole window"
+  }
+}

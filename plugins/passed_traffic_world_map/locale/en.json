@@ -1,0 +1,17 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.title": "Passed-traffic world map",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.question": "Where in the world did the traffic that was allowed actually go?",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.this_firewall_without_outside_end": "to the firewall, no outside end",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.unplaced_volume": "unplaced volume",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.unplaced_connections": "unplaced connections",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.connections_not_placed.one": "{count} connection not placed",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.connections_not_placed.other": "{count} connections not placed",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.allowed_traffic": "Allowed traffic",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.total_allowed": "Total allowed",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.connections_placed": "Connections placed",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.connections_unplaced": "Connections unplaced",
+    "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.connections_total": "Connections total"
+  }
+}

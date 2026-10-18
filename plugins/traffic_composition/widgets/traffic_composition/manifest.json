@@ -124,6 +124,6 @@
   ],
   "script": "traffic_composition.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

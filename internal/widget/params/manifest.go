@@ -83,15 +83,33 @@ type Manifest struct {
 	// (internal/widget/script/script.go). A widget with a script runs the statements its `queries`
 	// files declare, by name, through its host, and is not served by the declarative engine.
 	Script string `json:"script,omitempty"`
-	// Renderer is a slot RESERVED for the interface work of step 7: declared, validated for
-	// its shape, and not built. A widget with no renderer yet carries {"reserved": true}.
-	Renderer ManifestRenderer `json:"renderer"`
+	// Renderer names the widget's renderer: a classic script in the widget's own directory that
+	// the front runs to draw the widget (docs/front-plugins.md). Nil -- the field left out -- means
+	// the widget is drawn by its shape's renderer from the shape contract payload
+	// (docs/widget-authoring.md, "Shape contracts"). A widget with a renderer and neither queries
+	// nor a script is a FRONT-ONLY widget: the core serves no answer for it, and its renderer
+	// asks the core for what it draws.
+	Renderer *ManifestRenderer `json:"renderer,omitempty"`
 }
 
-// ManifestRenderer is the reserved renderer slot.
+// ManifestRenderer is the renderer slot.
 type ManifestRenderer struct {
-	// Reserved is true while no renderer is built. It is the only value step 6 accepts.
-	Reserved bool `json:"reserved"`
+	// Entry is the renderer's file, a plain .js file name in the widget's own directory.
+	Entry string `json:"entry"`
+	// invalid says the slot did not read as {"entry": "<file>.js"}: an unknown member (the
+	// retired {"reserved": true} among them), or a value of the wrong type. ValidateManifest
+	// refuses it with RefusalRendererInvalid rather than the decoder refusing the whole
+	// manifest, so the refusal names the slot.
+	invalid string
+}
+
+// Invalid is why the slot did not decode, or the empty string.
+func (r *ManifestRenderer) Invalid() string { return r.invalid }
+
+// FrontOnly reports whether a manifest declares a front-only widget: a renderer, and neither a
+// query nor a script, so the core answers nothing for it.
+func (m Manifest) FrontOnly() bool {
+	return m.Renderer != nil && len(m.Queries) == 0 && m.Script == ""
 }
 
 // ManifestParameter declares one key of a widget.
@@ -133,9 +151,9 @@ func (p ManifestParameter) Param() Param {
 // DecodeManifest reads one manifest.json strictly: an unknown field is a refusal, because a
 // misspelt key would otherwise be silently ignored.
 func DecodeManifest(raw []byte) (Manifest, error) {
-	// What a manifest may leave out takes its stated default: no domain names, and the renderer
-	// slot reserved.
-	manifest := Manifest{NoDomains: NoDomainsNone, Renderer: ManifestRenderer{Reserved: true}}
+	// What a manifest may leave out takes its stated default: no domain names, and no renderer of
+	// its own (its shape's renderer draws it).
+	manifest := Manifest{NoDomains: NoDomainsNone}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&manifest); err != nil {
@@ -152,17 +170,20 @@ func DecodeManifest(raw []byte) (Manifest, error) {
 	return manifest, nil
 }
 
-// UnmarshalJSON reads a renderer slot that is PRESENT as exactly what it says: a slot that
-// leaves out "reserved" is not reserved, so it is refused rather than silently taking the
-// default an absent slot takes. Unknown fields are refused here too.
+// UnmarshalJSON reads a renderer slot that is PRESENT as exactly what it says: one member,
+// "entry", a string. Anything else -- an unknown member, the retired {"reserved": true}, a value
+// of another type -- is kept as the reason the slot is invalid, which ValidateManifest refuses
+// with its own code.
 func (r *ManifestRenderer) UnmarshalJSON(raw []byte) error {
-	type plain ManifestRenderer
-	var decoded plain
+	var decoded struct {
+		Entry string `json:"entry"`
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&decoded); err != nil {
-		return err
+		*r = ManifestRenderer{invalid: err.Error()}
+		return nil
 	}
-	*r = ManifestRenderer(decoded)
+	*r = ManifestRenderer{Entry: decoded.Entry}
 	return nil
 }

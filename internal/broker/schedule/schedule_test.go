@@ -441,3 +441,40 @@ func TestACallerArrivingDuringACallJoinsIt(t *testing.T) {
 			sim.scheduler.Stats().Calls, sim.ownCallRan(ran))
 	}
 }
+
+// TestAPassShorterThanItsMaxAgeDoesNotKeepADatumRefreshed is D3 of the live validation of 17 October
+// 2026: a pass running every minute with a five-second max age held a demand that never lapsed, so the
+// datum was refreshed every five seconds for good. Once its renewals show a minute between passes, the
+// demand lapses at twice its max age; a reader renewing more often than a minute keeps the minute.
+func TestAPassShorterThanItsMaxAgeDoesNotKeepADatumRefreshed(t *testing.T) {
+	t.Parallel()
+	clock := &fakeClock{now: time.Unix(1790000000, 0)}
+	scheduler := New(clock, DefaultSettings())
+	noop := func(context.Context) (Outcome, any) { return Succeeded, nil }
+	pass := func() { scheduler.Demand("states", "/api/example/states", "pass", 5*time.Second, 0, noop) }
+	pass()
+	clock.advance(30 * time.Second)
+	if _, live := scheduler.Interval("states"); !live {
+		t.Fatal("the first demand lapsed before a minute, with nothing yet known of its passes")
+	}
+	clock.advance(30 * time.Second)
+	pass()
+	clock.advance(9 * time.Second)
+	if interval, live := scheduler.Interval("states"); !live || interval != 5*time.Second {
+		t.Fatalf("within twice its max age the demand is %v, %t", interval, live)
+	}
+	clock.advance(2 * time.Second)
+	if _, live := scheduler.Interval("states"); live {
+		t.Error("a pass a minute apart kept its five-second demand past twice its max age")
+	}
+
+	reader := func() { scheduler.Demand("live", "/api/example/live", "widget", 2*time.Second, 0, noop) }
+	for range 4 {
+		reader()
+		clock.advance(10 * time.Second)
+	}
+	clock.advance(30 * time.Second)
+	if _, live := scheduler.Interval("live"); !live {
+		t.Error("a reader renewing every ten seconds lost the minute its demand lives")
+	}
+}

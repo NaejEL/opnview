@@ -49,6 +49,10 @@ type implementation struct {
 	// tables are the plugin's own tables, for a kind it declared: a collect answer's rows are checked
 	// against them.
 	tables map[string]plugindecl.PluginTable
+	// pushFed is the plugin when the kind's records reach this provider only by push, so its availability is
+	// the polled read's and its push entries' together (withPushAvailability); key is the provider's key.
+	pushFed *Plugin
+	key     string
 }
 
 // Call runs one function of the kind and checks its answer against the table the function returns.
@@ -60,7 +64,11 @@ func (i implementation) Call(ctx context.Context, session provider.Session, func
 			"function %s", i.contract.Kind, function)}
 		return nil, i.failed(invalid), invalid
 	}
-	return i.call(ctx, session, function, declared.Returns, arguments...)
+	answer, result, err := i.call(ctx, session, function, declared.Returns, arguments...)
+	if i.pushFed != nil {
+		result = i.pushFed.withPushAvailability(i.contract.Kind, i.key, result)
+	}
+	return answer, result, err
 }
 
 // call runs one function and checks its answer against a table. It returns the checked answer, the

@@ -768,6 +768,12 @@ func checkProviders(set *provider.Set, plugin *Plugin) ([]checkedProvider, *cont
 			Endpoints: endpointInfos(plugin.Endpoints)}
 		base := implementation{plugin: plugin.Name, contract: kindContract, endpoints: plugin.Endpoints,
 			scriptProbe: scriptEndpoint(plugin.Name, plugin.Manifest.Script)}
+		if core && kindContract.Push && !provider.PolledRecordTables(kindContract)[kindContract.PushRecord] {
+			// The kind's records arrive only by push and its polled functions read something else -- flow_record's
+			// capture configuration -- so a healthy read is not a healthy provider while its push entry
+			// receives nothing (D1 of the live validation of 17 October 2026).
+			base.pushFed, base.key = plugin, key
+		}
 		if !core {
 			base.tables = map[string]plugindecl.PluginTable{}
 			for _, table := range plugin.OwnTables {

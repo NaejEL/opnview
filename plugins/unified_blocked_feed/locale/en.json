@@ -1,0 +1,11 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.unified_blocked_feed.widget.unified_blocked_feed.title": "Unified blocked feed",
+    "plugin.unified_blocked_feed.widget.unified_blocked_feed.question": "What was blocked, and what blocked it — a DNS advertising list, a DNS threat list, Suricata, or a firewall rule?",
+    "plugin.unified_blocked_feed.widget.unified_blocked_feed.decided_by": "Decided by",
+    "plugin.unified_blocked_feed.widget.unified_blocked_feed.target": "Refused",
+    "plugin.unified_blocked_feed.widget.unified_blocked_feed.list_not_recorded": "list not recorded",
+    "plugin.unified_blocked_feed.widget.unified_blocked_feed.rule_not_found": "rule {reference} no longer exists"
+  }
+}

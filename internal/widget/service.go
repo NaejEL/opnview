@@ -26,13 +26,15 @@ const ParametersQueryKey = "parameters"
 
 // Service serves the registered presets.
 type Service struct {
-	store    *store.Store
-	Now      func() time.Time
-	lists    request.SuffixLists
-	presets  map[string]request.Preset
-	types    []string
-	refusals []params.Refusal
-	operator []string
+	store   *store.Store
+	Now     func() time.Time
+	lists   request.SuffixLists
+	presets map[string]request.Preset
+	types   []string
+	// frontOnly are the front-only widgets (renderer.go): listed, never served.
+	frontOnly map[string]request.Preset
+	refusals  []params.Refusal
+	operator  []string
 	// datasets is the data catalogue: the core's datasets and the loaded plugins'
 	// (internal/widget/datasets/datasets.go).
 	datasets *dataset.Catalogue
@@ -118,11 +120,39 @@ func New(database *store.Store, options Options) (*Service, error) {
 	}
 	sort.Strings(service.operator)
 	sort.Slice(service.refusals, func(i, j int) bool { return service.refusals[i].Type < service.refusals[j].Type })
-	for widgetType := range service.presets {
+	// A front-only widget is known and never served: it leaves the served presets for a map of its
+	// own, so no route is built for it and Respond answers it as an unknown type.
+	service.frontOnly = map[string]request.Preset{}
+	for widgetType, preset := range service.presets {
+		if preset.FrontOnly {
+			service.frontOnly[widgetType] = preset
+			delete(service.presets, widgetType)
+			continue
+		}
 		service.types = append(service.types, widgetType)
 	}
 	sort.Strings(service.types)
 	return service, nil
+}
+
+// FrontOnlyTypes returns the front-only widgets that loaded, sorted: each has a renderer and
+// neither a query nor a script, and nothing on the server answers it.
+func (s *Service) FrontOnlyTypes() []string {
+	types := make([]string, 0, len(s.frontOnly))
+	for widgetType := range s.frontOnly {
+		types = append(types, widgetType)
+	}
+	sort.Strings(types)
+	return types
+}
+
+// Known returns the declaration of a loaded widget, served or front-only.
+func (s *Service) Known(widgetType string) (request.Preset, bool) {
+	if preset, found := s.presets[widgetType]; found {
+		return preset, true
+	}
+	preset, found := s.frontOnly[widgetType]
+	return preset, found
 }
 
 // Refusals returns the operator widgets the loader refused, each with its named reason. The
@@ -189,8 +219,13 @@ func (s *Service) ServeType(writer http.ResponseWriter, httpRequest *http.Reques
 	}
 }
 
-// ServeUnknown answers a type with no endpoint: 404, JSON, unknown_widget_type (A16).
+// ServeUnknown answers a type with no endpoint: 404, JSON, unknown_widget_type (A16) -- or
+// front_only_widget for a front-only widget, which is known and answered by nothing on the server.
 func (s *Service) ServeUnknown(writer http.ResponseWriter, widgetType string) {
+	if _, frontOnly := s.frontOnly[widgetType]; frontOnly {
+		WriteJSON(writer, http.StatusNotFound, Failure{Condition: ConditionFrontOnlyWidget, Type: widgetType})
+		return
+	}
 	WriteJSON(writer, http.StatusNotFound, Failure{Condition: envelope.ConditionUnknownWidgetType, Type: widgetType})
 }
 

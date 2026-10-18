@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	"github.com/NaejEL/opnview/internal/store/owners"
-	"github.com/NaejEL/opnview/internal/store/plugindecl"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -176,19 +175,54 @@ func (s *AggregateStore) RefreshAggregatesAt(ctx context.Context, since, waterma
 	if err := owners.ForgetReassignedHours(ctx, s.SQL, reassigned.IDs); err != nil {
 		return result, err
 	}
-	// Every slot rewritten is committed: the listeners hear which periods changed.
+	// Every slot rewritten is committed: the listeners hear which periods changed, over which
+	// instants, and in which families.
 	if len(result.Rewritten) > 0 {
-		var periods []string
-		for _, slot := range result.Rewritten {
-			if !plugindecl.Contains(periods, slot.Period) {
-				periods = append(periods, slot.Period)
-			}
-		}
-		if err := sqldb.Notify(ctx, s.SQL, sqldb.ChannelAggregateRefresh, map[string]any{"periods": periods}); err != nil {
+		if err := sqldb.Notify(ctx, s.SQL, sqldb.ChannelAggregateRefresh, refreshPayload(result)); err != nil {
 			return result, err
 		}
 	}
 	return result, nil
+}
+
+// RefreshedRange is the span of the slots of one period a refresh rewrote: from the start of the
+// earliest to the end of the latest.
+type RefreshedRange struct {
+	Period string `json:"period"`
+	From   int64  `json:"from"`
+	To     int64  `json:"to"`
+}
+
+// Families are the aggregate families every slot is rewritten in, in the order they are computed.
+func Families() []string {
+	return append(append([]string(nil), baseFamilies...), regroupedFamilies...)
+}
+
+// refreshPayload is the notification of one refresh: the periods it rewrote, the range of each,
+// and the families, which a slot is always rewritten in together.
+func refreshPayload(result Refresh) map[string]any {
+	var periods []string
+	spans := map[string]*RefreshedRange{}
+	for _, slot := range result.Rewritten {
+		period, err := vocab.PeriodNamed(slot.Period)
+		end := slot.Start
+		if err == nil {
+			end = period.SlotEnd(slot.Start)
+		}
+		span, seen := spans[slot.Period]
+		if !seen {
+			periods = append(periods, slot.Period)
+			spans[slot.Period] = &RefreshedRange{Period: slot.Period, From: slot.Start, To: end}
+			continue
+		}
+		span.From = min(span.From, slot.Start)
+		span.To = max(span.To, end)
+	}
+	ranges := make([]RefreshedRange, 0, len(periods))
+	for _, name := range periods {
+		ranges = append(ranges, *spans[name])
+	}
+	return map[string]any{"periods": periods, "ranges": ranges, "families": Families()}
 }
 
 // rewriteHours selects, among the candidate hours, those the contract rewrites -- a forced or the

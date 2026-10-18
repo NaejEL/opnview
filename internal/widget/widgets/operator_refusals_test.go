@@ -96,7 +96,7 @@ func refusalCases() []refusalCase {
 			manifest: shapeManifest("example_references", "ranked_bars", false,
 				`{"key":"interfaces","kind":"reference_list","reference":"interface","default":null,"class":"data"}`),
 			query: goodQuery, code: params.RefusalReferencesMismatch},
-		{name: "a renderer that is not the reserved slot", directory: "example_renderer",
+		{name: "a renderer slot that is not {\"entry\": \"<file>.js\"}", directory: "example_renderer",
 			manifest: strings.Replace(good("example_renderer"), `"queries":["query.sql"]`, `"queries":["query.sql"],"renderer":{"reserved":false}`, 1),
 			query:    goodQuery, code: params.RefusalRendererInvalid},
 		{name: "a time series that is not windowed", directory: "example_unwindowed",

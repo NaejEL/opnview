@@ -1,0 +1,18 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.aggregate_freshness.widget.aggregate_freshness.title": "Aggregate freshness",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.question": "Are the pre-computed numbers I am looking at actually current?",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.column.period": "Period",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.column.state": "State",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.column.stale_slots": "Stale slots",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.column.last_computed": "Last computed",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.column.slots": "Slots",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.column.covers": "Covers",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.stale": "stale",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.fresh": "current",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.never_computed": "Never computed",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.between": "{from} to {to}",
+    "plugin.aggregate_freshness.widget.aggregate_freshness.read_from": "Read from"
+  }
+}

@@ -22,9 +22,7 @@
     "recover.title": "Reset the password",
     "recover.heading": "Reset the password",
 
-    "notice.setup_done": "The account was created.",
     "notice.password_reset": "The password was reset.",
-    "notice.signed_out": "Signed out.",
 
     "error.setup_token_refused": "The setup token was refused.",
     "error.login_required": "A login is required.",

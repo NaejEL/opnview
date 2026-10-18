@@ -1,0 +1,17 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.client_volume_ranking.widget.client_volume_ranking.title": "Client volume ranking",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.question": "Which machine, by MAC or by address, is generating the traffic?",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.destinations.one": "{count} destination",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.destinations.other": "{count} destinations",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.excluded.one": "{count} client left out by the identity filter",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.excluded.other": "{count} clients left out by the identity filter",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.no_interface": "no interface known",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.not_additive": "not additive",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.others.one": "The other {count} client",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.others.other": "The other {count} clients",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.all_clients.one": "All {count} client",
+    "plugin.client_volume_ranking.widget.client_volume_ranking.all_clients.other": "All {count} clients"
+  }
+}

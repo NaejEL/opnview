@@ -93,6 +93,6 @@
   ],
   "script": "blocked_traffic_world_map.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

@@ -68,6 +68,6 @@
   "queries": [],
   "script": "destination_operators.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

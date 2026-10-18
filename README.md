@@ -197,7 +197,29 @@ interfaces hold; anything else is refused, counted, and listed in the API
 catalogue. This is a check of the source address, not an authentication: a host
 on the path forging the firewall's address passes it. A Docker setup that
 rewrites the source address of published traffic makes every message refused --
-the catalogue then lists the address it saw -- and is a deployment to correct.
+the catalogue, and the provider's availability detail, then list the address it
+saw -- and is a deployment to correct: run `opnview` with host networking, or
+outside the port proxy.
+
+**Extra senders, when the deployment cannot be corrected.** Docker Desktop's
+port publishing rewrites the source of every published datagram and connection,
+UDP and TCP alike, to the gateway of the compose network (`docker network
+inspect` names it; the catalogue's refused senders show it too): the firewall's
+own address never reaches `opnview`. The start
+parameter `--push-extra-senders <address>[,<address>...]`, or from the
+development toolchain the variable `OPNVIEW_PUSH_EXTRA_SENDERS`, adds addresses
+accepted beside the firewall's own. It is **empty by default**.
+
+    OPNVIEW_LISTEN=8080 OPNVIEW_NETFLOW_UDP=<port> OPNVIEW_PUSH_EXTRA_SENDERS=<gateway> \
+        docker compose -f docker-compose.serve.yml -f docker-compose.push-netflow.yml \
+        run --rm --service-ports serve
+
+**The risk is yours to close.** Behind such a proxy every sender arrives with the
+gateway's address, so naming it accepts **whatever reaches the published port,
+from any host**: the check above no longer tells the firewall from anyone else.
+Filter the published ports on the host running `opnview` -- its own firewall --
+so that only the firewall's address reaches them. The catalogue's
+`extra_accepted_addresses` says how many extra senders are in force.
 
 ## Alerts — what an internal IDS is actually for
 

@@ -40,7 +40,7 @@ const readStatementTimeout = "10s"
 const readConnectionLimit = 8
 
 // The objects the read role holds no privilege on.
-var unreadableObjects = []string{"account", "session", "encrypted_credential", "plugin_state"}
+var unreadableObjects = []string{"account", "session", "encrypted_credential", "plugin_state", "dashboard"}
 
 // ReadConnections is the read role's pool and the texts it has run.
 type ReadConnections struct {

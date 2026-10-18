@@ -1,4 +1,4 @@
 {
   "name": "hello",
-  "description": "A worked example: one page that says how many accounts the installation has."
+  "description": "A worked example: one JSON route that answers how many accounts the installation has."
 }

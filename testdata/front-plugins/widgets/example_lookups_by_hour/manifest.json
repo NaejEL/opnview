@@ -1,0 +1,10 @@
+{
+  "manifest_version": 1,
+  "type": "example_lookups_by_hour",
+  "shape": "table",
+  "windowed": true,
+  "parameters": [
+    {"key": "period", "kind": "enum", "values": ["24h", "7d"], "default": "24h"}
+  ],
+  "renderer": {"entry": "renderer.js"}
+}

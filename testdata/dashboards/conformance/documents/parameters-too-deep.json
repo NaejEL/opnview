@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "canvases": [
+    {"id": "health", "title": "Health", "widgets": [
+      {"id": "chart", "type": "custom_chart", "placement": {"x": 0, "y": 0, "w": 12, "h": 7},
+       "parameters": {
+         "axes": {"left": {"unit": "percent", "scale": "linear"}},
+         "series": [
+           {"source": "interface_throughput", "measure": "bits_per_second",
+            "interface": {"kind": "interface", "by": "identifier", "value": {"nested": ["opt5"]}}}
+         ]
+       }}
+    ]}
+  ]
+}

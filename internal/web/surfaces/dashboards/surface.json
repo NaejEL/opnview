@@ -1,0 +1,4 @@
+{
+  "name": "dashboards",
+  "description": "The stored dashboards: listing, reading, creating, saving, deleting, restoring and ordering them, in JSON."
+}

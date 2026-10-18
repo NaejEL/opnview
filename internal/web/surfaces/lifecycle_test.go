@@ -4,14 +4,12 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"net/url"
 	"testing"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/store/accounts"
-	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
 	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
@@ -27,10 +25,10 @@ func TestCollectionDoesNotWaitForASignIn(t *testing.T) {
 	harness := webtest.New(t)
 	login, password := harness.CompleteSetup()
 	apiKey, apiSecret := webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)
-	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, apiKey, apiSecret), http.StatusSeeOther)
+	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, apiKey, apiSecret), http.StatusOK)
 
 	// Sign out, and destroy every session there is, so nothing anywhere is signed in.
-	accounttest.AssertStatus(t, harness.Post(web.PathSignOut, url.Values{}), http.StatusSeeOther)
+	accounttest.AssertStatus(t, harness.PostWithToken("/api/session/sign-out", "{}"), http.StatusOK)
 	if count := sessionCount(t, harness); count != 0 {
 		t.Fatalf("%d sessions survive, so this proves nothing about collecting without one", count)
 	}
@@ -93,7 +91,7 @@ func TestTheServerStopsOnItsContextAndTheDatabaseStaysIntact(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	reachable := false
 	for range 100 {
-		answer, err := client.Get("http://" + address + web.PathStylesheet)
+		answer, err := client.Get("http://" + address + webtest.PathAPISession)
 		if err == nil {
 			_ = answer.Body.Close()
 			reachable = true
@@ -157,11 +155,10 @@ func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
 	// 3. The first account.
 	login := "operator-" + webtest.RandomHex(t, 4)
 	password := webtest.RandomHex(t, 12)
-	created := harness.Post(web.PathSetup, url.Values{
-		"setup_token": {token}, "login": {login},
-		"password": {password}, "password_again": {password},
-	})
-	accounttest.AssertStatus(t, created, http.StatusSeeOther)
+	created := harness.PostWithToken(webtest.PathAPISetup, string(webtest.MustJSON(t, map[string]string{
+		"setup_token": token, "login": login, "password": password, "password_again": password,
+	})))
+	accounttest.AssertStatus(t, created, http.StatusOK)
 
 	// 4. Sign in, from a browser that has never been signed in.
 	browser := webtest.FreshClient(t, harness)
@@ -170,20 +167,15 @@ func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
 	// 5. The firewall URL and the key and secret, typed into the settings surface.
 	apiKey, apiSecret := webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)
 	harness.Fake.AnswerAll(http.StatusOK, webtest.MustJSON(t, map[string]any{"rows": []any{}, "total": 0}))
-	answer := browser.Post(web.PathSettings, url.Values{
-		webtest.FieldSettingsCard: {webtest.SettingsCardFirewall},
-		"firewall_url":            {harness.Fake.BaseURL()},
-		"api_key":                 {apiKey},
-		"api_secret":              {apiSecret},
-		"theme":                   {string(web.ThemeSystem)},
-	})
-	status, body := webtest.Followed(t, browser, answer)
-	if status != http.StatusSeeOther {
-		t.Fatalf("the settings surface answered %d: %s", status, body)
+	status, body := webtest.StatusAndBody(t, settingstest.StoreCredentials(browser, apiKey, apiSecret))
+	if status != http.StatusOK {
+		t.Fatalf("the firewall save answered %d: %s", status, body)
 	}
 
-	// 6. The verification outcome is on the page.
-	settingstest.AssertContains(t, body, settingstest.Text(t, harness.Server.Catalogue(), msgVerifyVerified))
+	// 6. The verification outcome is in the save's answer.
+	if verification := settingstest.Path(settingstest.DecodeJSON(t, body), "firewall", "verification"); verification != "verified" {
+		t.Errorf("the firewall save verified %v, not verified", verification)
+	}
 
 	// 7. A collection pass uses what was entered, in this same process.
 	collector := collect.NewWithSources(harness.Server.Client(), harness.Store, core.SystemClock{}, nil)

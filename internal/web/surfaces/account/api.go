@@ -12,7 +12,7 @@ import (
 
 // The account surface's JSON equivalents (docs/widget-api.md, "Settings API"): the session state
 // and the form token, the first-account setup, sign-in, sign-out and the key-file reset. Each
-// applies the page's own validation, access level and CSRF rule, and answers closed codes.
+// applies its validation, access level and CSRF rule, and answers closed codes.
 
 // The JSON paths.
 const (
@@ -32,8 +32,8 @@ const (
 func (s *surface) apiRoutes() []web.Route {
 	return []web.Route{
 		// The session state discloses only whether an account exists and whether this reader is
-		// signed in, which the pages disclose by where they send the reader; and the form token,
-		// which every page carries.
+		// signed in, which the front discloses by the view it shows; and the form token,
+		// which every write carries.
 		{Method: http.MethodGet, Pattern: PathAPISession, Access: web.AccessPublic, JSON: true,
 			Handler: s.handleAPISession},
 		{Method: http.MethodPost, Pattern: PathAPISetup, Access: web.AccessPublic, JSON: true,
@@ -206,7 +206,7 @@ func (s *surface) handleAPIRecover(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if !found {
-		// The page's own answer: the same refusal as a wrong key file.
+		// The same refusal as a wrong key file: nothing tells which half was wrong.
 		web.RefuseJSON(writer, http.StatusBadRequest, web.ConditionOf(msgKeyFileRefused), "")
 		return
 	}

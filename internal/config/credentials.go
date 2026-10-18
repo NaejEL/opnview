@@ -38,10 +38,6 @@ const (
 	// and there is nothing to encrypt. Storing it beside the URL is also what lets
 	// the settings surface pre-fill it, which a credential may never be.
 	KeyOPNsenseCertificateFingerprint = "opnsense_certificate_fingerprint"
-	// KeyTheme is the installation's theme. It is ONE ROW FOR THE INSTALLATION and
-	// not a per-account preference: the schema has no such concept and one account
-	// cannot justify inventing one.
-	KeyTheme = "theme"
 )
 
 // FirewallCredentials is the live credential holder the OPNsense client reads.

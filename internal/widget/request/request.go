@@ -64,6 +64,19 @@ type Preset struct {
 	// Volumes says the preset serves Volume or byte Count figures, answered under the measure
 	// volume_measure chooses (measure.go).
 	Volumes bool
+	// Plugin is the plugin that carries the widget, empty for an operator widget of the data
+	// directory: a plugin widget's strings are its plugin's (plugin.<plugin>.widget.<type>.*).
+	Plugin string
+	// Location is where the widget's directory was read from.
+	Location string
+	// RendererEntry and RendererSource are the widget's own renderer, a classic script of its
+	// directory checked at load (docs/front-plugins.md); both empty when its shape's renderer
+	// draws it.
+	RendererEntry  string
+	RendererSource []byte
+	// FrontOnly says the widget has a renderer and neither a query nor a script: nothing on the
+	// server answers it, and it is not served (Service.FrontOnlyTypes).
+	FrontOnly bool
 }
 
 // The origins of a preset.

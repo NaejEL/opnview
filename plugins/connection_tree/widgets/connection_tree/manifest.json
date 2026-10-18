@@ -111,6 +111,6 @@
   ],
   "script": "connection_tree.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

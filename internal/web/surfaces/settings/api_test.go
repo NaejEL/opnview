@@ -2,22 +2,22 @@ package settings_test
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/web/surfaces/settings"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
-// The settings surface's JSON equivalents (C-AC9): every figure of the page in the JSON answer,
-// and every save of a card made, and refused, as the page makes and refuses it.
+// The settings surface's JSON routes (C-AC9): every figure of the settings in the JSON answer, and
+// every save made, and refused, with nothing changed by a refusal.
 
 // storedRows renders the setting rows and the names of the stored credentials, with the harness's
-// own firewall address replaced by a placeholder so two harnesses compare.
+// own firewall address replaced by a placeholder.
 func storedRows(t *testing.T, h *webtest.Harness) string {
 	t.Helper()
 	var builder strings.Builder
@@ -48,68 +48,56 @@ func storedRows(t *testing.T, h *webtest.Harness) string {
 	return builder.String()
 }
 
-// pageAndJSON is one input given to the page and to its JSON route, on two installations.
-type pageAndJSON struct {
+// save is one input to a JSON save: the rows it must leave, or the code it must be refused with.
+type save struct {
 	what string
-	// form is the page's submission, built against the harness it is sent to; path and body the
-	// JSON route's.
-	form func(h *webtest.Harness) url.Values
 	path string
 	body func(h *webtest.Harness) map[string]any
-	// refused is true for an input both must refuse, changing nothing.
-	refused bool
+	// refusal is the code a refused input is answered with, changing nothing; empty for a save.
+	refusal string
+	// rows are the rows a save must leave, in storedRows' form, each line one of them.
+	rows []string
 }
 
-// assertSameChange gives one input to the page on one installation and to the JSON route on
-// another, and asserts both stored the same rows, or both refused it and stored nothing.
-func assertSameChange(t *testing.T, cases []pageAndJSON) {
+// assertSaves gives each input to its JSON route on a fresh installation and asserts what it
+// stored, or that it was refused with its code and stored nothing.
+func assertSaves(t *testing.T, cases []save) {
 	t.Helper()
 	for _, input := range cases {
 		t.Run(input.what, func(t *testing.T) {
 			t.Parallel()
-			pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
-			pageBefore, jsonBefore := storedRows(t, pageSide), storedRows(t, jsonSide)
-			answer := pageSide.Post(web.PathSettings, input.form(pageSide))
-			webtest.Discard(t, answer)
-			status, decoded := settingstest.SendJSON(jsonSide, input.path, input.body(jsonSide))
-			if input.refused {
-				if answer.StatusCode != http.StatusBadRequest {
-					t.Errorf("the page answered %d rather than refusing", answer.StatusCode)
+			h := collectiontest.SignedInHarness(t)
+			before := storedRows(t, h)
+			status, decoded := settingstest.SendJSON(h, input.path, input.body(h))
+			after := storedRows(t, h)
+			if input.refusal != "" {
+				if status != http.StatusBadRequest || decoded["condition"] != input.refusal {
+					t.Errorf("answered %d %v rather than refusing %s", status, decoded, input.refusal)
 				}
-				if status != http.StatusBadRequest || decoded["condition"] == nil {
-					t.Errorf("the JSON route answered %d %v rather than refusing", status, decoded)
-				}
-				if storedRows(t, pageSide) != pageBefore || storedRows(t, jsonSide) != jsonBefore {
-					t.Error("a refused input changed a row")
+				if after != before {
+					t.Errorf("a refused input changed a row:\nbefore:\n%s\nafter:\n%s", before, after)
 				}
 				return
 			}
-			if answer.StatusCode != http.StatusSeeOther {
-				t.Errorf("the page answered %d rather than saving", answer.StatusCode)
-			}
 			if status != http.StatusOK {
-				t.Errorf("the JSON route answered %d %v rather than saving", status, decoded)
+				t.Errorf("answered %d %v rather than saving", status, decoded)
 			}
-			if page, json := storedRows(t, pageSide), storedRows(t, jsonSide); page != json {
-				t.Errorf("the page and the JSON route stored different rows:\npage:\n%s\njson:\n%s", page, json)
+			for _, row := range input.rows {
+				if !strings.Contains(after, row+"\n") {
+					t.Errorf("the save did not leave %q; rows:\n%s", row, after)
+				}
 			}
 		})
 	}
 }
 
-// TestTheSettingsJSONSavesMakeThePagesChangeAndRefuseItsInputs is C-AC9 for POST /settings, card
-// by card.
-func TestTheSettingsJSONSavesMakeThePagesChangeAndRefuseItsInputs(t *testing.T) {
+// TestTheSettingsJSONSavesStoreAndRefuseTheirInputs is C-AC9 for the firewall card.
+func TestTheSettingsJSONSavesStoreAndRefuseTheirInputs(t *testing.T) {
 	t.Parallel()
 	apiKey, apiSecret := webtest.RandomHex(t, 8), webtest.RandomHex(t, 16)
-	firewall := func(firewallURL func(h *webtest.Harness) string, key, secretValue, fingerprint string,
-		refused bool, what string) pageAndJSON {
-		return pageAndJSON{what: what, refused: refused, path: settings.PathAPIFirewall,
-			form: func(h *webtest.Harness) url.Values {
-				return url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardFirewall},
-					"firewall_url": {firewallURL(h)}, "api_key": {key}, "api_secret": {secretValue},
-					"certificate_fingerprint": {fingerprint}}
-			},
+	firewall := func(what string, firewallURL func(h *webtest.Harness) string, key, secretValue, fingerprint,
+		refusal string, rows ...string) save {
+		return save{what: what, path: settings.PathAPIFirewall, refusal: refusal, rows: rows,
 			body: func(h *webtest.Harness) map[string]any {
 				return map[string]any{"url": firewallURL(h), "api_key": key, "api_secret": secretValue,
 					"certificate_fingerprint": fingerprint}
@@ -117,25 +105,18 @@ func TestTheSettingsJSONSavesMakeThePagesChangeAndRefuseItsInputs(t *testing.T) 
 	}
 	fake := func(h *webtest.Harness) string { return h.Fake.BaseURL() }
 	invalid := func(*webtest.Harness) string { return "ftp://firewall.invalid" }
-	theme := func(value string, refused bool) pageAndJSON {
-		return pageAndJSON{what: "theme " + value, refused: refused, path: settings.PathAPITheme,
-			form: func(*webtest.Harness) url.Values {
-				return url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardAppearance}, "theme": {value}}
-			},
-			body: func(*webtest.Harness) map[string]any { return map[string]any{"theme": value} }}
-	}
-	assertSameChange(t, []pageAndJSON{
-		firewall(fake, apiKey, apiSecret, "", false, "the firewall's URL, key and secret"),
-		firewall(fake, "", "", "", false, "the firewall's URL alone"),
-		firewall(invalid, apiKey, apiSecret, "", true, "a URL that is no firewall API's"),
-		firewall(fake, apiKey, apiSecret, "not a fingerprint", true, "a malformed fingerprint"),
-		firewall(fake, "", apiSecret, "", true, "a secret with no key"),
-		theme(string(web.ThemeDark), false),
-		theme("sepia", true),
+	assertSaves(t, []save{
+		firewall("the firewall's URL, key and secret", fake, apiKey, apiSecret, "", "",
+			config.KeyOPNsenseBaseURL+"=<firewall>", config.KeyOPNsenseAPIKey+"="+apiKey,
+			"credential "+accounts.CredentialOPNsenseAPISecret),
+		firewall("the firewall's URL alone", fake, "", "", "", "", config.KeyOPNsenseBaseURL+"=<firewall>"),
+		firewall("a URL that is no firewall API's", invalid, apiKey, apiSecret, "", "firewall_url_invalid"),
+		firewall("a malformed fingerprint", fake, apiKey, apiSecret, "not a fingerprint", "fingerprint_invalid"),
+		firewall("a secret with no key", fake, "", apiSecret, "", "api_key_required"),
 	})
 }
 
-// TestTheFirewallCertificateIsFetchedAndStoredNowhere is C-AC9 for the page's fetch control.
+// TestTheFirewallCertificateIsFetchedAndStoredNowhere is C-AC9 for the certificate fetch.
 func TestTheFirewallCertificateIsFetchedAndStoredNowhere(t *testing.T) {
 	t.Parallel()
 	h := webtest.NewTLS(t)
@@ -160,52 +141,44 @@ func TestTheFirewallCertificateIsFetchedAndStoredNowhere(t *testing.T) {
 	}
 }
 
-// TestTheSettingsJSONCarriesEveryFigureOfThePage is C-AC9's figures: every figure the page draws is
-// in the JSON answer, compared value by value on an empty installation and on a configured one.
-func TestTheSettingsJSONCarriesEveryFigureOfThePage(t *testing.T) {
+// TestTheSettingsJSONCarriesEveryFigure is C-AC9's figures: each figure of the settings answer is
+// the one stored or held, on an empty installation and on a configured one, and a figure with no
+// answer is null beside its named state, never a nought.
+func TestTheSettingsJSONCarriesEveryFigure(t *testing.T) {
 	t.Parallel()
-	check := func(t *testing.T, h *webtest.Harness) {
+	expect := func(t *testing.T, answer map[string]any, path []any, want any) {
 		t.Helper()
-		figures, err := settings.PageFigures(t.Context(), h.Server)
-		if err != nil {
-			t.Fatalf("reading the page's figures: %v", err)
+		if got := settingstest.Path(answer, path...); got != want {
+			t.Errorf("%v is %#v, want %#v", path, got, want)
 		}
-		answer := settingstest.GetJSON(h, settings.PathAPISettings)
-		text := func(path ...any) string {
-			value, _ := settingstest.Path(answer, path...).(string)
-			return value
-		}
-		state := func(name, code string) {
-			t.Helper()
-			if figures[name] == "" || web.ConditionOf(web.MessageKey(figures[name])) != code {
-				t.Errorf("the page draws %s as %q and the answer as %q", name, figures[name], code)
-			}
-		}
-		same := func(name, value string) {
-			t.Helper()
-			if figures[name] != value {
-				t.Errorf("the page draws %s as %q and the answer as %q", name, figures[name], value)
-			}
-		}
-		same("firewall_url", text("firewall", "url"))
-		same("api_key", text("firewall", "api_key"))
-		same("certificate_fingerprint", text("firewall", "certificate_fingerprint"))
-		state("credential_state", text("firewall", "credential_state"))
-		state("verification", text("firewall", "verification"))
-		same("theme", text("theme", "value"))
 	}
 
 	t.Run("an installation with nothing configured", func(t *testing.T) {
 		t.Parallel()
-		check(t, collectiontest.SignedInHarness(t))
+		h := collectiontest.SignedInHarness(t)
+		answer := settingstest.GetJSON(h, settings.PathAPISettings)
+		for _, absent := range [][]any{{"firewall", "url"}, {"firewall", "api_key"},
+			{"firewall", "certificate_fingerprint"}} {
+			expect(t, answer, absent, nil)
+		}
+		expect(t, answer, []any{"firewall", "credential_state"}, "absent")
+		expect(t, answer, []any{"firewall", "verification"}, "not_attempted")
+		// A plugin's settings are the plugin's own, and the appearance is the front's.
+		for _, gone := range []string{"theme", "geolocation", "public_suffix"} {
+			if _, present := answer[gone]; present {
+				t.Errorf("the settings answer still carries %s", gone)
+			}
+		}
 	})
+
 	t.Run("an installation with everything configured", func(t *testing.T) {
 		t.Parallel()
 		h := collectiontest.SignedInHarness(t)
-		webtest.Discard(t, settingstest.StoreCredentials(h, webtest.RandomHex(t, 8), webtest.RandomHex(t, 16)))
-		if status, answer := settingstest.SendJSON(h, settings.PathAPITheme, map[string]any{"theme": "dark"}); status != http.StatusOK {
-			t.Fatalf("storing the theme answered %d %v", status, answer)
-		}
-		check(t, h)
+		apiKey := webtest.RandomHex(t, 8)
+		webtest.Discard(t, settingstest.StoreCredentials(h, apiKey, webtest.RandomHex(t, 16)))
+		answer := settingstest.GetJSON(h, settings.PathAPISettings)
+		expect(t, answer, []any{"firewall", "url"}, h.Fake.BaseURL())
+		expect(t, answer, []any{"firewall", "api_key"}, apiKey)
+		expect(t, answer, []any{"firewall", "credential_state"}, "ready")
 	})
 }

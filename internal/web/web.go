@@ -7,10 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
-
-	"github.com/NaejEL/opnview/internal/web/messages"
 
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/broker"
@@ -29,31 +26,10 @@ import (
 	_ "github.com/NaejEL/opnview/internal/widget/widgets"
 )
 
-// The paths the core itself knows. They are constants because a template links to them and
-// a test enumerates them, and two spellings of one path is a route that exists and a link
-// that does not. A path that belongs to one surface only is that surface's constant, in its
-// own package.
-const (
-	// PathRoot sends a reader to whichever surface applies.
-	PathRoot = "/"
-	// PathSetup is the first-account surface.
-	PathSetup = "/setup"
-	// PathSignIn is the sign-in surface.
-	PathSignIn = "/sign-in"
-	// PathSignOut ends a session.
-	PathSignOut = "/sign-out"
-	// PathSettings is where credentials enter the product, and where a signed-in reader
-	// lands.
-	PathSettings = "/settings"
-	// PathRecover is the password reset authorised by the key file.
-	PathRecover = "/recover"
-	// PathStylesheet is the one static asset.
-	PathStylesheet = "/asset/style.css"
-)
-
-// PageSignIn is the page a refusal is drawn on when a route names none: the sign-in page,
-// which the account surface provides.
-const PageSignIn = "signin"
+// PathSetup is the shell route of the first-account view: the address the service prints beside
+// the one-time setup token at start. The shell answers it (internal/web/surfaces/frontend); the
+// core serves no page.
+const PathSetup = "/setup"
 
 // The cookies.
 //
@@ -66,7 +42,6 @@ const PageSignIn = "signin"
 const (
 	cookieSession = "opnview_session"
 	cookieCSRF    = "opnview_csrf"
-	cookieNotice  = "opnview_notice"
 )
 
 // SessionCookieName is the name of the session cookie, for a test that reads the jar.
@@ -107,12 +82,10 @@ type Route struct {
 	// into the GET handler only leaves the POST open. Both of those are the classic
 	// first-run hole, and this cycle's stated top risk is exactly that hole.
 	RequiresNoAccount bool
-	// JSON marks a route of the widget API: refused in JSON, never redirected to a page.
+	// JSON marks a route answering JSON. Every route but the front's shell and assets is one;
+	// the middleware answers every refusal in JSON whatever this says, and no route is ever
+	// redirected to a page.
 	JSON bool
-	// Page is the page a refusal by the middleware -- a missing form token, a key file not
-	// presented -- is drawn on, so the reader lands on the form they were filling in. Empty
-	// is the sign-in page.
-	Page string
 	// Handler answers the request once the middleware has let it through.
 	Handler http.HandlerFunc
 }
@@ -189,7 +162,7 @@ type Reconfigurable interface {
 	Reselect(ctx context.Context, kind string) error
 }
 
-// Server is the HTTP core. One per process: it holds the routes, the renderer
+// Server is the HTTP core. One per process: it holds the routes, the catalogue
 // and the session store, and nothing a request can change.
 type Server struct {
 	store       *store.Store
@@ -199,7 +172,7 @@ type Server struct {
 	client      *opnsense.Client
 	setupToken  *auth.SetupToken
 	sessions    *auth.Sessions
-	renderer    *renderer
+	catalogue   Catalogue
 	params      auth.Params
 	now         func() time.Time
 
@@ -228,24 +201,9 @@ type Server struct {
 	// surfaces are the accepted surfaces, in name order, and refused the others with why.
 	surfaces []vetted
 	refused  []SurfaceRefusal
-	// pages are the pages of the accepted surfaces by name.
-	pages map[string]Page
-	// tabs and indicators are the top bar's, built from the accepted surfaces.
-	tabs       []Tab
-	indicators []indicatorSource
-	// notices and refusals are the closed list of keys a redirect may carry.
-	notices  map[MessageKey]struct{}
-	refusals map[MessageKey]struct{}
 
 	routes []Route
 	mux    *http.ServeMux
-}
-
-// indicatorSource is one surface's top-bar indicator.
-type indicatorSource struct {
-	surface string
-	read    func(ctx context.Context, host Host) (Indicator, error)
-	unknown Indicator
 }
 
 // New returns a server with every route registered.
@@ -333,73 +291,27 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	server.renderer, err = newRenderer(catalogue, accepted)
-	if err != nil {
-		return nil, err
-	}
+	server.catalogue = catalogue
 	server.assemble(contributed)
 	return server, nil
 }
 
-// coreRoutes are the rows the core itself serves.
-func coreRoutes(s *Server) []Route {
-	return []Route{
-		// The root is authenticated, not public: it serves no content to a reader
-		// with no session, it redirects them to the surface that applies.
-		{Method: http.MethodGet, Pattern: PathRoot, Access: AccessAuthenticated,
-			Handler: s.handleRoot},
-		{Method: http.MethodGet, Pattern: PathStylesheet, Access: AccessPublic,
-			Handler: s.handleStylesheet},
-	}
+// coreRoutes are the rows the core itself serves: none. The shell, the front's assets and every
+// interface route are the frontend surface's (internal/web/surfaces/frontend), which is a
+// surface like any other.
+func coreRoutes(_ *Server) []Route {
+	return nil
 }
 
-// handleRoot sends a signed-in reader to the settings surface.
-//
-// There is nothing else to send them to yet: canvases are step 7. The middleware
-// has already turned away a reader with no session, so reaching here means there is
-// one.
-func (s *Server) handleRoot(writer http.ResponseWriter, request *http.Request) {
-	http.Redirect(writer, request, PathSettings, http.StatusSeeOther)
-}
-
-// assemble builds the route table, the pages, the tabs, the indicators and the flash lists
-// from the accepted surfaces, and the router from the table.
+// assemble builds the route table from the accepted surfaces, and the router from the table.
 //
 // THE TABLE IS THE WHOLE LIST. Nothing else calls mux.Handle, so a route that is
 // not here does not exist, and a route that is here carries an access level.
 func (s *Server) assemble(contributed map[string][]Route) {
 	s.routes = coreRoutes(s)
-	s.pages = map[string]Page{}
-	s.notices = map[MessageKey]struct{}{}
-	s.refusals = map[MessageKey]struct{}{
-		messages.MsgSetupClosed: {}, messages.MsgSessionExpired: {}, messages.MsgKeyFileRefused: {},
-	}
 	for _, accepted := range s.surfaces {
-		surface := accepted.surface
-		s.routes = append(s.routes, contributed[surface.Name]...)
-		for _, page := range surface.Pages {
-			s.pages[page.Name] = page
-		}
-		if surface.Tab != nil {
-			s.tabs = append(s.tabs, *surface.Tab)
-		}
-		if surface.Indicator != nil {
-			s.indicators = append(s.indicators, indicatorSource{surface: surface.Name,
-				read: surface.Indicator, unknown: surface.IndicatorUnknown})
-		}
-		for _, key := range surface.Notices {
-			s.notices[key] = struct{}{}
-		}
-		for _, key := range surface.Refusals {
-			s.refusals[key] = struct{}{}
-		}
+		s.routes = append(s.routes, contributed[accepted.surface.Name]...)
 	}
-	sort.SliceStable(s.tabs, func(i, j int) bool {
-		if s.tabs[i].Order != s.tabs[j].Order {
-			return s.tabs[i].Order < s.tabs[j].Order
-		}
-		return s.tabs[i].Page < s.tabs[j].Page
-	})
 
 	s.mux = http.NewServeMux()
 	for _, route := range s.routes {
@@ -464,12 +376,20 @@ func (s *Server) AccountExists(ctx context.Context) (bool, error) {
 // none: a default would pre-empt what the installer of step 8 chooses, and no
 // address of any real network belongs in this repository.
 func (s *Server) ListenAndServe(ctx context.Context, address string, grace time.Duration) error {
+	return s.ListenAndServeHandler(ctx, address, grace, s.mux)
+}
+
+// ListenAndServeHandler is ListenAndServe serving handler, which wraps this server. It is the one seam a
+// development build uses to stand in front of the routes (cmd/opnview, the review build); the product
+// passes the server itself.
+func (s *Server) ListenAndServeHandler(ctx context.Context, address string, grace time.Duration,
+	handler http.Handler) error {
 	if address == "" {
 		return errors.New("web: no listen address was given")
 	}
 	server := &http.Server{
 		Addr:              address,
-		Handler:           s.mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

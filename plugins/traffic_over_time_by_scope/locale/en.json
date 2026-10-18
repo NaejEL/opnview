@@ -1,0 +1,11 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.title": "Traffic over time by scope",
+    "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.question": "How much traffic left the network, entered it, and stayed between interfaces, over time?",
+    "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.fact.total": "Period total",
+    "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.figure_label": "{scope}, {period}",
+    "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.all_scopes": "All scopes",
+    "plugin.traffic_over_time_by_scope.widget.traffic_over_time_by_scope.legend": "{scope}, {unit}"
+  }
+}
