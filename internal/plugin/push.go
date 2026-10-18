@@ -346,8 +346,8 @@ func checkPushKind(plugin *Plugin, binding *pushBinding, providedKinds map[strin
 	// kind's polled functions can return the tables PolledRecordTables lists. When that list holds the
 	// entry's table, the provider delivers the same records by both paths, and the entry must name the
 	// endpoint it replaces, or the two paths would count them twice (push_kind_without_replacement).
-	// When it does not -- flow_record's polled function returns the capture configuration, a different
-	// record -- the entry is push-only, and a `replaces` would replace nothing.
+	// When it does not -- a push-only kind whose polled functions return something else, such as an
+	// exporter's configuration -- the entry is push-only, and a `replaces` would replace nothing.
 	polled := provider.PolledRecordTables(kindContract)[table]
 	switch {
 	case polled && declaration.Replaces == "":

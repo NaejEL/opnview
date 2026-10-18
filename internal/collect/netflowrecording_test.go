@@ -414,3 +414,83 @@ var recordedStates = map[string]bool{"measured": true, "in_progress": true, "awa
 	"export_gap": true, "not_exported_when_refused": true, "forwarding_export_unsettled": true,
 	"ingress_not_captured": true, "parent_copies_only": true, "interface_not_exported": true,
 	"interface_not_captured": true, "capture_configuration_unknown": true}
+
+// TestTheJoinInJavaScriptReproducesTheGoRecordingOfF16 is PA-AC14 for F16: datagrams from five interleaved
+// counters, one dropped, give the recorded gap and the recorded records, the loss bound supplied by the
+// netflow plugin's capture read (PA-AC11).
+func TestTheJoinInJavaScriptReproducesTheGoRecordingOfF16(t *testing.T) {
+	t.Parallel()
+	world := LoadJoinWorld(t, JoinFixtureDirectory)
+	var counters struct {
+		Provenance          map[string]any `json:"__provenance__"`
+		Name                string         `json:"name"`
+		Counters            []uint32       `json:"counters"`
+		DatagramsPerCounter int            `json:"datagrams_per_counter"`
+		Dropped             struct {
+			Counter  int `json:"counter"`
+			Datagram int `json:"datagram"`
+		} `json:"dropped"`
+		Record FixtureRecord `json:"record"`
+	}
+	raw, err := os.ReadFile(filepath.Join(JoinFixtureDirectory, "f16_interleaved_counters.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &counters); err != nil {
+		t.Fatal(err)
+	}
+	h := newNetflowWorld(t, world.Body, world.Offered())
+	h.Capture(t, CaptureStartAt, world.Captured(nil)...)
+	h.At(NetflowReadSecond)
+	h.Deferred = true
+	export := LegInstant + 10
+	for round := 0; round < counters.DatagramsPerCounter; round++ {
+		for counter, first := range counters.Counters {
+			export++
+			if counter == counters.Dropped.Counter && round == counters.Dropped.Datagram {
+				continue
+			}
+			record := counters.Record.FlowRecord()
+			record.SrcPort = uint16(40000 + counter*100 + round)
+			h.DeliverRaw(t, Datagram(export, first+uint32(round), record))
+		}
+	}
+	h.RecordGaps()
+	h.Derive(t)
+	got := recordingRelations(t, h)
+	rows, err := h.Store.DB().QueryContext(context.Background(),
+		`SELECT (to_jsonb(g) - 'id' - 'provider_id')::text FROM collection_gap g`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got["collection_gap"] = []map[string]any{}
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		row := map[string]any{}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatal(err)
+		}
+		got["collection_gap"] = append(got["collection_gap"], row)
+	}
+	_ = rows.Close()
+	compareRecording(t, "f16_interleaved_counters.json", loadRecording(t, "f16_interleaved_counters.json"), got,
+		recordingExpectations())
+}
+
+// loadRecordingFile reads a recording kept outside the repository -- the capture's, which is never committed
+// (PA-AC16) -- as its relations.
+func loadRecordingFile(t *testing.T, path string) map[string][]map[string]any {
+	t.Helper()
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(recordingDirectory, absolute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return loadRecording(t, relative)
+}

@@ -3225,59 +3225,6 @@ END
 $measure_columns$;
 
 -- ---------------------------------------------------------------------------
--- unmatched_record_aggregate_* — the unmatched records (NJ4 rule 9 and NJ8 of the
--- amendment "the NetFlow join with every interface captured"): the flow records
--- that joined no leg and are no copy, per slot of their start and per ingress
--- interface, egress interface, IANA protocol number, IP version and reason.
--- ingress_interface and egress_interface are the mapped interface's identifier,
--- or, for an index that names no assigned interface, its role
--- (no_receiving_interface, local_delivery, unmapped, or interface for a device
--- no assignment names). "Unmatched record" is opnview's own term. Bytes, packets
--- and records only, added to no other family and to no total of any other: they
--- are no logged connection's. A copy is in no slot.
---
--- THE FAMILY IS ACCUMULATED, NOT RECOMPUTED. The join adds a record to its four
--- slots when it decides it unmatched, and takes it out again should a later
--- decision of its group join it, in the transaction that writes the decision;
--- so a slot keeps its records after the flow records themselves are purged.
--- updated_at is the last change. Purged by period_end_at, at the flows' horizon.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS unmatched_record_aggregate_1h (
-    period_start_at   BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at     BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    ingress_interface TEXT NOT NULL CHECK (length(ingress_interface) > 0),
-    egress_interface  TEXT NOT NULL CHECK (length(egress_interface) > 0),
-    protocol          BIGINT NOT NULL CHECK (protocol >= 0 AND protocol <= 255),
-    ip_version        BIGINT NOT NULL CHECK (ip_version IN (4, 6)),
-    reason            TEXT NOT NULL
-                      CHECK (reason IN ('no_logged_leg', 'ambiguous', 'beyond_flow_horizon',
-                                        'interface_index_unmapped', 'reverse_unconfirmed')),
-    bytes             BIGINT NOT NULL CHECK (bytes >= 0),
-    packets           BIGINT NOT NULL CHECK (packets >= 0),
-    records           BIGINT NOT NULL CHECK (records >= 0),
-    updated_at        BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800),
-    CHECK (period_end_at > period_start_at),
-    PRIMARY KEY (period_start_at, ingress_interface, egress_interface, protocol, ip_version, reason)
-);
-
-CREATE TABLE IF NOT EXISTS unmatched_record_aggregate_24h (
-    LIKE unmatched_record_aggregate_1h INCLUDING ALL
-);
-
-CREATE TABLE IF NOT EXISTS unmatched_record_aggregate_7d (
-    LIKE unmatched_record_aggregate_1h INCLUDING ALL
-);
-
-CREATE TABLE IF NOT EXISTS unmatched_record_aggregate_30d (
-    LIKE unmatched_record_aggregate_1h INCLUDING ALL
-);
-
-CREATE INDEX IF NOT EXISTS idx_unmatched_record_aggregate_1h_end ON unmatched_record_aggregate_1h (period_end_at);
-CREATE INDEX IF NOT EXISTS idx_unmatched_record_aggregate_24h_end ON unmatched_record_aggregate_24h (period_end_at);
-CREATE INDEX IF NOT EXISTS idx_unmatched_record_aggregate_7d_end ON unmatched_record_aggregate_7d (period_end_at);
-CREATE INDEX IF NOT EXISTS idx_unmatched_record_aggregate_30d_end ON unmatched_record_aggregate_30d (period_end_at);
-
--- ---------------------------------------------------------------------------
 -- Retention purge — how far back the retention purge has purged: one row.
 --
 -- purged_before is the furthest horizon any purge has applied: every flow and
@@ -3839,249 +3786,28 @@ WHERE NOT EXISTS (
 );
 
 -- ---------------------------------------------------------------------------
--- NetFlow: the flow records an exporter sends, its capture configuration, and
--- the volume they measure for the logged connections (PS17 of the NetFlow join
--- amendment to specs/SPEC-backend-completion-plugins.md, as the amendment "the
--- NetFlow join with every interface captured" replaces its join, NJ2 to NJ8;
--- docs/data-model.md, "NetFlow volumes").
---
--- THE TERMS. A flow_record is RFC 3954's and RFC 7011's Flow Record, and is not
--- a `flow`, which is one filter-log record. forward and reverse are RFC 5103's.
--- RFC 7011's Observation Point is neither exported by OPNsense nor assigned by
--- opnview. "Measured volume", the `netflow` measure, a translated copy, a parent
--- copy, a counted copy and the index roles are opnview's own: docs/data-model.md,
--- *Vocabulary*, records each with its reason.
---
--- EVERY RECORD IS JOINED FROM ITS OWN INDEXES. A record names the interface it
--- was received on and the interface its route chose (ingressInterface and
--- egressInterface, survey S6), mapped at reception; the join reads them and the
--- legs logged there (NJ4). Which interfaces export what is read from the capture
--- configuration, never inferred from the records.
--- ---------------------------------------------------------------------------
-
 -- canonical_address — an address as one canonical text, for comparing an address
--- the filter log wrote (verbatim, flow.src_address) with one an exporter sent,
--- by value and never by text. NULL for a text that is not an address, tested with
--- pg_input_is_valid rather than caught, so no insert into `flow` opens a
--- subtransaction for it. IMMUTABLE -- an address's canonical text depends on
--- nothing but the address -- so the join's expression index below may use it.
+-- the filter log wrote (verbatim, flow.src_address) with one another source
+-- names, by value and never by text: the core dataset `leg` serves it as
+-- canonical_src_address and canonical_dst_address, which a plugin joining another
+-- source's records to the logged legs reads by key (PA3 of the plugin-API
+-- amendment to specs/SPEC-backend-completion-plugins.md). NULL for a text that is
+-- not an address, tested with pg_input_is_valid rather than caught, so no insert
+-- into `flow` opens a subtransaction for it. IMMUTABLE -- an address's canonical
+-- text depends on nothing but the address -- so the expression index below may
+-- use it.
 CREATE OR REPLACE FUNCTION canonical_address(address TEXT) RETURNS TEXT
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
     SELECT CASE WHEN pg_input_is_valid(address, 'inet') THEN host(CAST(address AS inet)) END
 $$;
 
--- The join's candidate search (NJ4): the legs logged on the devices a group's
--- records name whose two addresses are the records', in either orientation, at
--- or before an instant -- one index search per device. Risk 7 of the amendment
--- names its cost; the pre-deployment sweep plans it at both seeds.
+-- The legs logged on a device whose two addresses are some others, in an order,
+-- at or before an instant: what a key read of the dataset `leg` by device and
+-- canonical addresses searches -- the netflow plugin's candidate legs (NJ4), one
+-- index search per key.
 CREATE INDEX IF NOT EXISTS idx_flow_join ON flow
     (interface_device, canonical_address(src_address), canonical_address(dst_address), observed_at);
-
--- ---------------------------------------------------------------------------
--- capture_configuration — the capture configurations a flow_record provider
--- read, as INTERVALS BOUNDED BY READ INSTANTS (PS18, kept by NJ6).
---
--- Source: the provider's polled read (docs/plugins.md, `flow_record`): what the
--- exporter's own configuration says it captures, through the broker. Which
--- endpoints a provider reads is its plugin's, never this schema's (PS-AC47).
---
--- One row per run of consecutive reads that found the same configuration: a read
--- equal to the latest row's extends its last_read_at, any other read opens a row.
--- A configuration is in force over [first_read_at, last_read_at] of its row. The
--- interval between two rows -- the last read showing one configuration and the
--- first showing another -- is capture_configuration_unknown, and so is every
--- unreadable row and every instant before the first. After the newest read, the
--- newest configuration is taken as in force until a read says otherwise; a record
--- once stored is never re-joined when one does.
---
--- fingerprint is the configuration as one canonical text, which is what "the
--- same configuration" compares; NULL exactly when the read failed, and outcome
--- then names what the broker answered (source_availability's closed codes).
--- Purged by last_read_at, the newest row of each provider always kept.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS capture_configuration (
-    id                       BIGINT PRIMARY KEY,
-    provider_id              BIGINT NOT NULL REFERENCES provider (id),
-    first_read_at            BIGINT NOT NULL
-                             CHECK (first_read_at >= 0 AND first_read_at < 4102444800),
-    last_read_at             BIGINT NOT NULL
-                             CHECK (last_read_at >= 0 AND last_read_at < 4102444800),
-    fingerprint              TEXT,
-    outcome                  TEXT,
-    detail                   TEXT,
-    enabled                  BOOLEAN,
-    export_version           TEXT,
-    active_timeout_seconds   BIGINT CHECK (active_timeout_seconds IS NULL OR active_timeout_seconds > 0),
-    inactive_timeout_seconds BIGINT CHECK (inactive_timeout_seconds IS NULL OR inactive_timeout_seconds > 0),
-    CHECK (last_read_at >= first_read_at),
-    CHECK ((fingerprint IS NULL) = (enabled IS NULL)),
-    CHECK ((fingerprint IS NULL) = (outcome IS NOT NULL)),
-    UNIQUE (provider_id, first_read_at)
-);
-
--- capture_interface — one interface of a readable configuration (NJ2, "the
--- capture-configuration record"):
---   identifier          the interface's OPNsense identifier, as discovery names it
---   ingress, egress     whether the configuration captures its received and its
---                       sent packets
---   exported            whether the exporter actually exports what is configured
---                       for it, for each captured direction: 'yes', 'no' (and
---                       not_exported_reason names why, for OPNsense
---                       no_export_point), or 'unknown' when the provider could not
---                       establish it
--- What the plugin read to fill exported is its own (NJ9): the core never names it.
-CREATE TABLE IF NOT EXISTS capture_interface (
-    capture_configuration_id BIGINT NOT NULL REFERENCES capture_configuration (id) ON DELETE CASCADE,
-    identifier               TEXT NOT NULL CHECK (length(identifier) > 0),
-    ingress                  BOOLEAN NOT NULL,
-    egress                   BOOLEAN NOT NULL,
-    exported                 TEXT NOT NULL CHECK (exported IN ('yes', 'no', 'unknown')),
-    not_exported_reason      TEXT CHECK (not_exported_reason IS NULL OR length(not_exported_reason) > 0),
-    CHECK ((exported = 'no') = (not_exported_reason IS NOT NULL)),
-    PRIMARY KEY (capture_configuration_id, identifier)
-);
-
--- capture_interface_parent_of — an interface's parent_of (NJ2): the interfaces
--- whose received packets this interface's exporter also exports with this
--- interface as ingressInterface, one row each. For OPNsense, a VLAN's parent
--- interface (S6c); the core never names the mechanism.
-CREATE TABLE IF NOT EXISTS capture_interface_parent_of (
-    capture_configuration_id BIGINT NOT NULL,
-    identifier               TEXT NOT NULL,
-    of_identifier            TEXT NOT NULL CHECK (length(of_identifier) > 0),
-    PRIMARY KEY (capture_configuration_id, identifier, of_identifier),
-    FOREIGN KEY (capture_configuration_id, identifier)
-        REFERENCES capture_interface (capture_configuration_id, identifier) ON DELETE CASCADE
-);
-
--- ---------------------------------------------------------------------------
--- flow_record — one flow record as its exporter sent it (PS17), a hypertable
--- chunked by day on its start, under P4's rule: its one unique key holds the
--- start instant, so the hypertable keeps it.
---
--- Source: the push entry of the active flow_record provider, mapped from IANA
--- Information Elements with no script. Rows of a provider that is not active are
--- not stored.
---
--- identity is the core's: the SHA-256 of the exporter, the observation domain,
--- the SHA-256 of the datagram and the record's position in it (internal/plugin,
--- pushkind.go). A datagram delivered twice stores its records once; two records
--- identical in every field keep two rows, and are never deduplicated by content
--- (NJ4 rule 7). Two datagrams identical octet for octet are one delivery: the one
--- case the identity cannot separate.
---
--- start_at and end_at are the first and last packets' instants in whole seconds,
--- and *_millisecond the rest, at the precision exported (OPNsense's is whole
--- seconds, survey S10). ingress_interface and egress_interface are the raw
--- indexes; protocol is the IANA number.
---
--- THE CORE-WRITTEN COLUMNS, set at reception and never by a provider (NJ2, NJ3):
---   ingress_role, egress_role  what the index names, from the index map in force
---                      at reception: 'interface', 'no_receiving_interface'
---                      (index 0, S6a), 'local_delivery' (the loopback's index,
---                      S6b) or 'unmapped' (an index the map does not hold, or no
---                      index at all)
---   ingress_identifier, ingress_device, egress_identifier, egress_device  the
---                      mapped interface of an 'interface' role: its device always,
---                      its identifier when an assignment names it. Fixed at
---                      reception and never re-mapped
---   loss_detectable    1 when the configuration in force at the start bounded the
---                      exporter's sequence counters (NJ7), so a loss would have
---                      been recorded as a gap
---   tuple_key          the record's two ends, unordered, with its version and
---                      protocol: what the join groups records by
--- And the join's (NJ4), decided from stored rows only:
---   join_state         'pending' until the filter log has been read past the
---                      start plus the tolerance, or while a reverse join awaits
---                      its forward record (NJ4 rule 4); then 'joined', 'copy' or
---                      'unmatched'
---   joined_flow_id     the leg it joined, a first or single leg, never a second
---   copy_kind          translated_copy or parent_copy, exactly on a copy
---   copy_flow_id       on a translated copy matched by a second leg's logged
---                      tuple, that second leg: what NJ5's sole-copy rule counts it
---                      under
---   orientation        forward or reverse, to joined_flow_id or copy_flow_id
---   counted_copy       1 on a translated copy NJ5's sole-copy rule counts
---   unmatched_reason   no_logged_leg, ambiguous, beyond_flow_horizon,
---                      interface_index_unmapped or reverse_unconfirmed
--- joined_flow_id and copy_flow_id carry no foreign key, as flow.paired_flow_id
--- does not: the retention purge can remove the leg and keep the record.
--- Purged by start_at, at the netflow plugin's retention_flow_record_seconds
--- setting, stored as netflow_retention_flow_record_seconds (0 follows
--- retention_seconds).
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS flow_record (
-    provider_id        BIGINT NOT NULL REFERENCES provider (id),
-    identity           TEXT NOT NULL CHECK (length(identity) = 64),
-    start_at           BIGINT NOT NULL CHECK (start_at >= 0 AND start_at < 4102444800),
-    start_millisecond  BIGINT NOT NULL CHECK (start_millisecond >= 0 AND start_millisecond < 1000),
-    end_at             BIGINT NOT NULL CHECK (end_at >= 0 AND end_at < 4102444800),
-    end_millisecond    BIGINT NOT NULL CHECK (end_millisecond >= 0 AND end_millisecond < 1000),
-    received_at        BIGINT NOT NULL CHECK (received_at >= 0 AND received_at < 4102444800),
-    exporter_address   TEXT NOT NULL,
-    observation_domain BIGINT NOT NULL CHECK (observation_domain >= 0),
-    ingress_interface  BIGINT CHECK (ingress_interface IS NULL OR ingress_interface >= 0),
-    egress_interface   BIGINT CHECK (egress_interface IS NULL OR egress_interface >= 0),
-    ip_version         BIGINT NOT NULL CHECK (ip_version IN (4, 6)),
-    protocol           BIGINT NOT NULL CHECK (protocol >= 0 AND protocol <= 255),
-    src_address        TEXT NOT NULL,
-    dst_address        TEXT NOT NULL,
-    src_port           BIGINT CHECK (src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)),
-    dst_port           BIGINT CHECK (dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)),
-    tcp_flags          BIGINT CHECK (tcp_flags IS NULL OR tcp_flags >= 0),
-    octets             BIGINT NOT NULL CHECK (octets >= 0),
-    packets            BIGINT NOT NULL CHECK (packets >= 0),
-    ingress_role       TEXT NOT NULL CHECK (ingress_role IN ('interface', 'no_receiving_interface',
-                                                             'local_delivery', 'unmapped')),
-    ingress_identifier TEXT CHECK (ingress_identifier IS NULL OR length(ingress_identifier) > 0),
-    ingress_device     TEXT CHECK (ingress_device IS NULL OR length(ingress_device) > 0),
-    egress_role        TEXT NOT NULL CHECK (egress_role IN ('interface', 'no_receiving_interface',
-                                                            'local_delivery', 'unmapped')),
-    egress_identifier  TEXT CHECK (egress_identifier IS NULL OR length(egress_identifier) > 0),
-    egress_device      TEXT CHECK (egress_device IS NULL OR length(egress_device) > 0),
-    loss_detectable    BOOLEAN NOT NULL,
-    tuple_key          TEXT NOT NULL,
-    join_state         TEXT NOT NULL CHECK (join_state IN ('pending', 'joined', 'copy', 'unmatched')),
-    joined_flow_id     BIGINT,
-    copy_kind          TEXT CHECK (copy_kind IS NULL OR copy_kind IN ('translated_copy', 'parent_copy')),
-    copy_flow_id       BIGINT,
-    orientation        TEXT CHECK (orientation IS NULL OR orientation IN ('forward', 'reverse')),
-    counted_copy       BOOLEAN NOT NULL DEFAULT false,
-    unmatched_reason   TEXT CHECK (unmatched_reason IS NULL
-                                   OR unmatched_reason IN ('no_logged_leg', 'ambiguous', 'beyond_flow_horizon',
-                                                           'interface_index_unmapped', 'reverse_unconfirmed')),
-    decided_at         BIGINT CHECK (decided_at IS NULL OR (decided_at >= 0 AND decided_at < 4102444800)),
-    CHECK (end_at > start_at OR (end_at = start_at AND end_millisecond >= start_millisecond)),
-    CHECK ((ingress_role = 'interface') = (ingress_device IS NOT NULL)),
-    CHECK (ingress_identifier IS NULL OR ingress_role = 'interface'),
-    CHECK ((egress_role = 'interface') = (egress_device IS NOT NULL)),
-    CHECK (egress_identifier IS NULL OR egress_role = 'interface'),
-    CHECK ((join_state = 'joined') = (joined_flow_id IS NOT NULL)),
-    CHECK ((join_state = 'copy') = (copy_kind IS NOT NULL)),
-    CHECK (copy_flow_id IS NULL OR copy_kind = 'translated_copy'),
-    CHECK ((orientation IS NOT NULL) = (joined_flow_id IS NOT NULL OR copy_flow_id IS NOT NULL)),
-    CHECK (NOT counted_copy OR copy_flow_id IS NOT NULL),
-    CHECK ((join_state = 'unmatched') = (unmatched_reason IS NOT NULL)),
-    CHECK ((join_state IN ('joined', 'copy', 'unmatched')) = (decided_at IS NOT NULL)),
-    UNIQUE (identity, start_at)
-);
-
-SELECT create_hypertable('flow_record', by_range('start_at', 86400), if_not_exists => true);
-
--- The join's two searches: the undecided records of a provider, oldest first,
--- and the records of one group -- one unordered tuple. No device leads the group
--- key: a group's records name their own interfaces (NJ2).
-CREATE INDEX IF NOT EXISTS idx_flow_record_pending
-    ON flow_record (provider_id, start_at) WHERE join_state = 'pending';
-CREATE INDEX IF NOT EXISTS idx_flow_record_group
-    ON flow_record (tuple_key, start_at);
--- A connection's measured volume reads the records joined to its first leg, and
--- the translated copies of its second leg.
-CREATE INDEX IF NOT EXISTS idx_flow_record_joined
-    ON flow_record (joined_flow_id) WHERE joined_flow_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_flow_record_copy
-    ON flow_record (copy_flow_id) WHERE copy_flow_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- connection_measure — THE GENERIC PER-CONNECTION MEASURE OUTPUT (PA5): a logged
@@ -4369,8 +4095,7 @@ SELECT install_assign_id(t::regclass) FROM unnest(ARRAY[
     'measurement_sample',
     'state_snapshot',
     'state_item',
-    'owner_reassigned_hour',
-    'capture_configuration'
+    'owner_reassigned_hour'
 ]) AS t;
 
 INSERT INTO setting (key, value, updated_at) VALUES
