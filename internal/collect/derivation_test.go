@@ -70,7 +70,8 @@ func newDerivedWorld(t *testing.T) *derivedWorld {
 			world.sink = subscription.Sink
 		}
 	}
-	if world.sink == nil || len(world.derivations) != 2 {
+	if world.sink == nil || world.derivations["example_derived.summarise"] == nil ||
+		world.derivations["example_derived.tally"] == nil {
 		t.Fatalf("the plugin's push entry or its two derivations are missing: %v", world.derivations)
 	}
 	return world

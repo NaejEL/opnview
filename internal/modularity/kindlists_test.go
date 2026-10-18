@@ -28,8 +28,6 @@ var kindNameAllowed = map[string]struct {
 	reason string
 }{
 	"internal/collect/kinds/filterlog/firewalllog.go":        {1, "the firewall_log coordinator's own kind constant"},
-	"internal/collect/kinds/flowrecords/flowrecordkind.go":   {1, "the flow_record coordinator's own kind constant"},
-	"internal/collect/derive/flowrecord.go":                  {1, "the Go NetFlow join's kind, removed with it in Lot 3"},
 	"internal/collect/kinds/leases/dhcplease.go":             {1, "the dhcp_lease coordinator's own kind constant"},
 	"internal/collect/kinds/lookups/dnslookup.go":            {1, "the dns_lookup coordinator's own kind constant"},
 	"internal/collect/kinds/measurements/flowvolume.go":      {1, "the measurement_sample coordinator's own kind constant"},
@@ -39,7 +37,6 @@ var kindNameAllowed = map[string]struct {
 	"internal/collect/services/services.go": {3, "the service coordinator's two kinds, one constant each, and the " +
 		"grouping record's registrable_domain field, which is a field name and not a kind"},
 	"internal/collect/provider/pushed_firewall_log.go": {1, "the firewall_log kind's own push rule, in its own file"},
-	"internal/collect/provider/pushed_flow_record.go":  {1, "the flow_record kind's own push rule, in its own file"},
 	"internal/widget/params/series.go": {1, "SourceSecurityEvent names the core dataset security_event, a catalogue " +
 		"name, not a kind"},
 	"internal/plugin/scripthost/script.go": {3, "the host.dhcp_lease, host.dns_lookup and host.measurement_sample " +

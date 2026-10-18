@@ -112,8 +112,9 @@ func TestTheCoverageObjectIsWrittenInTheMeasuresNamesAndOrder(t *testing.T) {
 	want := `{"measured":3,"partial":4,"unmeasured":5,"capture_not_known":6,"direction_states":{"measured":7,` +
 		`"in_progress":8,"awaiting_export":9,"missing":10,"export_gap":11,"not_exported_when_refused":12,` +
 		`"forwarding_export_unsettled":13,"ingress_not_captured":14,"parent_copies_only":15,` +
-		`"interface_not_exported":16,"interface_not_captured":17,"capture_configuration_unknown":18},` +
-		`"counted_copy":19}`
+		`"interface_not_exported":16,"interface_not_captured":17,"capture_configuration_unknown":18,` +
+		// The two states N3 and D5 of the live validation of 17 October 2026 added, after the twelve.
+		`"ambiguous_records":19,"not_expected_when_refused":20},"counted_copy":21}`
 	if string(encoded) != want {
 		t.Errorf("the coverage object is\n%s\nnot\n%s", encoded, want)
 	}

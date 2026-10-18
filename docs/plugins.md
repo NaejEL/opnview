@@ -228,9 +228,9 @@ table of the same name; a query names it `plugin_<plugin>.<table>`.
 | `name` | The table's name: a lower-case snake_case word. |
 | `columns` | Each `name`, `type` (a word of the type vocabulary: `integer`, `real`, `text`, `boolean`, `ip`, `mac` or `instant`; see *Push sources*, *The type vocabulary*), and optionally `nullable`, `carries_domain` (the column holds a domain name, withheld under `aggregate_mode` = `no_domains`), `role` (`time`, `dimension` or `measure`; a dimension by default, time for the retention column), `unit` (a measure's lower-case word, such as `byte`) and `aggregations` (what the data catalogue admits on it; the role's defaults otherwise). |
 | `primary_key`, `indexes` | The keys. A row written again with the same primary key replaces the first. |
-| `retention` | The column holding each row's instant -- an `instant`, or an `integer` of UTC epoch seconds -- and how long a row is kept after it; `seconds` 0 follows the installation's retention. A push output table's is an `instant`. |
+| `retention` | The column holding each row's instant -- an `instant`, or an `integer` of UTC epoch seconds -- and how long a row is kept after it; `seconds` 0 follows the installation's retention; `setting` names one of the plugin's integer settings which, when the operator set it above zero, is how long a row is kept instead. A push output table's is an `instant`. |
 | `nature` | `event` or `sample`: what a bucket of the data catalogue with no row means -- a true zero, or a gap. `sample` by default, which never draws a zero it did not read. |
-| `counters` | `true` makes it a table of counters, which only a derivation writes (*Derivations*): it has a primary key, every other column is a NOT NULL number, and a row written with a key already held adds its figures to the held row's, in one batched write, instead of replacing it. A counter outlives the purge of whatever it counts. |
+| `counters` | `true` makes it a table of counters, which only a derivation writes (*Derivations*): it has a primary key, every other column is a NOT NULL number, and a row written with a key already held adds its figures to the held row's, in one batched write, instead of replacing it; rows of one key written together are added first, and a row whose figures all come back to zero is removed. A counter outlives the purge of whatever it counts. |
 
 A table with a retention column is a TimescaleDB hypertable chunked by day on it, purged by whole
 chunks and then to the exact second. A hypertable cannot hold a unique key that leaves out its time
@@ -279,7 +279,7 @@ under the kind's name:
 | Function | Answers |
 |---|---|
 | `probe(host)` | `{result, error}`: whether the source can be read (`result` as every kind's, below). |
-| `collect(host, state)` | `{result, rows, state, error, unsupported}`: `rows` an object from each table the plugin declares to the rows to store, each row checked against its columns; `state` the provider's **durable state**, an object of strings handed to the next pass's `collect` as its `state`. The rows and the state are stored in one transaction. |
+| `collect(host, state)` | `{result, rows, state, error, unsupported}`: `rows` an object from each table the plugin declares to the rows to store, each row checked against its columns; `state` the provider's **durable state**, an object of strings handed to the next pass's `collect` as its `state`. The rows and the state are stored in one transaction. A provider whose push entries carry a `sequence_bound` returns `bounds`, `{<value>: {counters, changed}}`: how many sequence counters the sender now runs by what the pass read, and whether its configuration changed (*Push sources*, *Liveness and gaps*). |
 
 The durable state is what a pass keeps for the next one -- a cursor, or a previous reading to
 subtract from: the built-in `pf_states` keeps the counters of the pf state table it read, and stores
@@ -407,7 +407,10 @@ reads a firewall field exactly as the core would: `opnview.decode.string(row, ke
 `float`, `epoch`, `port`, `flag`, `nested`, `nestedString`, `textField`, `rows(body)`,
 `lower(text)`; `opnview.sha256Hex(text)`, `opnview.base64(text)`;
 `opnview.dhcp_lease.decodeLease(row)` and `normaliseMAC(text)`;
-`opnview.dns_lookup.normaliseAction(text)`.
+`opnview.dns_lookup.normaliseAction(text)`. Two standards: `opnview.ip(text)`, an IP address read as a value --
+`{address, version, key, loopback}`, the address in its canonical text (an IPv4-mapped one as the IPv4 address it
+maps), a `key` whose text order is the addresses' order -- or `null`; and `opnview.protocolNumber(name)`, an IANA
+protocol keyword as its number, case aside, or `null`.
 
 ### What a call can end in
 
@@ -440,10 +443,13 @@ The core datasets a derivation joining another source to the logged connections 
 
 | Dataset | Rows |
 |---|---|
-| `leg` | Every logged connection leg -- each filter-log record, the second leg of a paired connection included -- by `flow_id`, with its `pair_outcome` and `paired_flow_id`, pf's `direction`, its `device` and `interface`, its `action`, the tuple pf logged, and whether either end is *This Firewall*. Timed by `observed_at`. |
+| `leg` | Every logged connection leg -- each filter-log record, the second leg of a paired connection included -- by `flow_id`, with its `pair_outcome` and `paired_flow_id`, pf's `direction`, its `device` and `interface`, its `action`, the tuple pf logged and its two addresses in their canonical text (`canonical_src_address`, `canonical_dst_address`, which a key read by `device` and the two serves from an index), whether either end is *This Firewall*, and when the core stored it (`ingested_at`). Timed by `observed_at`. |
 | `interface` | The firewall's interfaces as discovery holds them: `identifier`, `device`, `description`, `link_type`, `link_kind`, `vlan_tag`, `is_upstream`. |
 | `this_firewall_address` | This firewall's own addresses as discovery holds them, each with its `interface`, `first_seen_at`, `last_seen_at` and `is_current` (held at `t` when `first_seen_at - margin <= t` and `is_current = 1` or `t <= last_seen_at + margin`, the margin the discovery interval). |
 | `provider_value` | The values the active providers export (*Values another plugin reads*). |
+| `read_through` | How far each provider's source has been read: every record before `read_through` is stored, or in a gap the provider recorded. The filter log's is what a derivation joining another source to the legs waits for. |
+| `collection_gap` | The intervals each provider (`kind`, `provider_key`) recorded as not covered, both ends included, with the `reason`. |
+| `retention_purge` | How far back the retention purge removed the legs: `purged_before`, no row before the first purge. |
 
 Discovery is no provider of a kind: the condition of `interface`, `this_firewall_address` and
 `provider_value` reads `state_unknown`.
@@ -485,7 +491,7 @@ measure's per-connection figures, a summary table, counters. It is a function th
 | Key | What it is |
 |---|---|
 | `name` | Its name, a snake_case word; the function's under `derivations`, unless `function` names another. |
-| `after_passes` | Collection passes that run it: a core kind, or a kind and one of its providers (`kind/provider`). |
+| `after_passes` | Collection passes that run it: a core kind or a kind one of the plugin's providers implements, or such a kind and one of its providers (`kind/provider`). |
 | `after_push` | The plugin's own push entries whose stored batches run it. |
 | `cadence_seconds` | Runs it on a cadence too; 0 runs it on its other triggers alone. At least one trigger is named. |
 | `datasets` | The datasets it reads, each also under the manifest's `datasets` (*Datasets a plugin reads*). |
@@ -494,7 +500,7 @@ measure's per-connection figures, a summary table, counters. It is a function th
 ```js
 exports.derivations = {
   summarise: function (host, run) {
-    // run: {derivation, now, since, changes: [{trigger, at, kind, provider, entry, rows, from, to}]}
+    // run: {derivation, now, since, changes: [{trigger, at, kind, provider, entry, rows, from, to, reason, scope}]}
     return {
       rows: { summary: [/* rows */], tallies: [/* counters to add */] },
       measures: { example_rate: [{ connection: 1, connection_start_at: 0, direction: "forward",
@@ -505,9 +511,11 @@ exports.derivations = {
 };
 ```
 
-**A run is handed what changed, never "everything".** `changes` are the passes (`kind`, `provider`), the
-stored batches (`entry`, `rows`, the reception span `from`..`to`) and, with nothing else noted, the cadence
-tick, since its last successful run (`since`, null before the first); `now` is the host's clock. They are
+**A run is handed what changed, never "everything".** `changes` are the passes (`kind`, `provider`) -- of a
+core kind, or of a kind of the plugin's own -- the stored batches (`entry`, `rows`, the reception span
+`from`..`to`), the conditions the decoder detected on a stream one of its entries is fed by, which no row says
+(`entry`, `reason` -- such as `netflow_exporter_restarted` -- and `scope`, the stream), and, with nothing else
+noted, the cadence tick, since its last successful run (`since`, null before the first); `now` is the host's clock. They are
 handed in an order of what they are, never of when they arrived, so the same changes make the same run.
 **Runs of one derivation never overlap**: each has one loop, and changes arriving together make one run.
 
@@ -517,8 +525,9 @@ the whole run -- and written together, or not at all. A row replaces the held ro
 value differs, a measure row only when a figure, its state or its markers differ, and a measure's
 `intervals` (its window states for the plugin's provider of the measure's kind) are rewritten only when
 they differ: **a run over the same inputs writes nothing.** A counter adds, which is why a run is handed
-only new changes. A measure row's `connection` is the logged connection's first leg (*Measures*); the
-aggregate slots of every connection whose row changed are refreshed after the run.
+only new changes. A measure row's `connection` is the logged connection's first leg (*Measures*);
+`{connection, direction, remove: true}` removes the held row of a connection the measure no longer gives a
+figure; the aggregate slots of every connection whose row changed are refreshed after the run.
 
 **A run that fails writes nothing**, keeps its changes for the next run, and is recorded in the
 availability of the plugin's provider -- its first of a kind of its own, else its first -- with the closed
@@ -681,11 +690,11 @@ a recorded answer in `testdata/`, `{"__provenance__": {...}, "body": ...}`; `fil
 | `push_kind_without_replacement` | A push entry delivers records of a core kind that the kind's polled functions also deliver -- `firewall_log`'s -- and declares no `replaces`. |
 | `push_replaces_unknown` | `replaces` names an endpoint the manifest does not declare. |
 | `push_liveness_below_floor` | `liveness_seconds` is below 10. |
-| `push_provider_missing` | A push entry writes a table of the plugin's own, and the plugin declares not exactly one provider with `source` push. |
+| `push_provider_missing` | A push entry writes a table of the plugin's own, and the plugin declares not exactly one provider with `source` push -- or, with none, not exactly one provider of a kind of its own declared `push`. |
 | `push_column_unfilled` | A NOT NULL column of a push entry's table, or a required field of the kind record its field mapping fills, is filled by nothing. |
 | `push_parse_missing` | A push entry names a parse function the script does not export under `push`. |
 | `dataset_not_declared` | A script reads, through `host.datasets`, a dataset the manifest does not name under `datasets`. Refused at load when the script names it by a literal; a name computed at run time is refused at the call, a `TypeError` carrying the code. |
-| `derivation_invalid` | A derivation names a function the script does not export, no trigger, a pass of no core kind, a push entry the plugin lacks, a dataset its manifest does not declare, an output that is not one of its tables (with a primary key) or measures, a name twice; or the plugin declares derivations and no provider. |
+| `derivation_invalid` | A derivation names a function the script does not export, no trigger, a pass of a kind neither core nor its own, a push entry the plugin lacks, a dataset its manifest does not declare, an output that is not one of its tables (with a primary key) or measures, a name twice; or the plugin declares derivations and no provider. |
 | `push_decode_missing` | A `datagram` or `line` entry names no decode function, or one the script does not export under `push`; or an entry of another protocol names one. |
 
 ## OPNsense versions
@@ -1641,85 +1650,6 @@ the core publishes the active provider's as the `provider_value` dataset (*Value
 One that does not leaves them out: a reader then has no timeout, and decides nothing rather than assuming
 one.
 
-<!-- contract:flow_record -->
-### `flow_record`
-
-Flow records an exporter sends, received by a push entry with no script, and the exporter's capture configuration, read by polling. One provider is active at a time. The core joins each record from its own interface indexes, and reads coverage from the configuration, never from the records.
-
-| Function | Called with | Returns | When |
-|---|---|---|---|
-| `probe` | `host` | `probe_answer` | Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients. |
-| `capture` | `host` | `capture_answer` | Called at every capture-configuration pass: the exporter's capture configuration now. |
-
-#### `probe_answer`
-
-What `probe` returns.
-
-| Field | Type | Required | Unit or values | Description |
-|---|---|---|---|---|
-| `result` | record of `result` | yes |  | The `result` record. |
-| `error` | text | no |  | Why the probe could not finish, when it could not. |
-
-#### `capture_answer`
-
-What `capture` returns: the configuration, or the reason it could not be read.
-
-| Field | Type | Required | Unit or values | Description |
-|---|---|---|---|---|
-| `result` | record of `result` | yes |  | The `result` record; when the configuration could not be read, its outcome is what the firewall answered. |
-| `capture` | record of `capture_configuration` | no |  | The configuration read, absent when the read failed. |
-| `error` | text | no |  | Why the read failed, when it did: the configuration is then unreadable, and the core records it so. |
-| `unsupported` | text | no |  | Why this exporter's configuration can never be read, when that is so. |
-
-#### `capture_configuration`
-
-What the exporter captures and sends.
-
-| Field | Type | Required | Unit or values | Description |
-|---|---|---|---|---|
-| `enabled` | boolean | yes |  | Whether the export runs at all. |
-| `export_version` | text | no |  | The export protocol's version, as the exporter names it. |
-| `active_timeout_seconds` | integer | no | seconds | How long a flow that stays active is accounted before a record of it is exported. |
-| `inactive_timeout_seconds` | integer | no | seconds | How long a flow stays idle before a record of it is exported. |
-| `interfaces` | records of `capture_interface` | yes |  | The `capture_interface` records: every interface the exporter captures on, and nothing else. |
-
-#### `capture_interface`
-
-One interface the exporter captures on.
-
-| Field | Type | Required | Unit or values | Description |
-|---|---|---|---|---|
-| `identifier` | text | yes |  | The interface's configuration identifier, as discovery names it. |
-| `ingress` | boolean | yes |  | Whether packets received on the interface are accounted. |
-| `egress` | boolean | yes |  | Whether packets sent on the interface are accounted. |
-| `exported` | text | no | `yes`, `no`, `unknown` | Whether the exporter actually exports what is configured for the interface, for each captured direction: yes, no (with not_exported_reason), or unknown when it could not be established. Absent is unknown. |
-| `not_exported_reason` | text | no |  | Why the interface is not exported, exactly when exported is no: the provider's own closed name for it. |
-| `parent_of` | text_list | no |  | The identifiers of the interfaces whose received packets this interface's exporter also exports with this interface as the receiving interface. Absent is none. |
-
-#### `flow_record_record`
-
-One flow record as the exporter sent it, filled from the push entry's Information Element mapping. Its identity, and what its interface indexes name, are the core's.
-
-| Field | Type | Required | Unit or values | Description |
-|---|---|---|---|---|
-| `exporter_address` | text | yes |  | The exporter's address. |
-| `observation_domain` | integer | yes |  | The observation domain (NetFlow v9's source ID). |
-| `ingress_interface` | integer | no |  | The exporter's index of the interface the packets were received on, raw. |
-| `egress_interface` | integer | no |  | The exporter's index of the interface the packets were routed to, raw. |
-| `ip_version` | integer | no |  | 4 or 6; absent when the exporter sends no version element, the core then reading it from the two addresses, which must agree with it. |
-| `protocol` | integer | yes |  | The IANA protocol number. |
-| `src_address` | text | yes |  | The source address. |
-| `dst_address` | text | yes |  | The destination address. |
-| `src_port` | integer | no |  | The source port, 0 to 65535; absent for a protocol without ports. |
-| `dst_port` | integer | no |  | The destination port, 0 to 65535; absent for a protocol without ports. |
-| `tcp_flags` | integer | no |  | The TCP flags of every packet, ORed together. |
-| `octets` | integer | yes | bytes | The octets the record accounts, 0 or more. |
-| `packets` | integer | yes |  | The packets the record accounts, 0 or more. |
-| `start_at` | number | yes | UTC epoch seconds | The first packet's instant, with the fraction the exporter's precision carries. |
-| `end_at` | number | yes | UTC epoch seconds | The last packet's instant, with the fraction the exporter's precision carries. |
-| `received_at` | number | yes | UTC epoch seconds | When opnview received the record. |
-<!-- /contract:flow_record -->
-
 <!-- contract:ip_geolocation -->
 ### `ip_geolocation`
 
@@ -2196,12 +2126,14 @@ the template's fields, every NetFlow record carries `exporterIPv4Address` or `ex
 `flowStartMilliseconds` / `flowEndMilliseconds` computed from v9's `FIRST_SWITCHED` / `LAST_SWITCHED`
 and the header's `unix_secs` and `sysUptime`, or from IPFIX's absolute or delta time elements.
 
-**Interface indexes.** `ingressInterface` and `egressInterface` are the exporter's interface
-indexes. Before a batch reaches its entry, each is mapped to the firewall's interface through the
-broker -- `GET /api/interfaces/overview/interfaces_info/1`, whose `statistics.index` is that index (survey,
-*Push sources*, S6) -- and the record gains `<field>_identifier` and `<field>_device` (text), the
-mapping in force at reception. An index no interface holds keeps its raw value, gains neither, and is
-counted (`interface_index_unmapped`); an index is never matched by position, name or count.
+**Interface indexes.** `ingressInterface` and `egressInterface` are the exporter's interface indexes, kept
+raw: what an index names is the exporter's to say, so a plugin that needs it reads it from the exporter's own
+endpoints, as the netflow plugin reads `interfaces_info` (*A polled kind that also receives records*).
+
+**Deliveries.** Beside the protocol's fields, a `fields` mapping of any protocol may name `delivery` -- the
+SHA-256 of the datagram or frame the record was decoded from, in hexadecimal -- and `delivery_position`, the
+record's place in it. With both in a table's primary key, a datagram delivered twice stores its records once,
+and two records identical in every field of one datagram are two rows.
 
 ### The parse function
 
@@ -2310,7 +2242,7 @@ counters -- OPNsense runs one per exporting interface behind one forwarder (surv
 S11). The decoder follows several: a datagram continues the counter expecting its number, or opens
 one. A `netflow_sequence_gap` is asserted only once more counters are open than the exporter runs,
 which the entry's `sequence_bound` names -- the netflow plugin's is the value `sequence_counters`, which
-its provider records from the capture configuration's exporting interfaces after every read -- and the
+its provider's `collect` returns under `bounds` from the capture configuration's exporting interfaces after every read -- and the
 core passes to the decoder; a decoder told nothing assumes one counter. A loss is asserted only while one
 recorded bound holds both its ends.
 With that number unknown no gap is asserted: it is counted as `sequence_gap_not_asserted`, and the
@@ -2337,15 +2269,12 @@ the index map afresh before it maps the next record.
 An entry with `kind` delivers records of a core kind the plugin provides: its parse function builds them,
 or its `fields` mapping fills them with no script, as records of the kind's contract (*Kinds*), checked
 as a pulled answer is. It is accepted only over the transports whose loss is detectable: **TCP** for
-syslog, whose UDP loss is invisible, and UDP for NetFlow, whose sequence numbers show a loss. Two kinds
-receive push entries today:
-
-- **`firewall_log`**, whose polled `records` function delivers the same records the entry does. Such an
-  entry must name the polled endpoint it `replaces` (`push_kind_without_replacement` otherwise), and the
-  rest of this section applies to it.
-- **`flow_record`**, which is **push-only**: its polled function, `capture`, returns the exporter's capture
-  configuration, a different record (*A push-only kind: flow_record*, below). Its entry names no
-  `replaces`, and one that did would replace nothing and is refused.
+syslog, whose UDP loss is invisible, and UDP for NetFlow, whose sequence numbers show a loss. One core kind
+receives push entries today, **`firewall_log`**, whose polled `records` function delivers the same records the
+entry does. Such an entry must name the polled endpoint it `replaces` (`push_kind_without_replacement`
+otherwise), and the rest of this section applies to it. A kind whose polled functions return something else
+-- a push-only kind -- takes an entry naming no `replaces`, and one that did would replace nothing and is
+refused.
 
 The load check tells the two apart by the contract and never by the plugin: an entry delivers the
 kind's `<kind>_record` table, and when a polled function of the kind can return that table -- directly
@@ -2371,150 +2300,27 @@ The periods, the mode and the superseded count are in the entry's catalogue entr
 declares `replaces` only when a parity test passes: the same recorded lines, pulled and pushed, give
 records equal in every field of the contract but the identity.
 
-### A push-only kind: `flow_record`
+### A polled kind that also receives records
 
-`flow_record` is the *Flow Record* of RFC 3954 and RFC 7011, as an exporter sends it; it is not a
-`flow`, which is one filter-log record. A provider of it is a plugin with two halves (the contract is
-under *Kinds*):
+A kind of the plugin's own declared `push` may have one provider its script polls -- `probe` and
+`collect`, at its cadence -- whose push entries write a table of the plugin's own: the provider's
+availability is then its polled read's and its entries' together, so a healthy read with a silent entry is
+not healthy. The built-in `netflow` plugin is the worked example (`plugins/netflow`):
 
-- **a push entry**, `protocol: netflow`, `kind: flow_record`, whose `fields` map each field of
-  `flow_record_record` to the Information Elements that carry it. No script runs per record, nor per
-  batch; the entry's counters show `script_calls` at none. The built-in `netflow` plugin's mapping reads
-  `sourceIPv4Address` or `sourceIPv6Address` into `src_address`, `ingressInterface` into
-  `ingress_interface`, `octetDeltaCount` into `octets`, and so on (`plugins/netflow/plugin.json`);
-- **a polled function**, `capture`, which reads the exporter's **capture configuration** through the
-  broker -- every interface it captures on, by its OPNsense identifier, whether ingress and egress
-  are captured, whether each is actually exported (`exported`, with `not_exported_reason` when it is
-  not), and the interfaces whose received packets its exporter also exports as the receiving interface
-  (`parent_of`) -- and the active timeout. A read that fails answers its `error` with the `result`
-  naming what the firewall answered: `opnview` records the configuration as unreadable, never as empty.
+- its push entry, `protocol: netflow`, maps each record's Information Elements, and the delivery it came in
+  (*The type vocabulary*, *Deliveries*), into its table `flow_record` with no script;
+- its `collect` reads the exporter's capture configuration through the broker -- every interface it captures
+  on, whether each is actually exported, and the interfaces whose received packets another one exports again
+  (`parent_of`) -- into the tables `capture_configuration` and `capture_interface`, as runs of reads that
+  found the same configuration, and returns the configuration's bound on the exporter's sequence counters
+  under `bounds` (*Liveness and gaps*);
+- its derivation `join` maps each record's two interface indexes with the index map in force at reception,
+  read through the broker (afresh after the exporter restarted, which reaches the derivation as a change of
+  trigger `condition`), joins each record to the logged leg its own indexes name, classes the records no leg
+  explains as translated or parent copies, keeps the unmatched records in counter tables, and counts each
+  direction of a logged connection once as the measure `netflow` (`docs/data-model.md`, *NetFlow volumes*).
 
-**What the core adds, which no provider fills.**
-
-- **The identity**: the SHA-256 of the exporter, the observation domain, the SHA-256 of the datagram and
-  the record's place in it. A datagram delivered twice stores its records once; two records identical
-  in every field of one datagram are two rows. Two datagrams identical octet for octet are one delivery,
-  the one case the identity cannot tell apart.
-- **What the two indexes name**, at reception, with the index map in force -- `interfaces_info` read
-  through the broker (survey, *Push sources*, S6), afresh after the exporter restarted: an interface,
-  index 0 (`no_receiving_interface`), the loopback's index (`local_delivery`, S6b) or an index the map
-  does not hold (`unmapped`). Nothing is re-mapped later. No Observation Point is assigned: the
-  exporter sends none.
-- **The join** of each record, from its own indexes, to the filter-log leg they name; its
-  classification as a translated or a parent copy when it joins none; and each logged connection's
-  **measured volume**, the `netflow` measure, each direction counted once, from the configuration's
-  `exported` and `parent_of` (`docs/data-model.md`, *NetFlow volumes*). Records are never
-  deduplicated by content.
-
-**Adding a second exporter is adding its directory.** A plugin directory under `<data-dir>/plugins/`
-with a manifest declaring a `flow_record` provider, an endpoint its `capture` reads, a push entry with
-its own mapping, and its strings, is found at start; the core's join, coverage and states read the
-contract's fields and nothing of any exporter, so nothing else changes. Only one `flow_record` provider
-is active at a time: the records of one that is not are counted and not stored.
-
-```json path=example_exporter/plugin.json
-{
-  "api_version": 2,
-  "name": "example_exporter",
-  "version": "1.0.0",
-  "display_name": "Example exporter",
-  "description": "An exporter of flow records with a capture-configuration read of its own.",
-  "script": "example_exporter.js",
-  "endpoints": [
-    { "name": "export_state", "path": "/api/example/exporter/state", "method": "GET" }
-  ],
-  "push": [
-    {
-      "name": "records",
-      "protocol": "netflow",
-      "filter": { "require": ["octetDeltaCount", "flowStartMilliseconds", "flowEndMilliseconds", "collectionTimeMilliseconds"] },
-      "fields": {
-        "exporter_address": ["exporterIPv4Address", "exporterIPv6Address"],
-        "observation_domain": "observationDomainId",
-        "ingress_interface": "ingressInterface",
-        "egress_interface": "egressInterface",
-        "protocol": "protocolIdentifier",
-        "src_address": ["sourceIPv4Address", "sourceIPv6Address"],
-        "dst_address": ["destinationIPv4Address", "destinationIPv6Address"],
-        "src_port": "sourceTransportPort",
-        "dst_port": "destinationTransportPort",
-        "tcp_flags": "tcpControlBits",
-        "octets": "octetDeltaCount",
-        "packets": "packetDeltaCount",
-        "start_at": "flowStartMilliseconds",
-        "end_at": "flowEndMilliseconds",
-        "received_at": "collectionTimeMilliseconds"
-      },
-      "kind": "flow_record"
-    }
-  ],
-  "providers": [ { "kind": "flow_record", "display_name": "Example exporter" } ]
-}
-```
-
-```js path=example_exporter/example_exporter.js
-function readState(host) {
-  var result = { probe: "export_state", state: "unavailable", outcome: "request_not_made" };
-  var response = host.call("export_state");
-  if (response.error) {
-    return { result: result, error: response.error };
-  }
-  if (!response.ok) {
-    result.outcome = response.availability_outcome;
-    return { result: result, failed: true };
-  }
-  var body = response.decodable ? response.value : null;
-  if (body === null || typeof body !== "object" || !Array.isArray(body.points)) {
-    result.outcome = "undecodable";
-    return { result: result, failed: true };
-  }
-  result.state = "reachable";
-  result.outcome = "healthy";
-  result.separable = true;
-  return { result: result, body: body };
-}
-
-exports.flow_record = {
-  probe: function (host) {
-    var read = readState(host);
-    return read.error ? { result: read.result, error: read.error } : { result: read.result };
-  },
-  capture: function (host) {
-    var read = readState(host);
-    if (read.error || read.failed) {
-      return { result: read.result, error: read.error || "the export state could not be read" };
-    }
-    return {
-      result: read.result,
-      capture: {
-        enabled: read.body.running === true,
-        interfaces: read.body.points.map(function (point) {
-          return { identifier: point.name, ingress: point.receive === true, egress: point.send === true };
-        })
-      }
-    };
-  }
-};
-```
-
-```json path=example_exporter/locale/en.json
-{ "language": "en", "strings": { "provider.flow_record.example_exporter": "Example exporter" } }
-```
-
-```js path=example_exporter/tests/example_exporter.test.js
-test("the capture configuration is read, and a record is mapped with no script", function (t) {
-  t.answer("export_state", { json: { running: true, points: [{ name: "example_if_a", receive: true, send: true }] } });
-  var read = t.call("flow_record", "capture");
-  t.equal(read.error, null, "the read");
-  t.equal(read.capture.interfaces.length, 1, "captured interfaces");
-  t.deliverNetflow(["00090002000186a06ab85c800000000100000000000000580101001400080004000c0004000f0004000a0002000e000200020004000100040018000400170004001600040015000400070002000b0002000600010004000100050001001000040011000400090001000d000101010040c633640acb00711400000000000300010000000a00003778000000000000000000009c4000017318ad2101bb1b060000000000000000001818000000"]);
-  var records = t.pushed("records");
-  t.equal(records.length, 1, "records");
-  t.equal(records[0].octets, 14200, "the octets");
-  t.equal(records[0].ip_version, 4, "the version, read from the addresses when no element carries it");
-  t.equal(t.pushCounters("records").script_calls, undefined, "script calls");
-});
-```
+Nothing of it is core: a second exporter is a plugin of its own, with its own kind, tables and measure.
 
 ### The catalogue
 
@@ -2677,8 +2483,8 @@ test("each message with an event is a row, the others are skipped", function (t)
 `example_flows` keeps the volume of every IPv4 and IPv6 flow record an exporter sends. A packet can be
 exported more than once -- by the node of the interface it arrived on, in its translated form by the
 node of the interface it left by, again by its VLAN's parent's node (survey, *Push sources*, S5 and
-S11) -- so **a sum of this table counts such packets once per copy**; the core's `flow_record` names
-each copy, and a plugin's own table does not. Traffic inside one interface's network never
+S11) -- so **a sum of this table counts such packets once per copy**; the netflow plugin's `flow_record`
+names each copy, and this table does not. Traffic inside one interface's network never
 reaches the exporter at all.
 
 ```json path=example_flows/plugin.json

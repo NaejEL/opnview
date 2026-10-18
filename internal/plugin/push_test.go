@@ -121,7 +121,9 @@ func TestEveryPushRefusalHasItsCode(t *testing.T) {
 			entry(m)["filter"] = map[string]any{"require": []any{"notAnInformationElement"}}
 		}, ""},
 		{contract.RefusalPushLivenessBelowFloor, func(m map[string]any) { entry(m)["liveness_seconds"] = 1 }, ""},
+		// A polled provider of a kind the plugin does not declare push owns no push entry.
 		{contract.RefusalPushProviderMissing, func(m map[string]any) {
+			m["kinds"] = []any{map[string]any{"kind": "example_push_lines"}}
 			m["providers"].([]any)[0].(map[string]any)["source"] = ""
 			m["providers"].([]any)[0].(map[string]any)["cadence_seconds"] = 60
 			m["script"] = "example.js"
@@ -382,6 +384,7 @@ func netflowManifest(t *testing.T) (map[string]any, string) {
 	delete(manifest, "settings")
 	delete(manifest, "pages")
 	delete(manifest, "measures")
+	delete(manifest, "derivations")
 	manifest["name"] = "example_push"
 	manifest["script"] = "example.js"
 	script, err := os.ReadFile(filepath.Join("..", "..", "plugins", "netflow", "netflow.js"))
@@ -391,11 +394,12 @@ func netflowManifest(t *testing.T) (map[string]any, string) {
 	return manifest, string(script)
 }
 
-// TestAPushOnlyKindLoadsWithoutReplacesAndRefusesOne is PS-AC29's load check: an entry delivering
-// flow_record records, whose provider polls only the capture configuration, loads with no `replaces`;
-// one that names a `replaces` replaces nothing and is refused; one whose mapping leaves a required field
-// of the record unmapped is refused; and the entry is fed over UDP, NetFlow's transport, its loss being
-// detectable by its sequence numbers.
+// TestAPushOnlyKindLoadsWithoutReplacesAndRefusesOne is PS-AC29's load check as PA9 of the plugin-API
+// amendment moves the records into the netflow plugin's own table: its entry, whose provider polls only the
+// capture configuration, loads with no `replaces`; one whose mapping leaves a NOT NULL column of the table
+// unfilled is refused; and the entry is fed over UDP, NetFlow's transport, its loss being detectable by its
+// sequence numbers. (The case of a `replaces` on a push-only core kind went with the core flow_record kind:
+// no core kind is push-only any more.)
 func TestAPushOnlyKindLoadsWithoutReplacesAndRefusesOne(t *testing.T) {
 	t.Parallel()
 	manifest, script := netflowManifest(t)
@@ -407,13 +411,6 @@ func TestAPushOnlyKindLoadsWithoutReplacesAndRefusesOne(t *testing.T) {
 	entries := plugin.PushEntries()
 	if len(entries) != 1 || len(entries[0].Transports) != 1 || entries[0].Transports[0] != push.TransportUDP {
 		t.Errorf("the entry is %+v, want one fed over UDP", entries)
-	}
-
-	replacing, script := netflowManifest(t)
-	replacing["push"].([]any)[0].(map[string]any)["replaces"] = "getconfig"
-	if refusals := loadManifest(t, replacing, script).Refusals(); len(refusals) != 1 ||
-		refusals[0].Code != contract.RefusalPushDeclarationInvalid {
-		t.Errorf("an entry replacing what no polled function delivers: %+v", refusals)
 	}
 
 	unmapped, script := netflowManifest(t)

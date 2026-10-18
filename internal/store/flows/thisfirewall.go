@@ -61,8 +61,9 @@ func IsLoopback(address string) bool {
 }
 
 // IsLocalDelivery reports whether a destination address is delivered to the firewall itself whatever interface
-// holds it: the loopback, the limited broadcast 255.255.255.255, and every multicast address -- 224.0.0.0/4 and
-// ff00::/8 (RFC 919, RFC 5771, RFC 4291) -- an IPv4-mapped one included. A packet to one of them that pf logged
+// holds it: the loopback, the IPv4 limited broadcast -- the address of all ones, RFC 919 -- and every multicast
+// address, IPv4's (RFC 5771) and IPv6's (RFC 4291), as netip.Addr.IsMulticast decides it, an IPv4-mapped one
+// included. A packet to one of them that pf logged
 // is the firewall's to receive, so its end is This Firewall and the flow is never north_south (D5 of the live
 // validation of 17 October 2026, specs/SPEC-backend-completion-plugins.md).
 func IsLocalDelivery(address string) bool {

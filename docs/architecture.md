@@ -8,21 +8,22 @@ stops there. It is a seam document, not a plugin specification.
 The authority on the schema is `internal/store/schema.sql`; on the sources,
 `docs/opnsense-api-survey.md`; on the entities, `docs/data-model.md`.
 
-## Twelve kinds
+## Eleven kinds
 
 A **kind** is a contract `opnview` implements: a shape of material, with a
-normalised destination in the schema. Exactly twelve core kinds exist; a plugin may
+normalised destination in the schema. Exactly eleven core kinds exist; a plugin may
 bring kinds of its own, and the `provider` table refuses a `kind` that is not a
 snake_case name. The resolver-cache cycle added `resolver_cache` and
-`resolver_local_data` (`specs/SPEC-resolver-cache-attribution.md`, decision 1), and
-the NetFlow addendum `flow_record` (`specs/SPEC-backend-completion-plugins.md`, PS17).
+`resolver_local_data` (`specs/SPEC-resolver-cache-attribution.md`, decision 1). The
+NetFlow addendum's `flow_record` (`specs/SPEC-backend-completion-plugins.md`, PS17) is
+no longer a core kind: the plugin-API amendment of 17 October 2026 (PA9) made it the
+`netflow` plugin's own, with its tables, its join and its measure.
 
 <!-- provider-kinds:begin -->
 ```
 dhcp_lease
 dns_lookup
 firewall_log
-flow_record
 flow_volume
 ip_geolocation
 measurement_sample
@@ -37,7 +38,6 @@ security_event
 | Kind | What it supplies | Normalised into |
 |---|---|---|
 | `firewall_log` | one record per logged packet decision | `flow`, and `blocked_event` over it |
-| `flow_record` | one record of a flow as an exporter reported it, pushed over NetFlow -- the *Flow Record* of RFC 3954 and RFC 7011, a different thing from `flow`, one filter-log record | `flow_record`, joined to the logged connections, and the netflow measure's rows of `connection_measure` from the joined records, which the `netflow` measure reads |
 | `security_event` | one record per detection | `security_event`, with `provider_rule_info` for severity |
 | `flow_volume` | per-pair byte and packet counters | `pair_volume_observation`, **derived from `flow` and collected from nowhere** |
 | `dhcp_lease` | one record per lease generation | `dhcp_lease`, naming the server that issued each one, feeding `client` identity |
@@ -425,14 +425,13 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/broker/schedule` — when each mirrored datum is refreshed, and in what order calls leave.
 - `internal/buildinfo` — the few facts the program knows about itself.
 - `internal/collect` — the collector: composes its parts, runs the probe round, orders the purge and lists the scheduler's tasks.
-- `internal/collect/collecttest` — what the collector's tests share: the stopped clock, the probe harness and the NetFlow join's test world.
+- `internal/collect/collecttest` — what the collector's tests share: the stopped clock and the probe harness.
 - `internal/collect/core` — the state every part of the collector shares, and what every part uses.
-- `internal/collect/derive` — the derivation every pass ends with, the NetFlow join and the measured volumes included.
+- `internal/collect/derive` — the derivation every pass ends with: classification, pairing, attribution and the aggregate refresh.
 - `internal/collect/discovery` — runtime discovery of the firewall's interfaces, rules, version and clock.
 - `internal/collect/identity` — the arithmetic of the client identity cascade.
 - `internal/collect/kinds/declared` — the coordinator of the kinds plugins declare, and of the reconciled state.
 - `internal/collect/kinds/filterlog` — the coordinator of the firewall_log kind, pulled and pushed.
-- `internal/collect/kinds/flowrecords` — the coordinator of the flow_record kind.
 - `internal/collect/kinds/leases` — the coordinator of the dhcp_lease kind, and of the neighbour table.
 - `internal/collect/kinds/lookups` — the coordinator of the dns_lookup kind.
 - `internal/collect/kinds/measurements` — the coordinator of the measurement_sample kind, baseline and live.
@@ -479,7 +478,6 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/store/dashboards` — the stored dashboards.
 - `internal/store/flows` — the typed writes, classification, networks, this firewall's addresses and the pairing of legs.
 - `internal/store/geo` — geolocation and autonomous-system rows.
-- `internal/store/netflow` — NetFlow records, the capture configuration, the join and the measured volumes.
 - `internal/store/owners` — owners and their assignments, interface labels and blocklists.
 - `internal/store/plugindecl` — the declaration of a table a plugin owns.
 - `internal/store/plugintables` — the tables plugins own: ensured, written, read and purged.

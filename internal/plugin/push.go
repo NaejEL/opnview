@@ -53,17 +53,23 @@ func checkPush(plugin *Plugin, exports map[string]map[string]string) ([]*pushBin
 	for _, table := range plugin.OwnTables {
 		tables[table.Table] = table
 	}
-	// The providers a push entry writing a table of the plugin's own may belong to: one fed by push alone
-	// (source push), or one of a kind of the plugin's own declared push that its script also polls -- the
+	// The providers a push entry writing a table of the plugin's own may belong to: those fed by push alone
+	// (source push); with none, those of a kind of the plugin's own declared push that its script polls -- the
 	// netflow plugin's flow_record provider reads the exporter's configuration and receives its records.
-	var pushProviders []contract.ProviderDeclaration
+	var pushProviders, polledPushProviders []contract.ProviderDeclaration
 	providedKinds := map[string]contract.ProviderDeclaration{}
 	for _, declaration := range manifest.Providers {
 		_, core := provider.ContractOf(declaration.Kind)
-		if declaration.Source == providerSourcePush || (!core && ownKindAttributes(plugin, declaration.Kind).Push) {
+		switch {
+		case declaration.Source == providerSourcePush:
 			pushProviders = append(pushProviders, declaration)
+		case !core && ownKindAttributes(plugin, declaration.Kind).Push:
+			polledPushProviders = append(polledPushProviders, declaration)
 		}
 		providedKinds[declaration.Kind] = declaration
+	}
+	if len(pushProviders) == 0 {
+		pushProviders = polledPushProviders
 	}
 	seen := map[string]bool{}
 	var bindings []*pushBinding

@@ -56,9 +56,6 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 		// live_cadence_seconds, 10 s by default (C3 of the backend-completion cycle). A tick with no
 		// live-interest lease does nothing.
 		"live sampling": 10 * time.Second,
-		// The active flow_record provider's capture configuration, every minute by default: the longest a
-		// changed configuration goes unseen (PS18 of the NetFlow join amendment).
-		"flow_record": 60 * time.Second,
 	}
 	// The plugin loops are not listed by hand: one per provider of the loaded built-ins that states a
 	// cadence, named "<kind> <provider key>", at the cadence its manifest declares. A built-in plugin
@@ -69,6 +66,15 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 			wanted[registration.Kind+" "+registration.Key] = registration.Cadence
 			pluginLoops++
 		}
+	}
+	// And one loop per derivation of the loaded built-ins, at its declared cadence, an hour when it declares none
+	// (it then runs on its other triggers alone).
+	for _, derivation := range plugin.Builtins().Derivations() {
+		interval := derivation.Cadence()
+		if interval <= 0 {
+			interval = time.Hour
+		}
+		wanted["derivation "+derivation.Name()] = interval
 	}
 	if pluginLoops == 0 {
 		t.Fatal("no built-in provider states a cadence, so the plugin loops this test derives are none " +

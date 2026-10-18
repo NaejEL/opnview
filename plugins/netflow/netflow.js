@@ -2356,5 +2356,31 @@ exports.helpers = {
   configuration_at: function (configurations, at) {
     var found = configurationAt(configurations, at);
     return found === null ? null : found.firstReadAt;
+  },
+  // decide decides one group of records against some legs, as the join does, from plain objects: the records as
+  // the table holds them, the legs as the dataset leg serves them, and the join's inputs -- the read-through
+  // instant, the tolerance, pf's timeouts, the firewall's addresses, the interfaces' devices by identifier and
+  // the filter log's gaps. It answers each record's decision.
+  decide: function (spec) {
+    addressCache = {};
+    var input = { readThrough: spec.readThrough, tolerance: spec.tolerance, now: spec.readThrough, purged: false,
+      purgedBefore: 0, history: [], timeouts: spec.timeouts, devices: spec.devices || {},
+      filterLogGaps: spec.gaps || [], firewall: {} };
+    (spec.firewall || []).forEach(function (held) {
+      var address = ip(held.address);
+      (input.firewall[address.address] = input.firewall[address.address] || []).push({ from: held.from,
+        until: held.until, current: held.current === true });
+    });
+    var records = spec.records.map(function (record) {
+      record.source = ip(record.src_address);
+      record.destination = ip(record.dst_address);
+      record.parsed = record.source !== null && record.destination !== null;
+      return record;
+    });
+    var legs = spec.legs.map(prepareLeg).filter(function (leg) { return leg !== null; });
+    return decideGroup(records, legs, input).map(function (made) {
+      return { join_state: made.join_state, joined_flow_id: made.joined_flow_id, copy_kind: made.copy_kind,
+        copy_flow_id: made.copy_flow_id, orientation: made.orientation, unmatched_reason: made.unmatched_reason };
+    });
   }
 };
