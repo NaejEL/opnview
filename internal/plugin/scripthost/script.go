@@ -22,6 +22,7 @@ import (
 	"github.com/NaejEL/opnview/internal/broker/answer"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
+	"github.com/NaejEL/opnview/internal/ianaprotocol"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -930,6 +931,13 @@ func Helpers(vm *goja.Runtime) *goja.Object {
 		return vm.ToValue(provider.QuoteForDetail(call.Argument(0).String()))
 	})
 	_ = root.Set("authenticationFailed", provider.AuthenticationFailed)
+	set(root, "ip", func(call goja.FunctionCall) goja.Value {
+		return ipValue(vm, call.Argument(0).String())
+	})
+	set(root, "protocolNumber", func(call goja.FunctionCall) goja.Value {
+		number, found := ianaprotocol.Number(call.Argument(0).String())
+		return optional(number, found)
+	})
 
 	leases := vm.NewObject()
 	set(leases, "decodeLease", func(call goja.FunctionCall) goja.Value {

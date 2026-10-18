@@ -186,17 +186,8 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 		forced = append(forced, result.FlowInstants...)
 	}
 
-	// The NetFlow join and the measured volume (flowrecord.go, measuredvolume.go), only where a flow_record
-	// provider is active: after the pairing, which says which legs make a connection, and before the
-	// refresh, which rewrites the slots of every connection whose measured volume changed (PS21).
-	if _, err := c.joinFlowRecords(ctx); err != nil {
-		return fmt.Errorf("collect: joining the flow records: %w", err)
-	}
-	measured, err := c.deriveMeasuredVolumes(ctx, request)
-	if err != nil {
-		return fmt.Errorf("collect: deriving the measured volume: %w", err)
-	}
-	forced = append(forced, measured...)
+	// The slots of the connections a plugin's derivation wrote measure rows for (PA4, PA5): rewritten whatever
+	// else changed, as a declared measure's parts count there.
 	forced = append(forced, request.Instants...)
 
 	// The slots are stamped with the watermark rather than now: a row of a pass still in

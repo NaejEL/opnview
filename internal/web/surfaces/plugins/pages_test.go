@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/plugin"
-	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/web/surfaces/plugins"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 )
@@ -59,10 +58,10 @@ func TestPluginDeclaredPagesAreServedAndTheNetflowSettingsArePluginSettings(t *t
 		t.Errorf("the flow record retention has the default and bounds %v, want 0, 0 and the largest duration",
 			bounds["retention_flow_record_seconds"])
 	}
-	if plugin.StorageKey("netflow", "join_tolerance_seconds") != netflow.NetflowJoinToleranceKey ||
-		plugin.StorageKey("netflow", "retention_flow_record_seconds") != netflow.FlowRecordRetentionKey ||
-		bounds["join_tolerance_seconds"][0] != float64(netflow.DefaultNetflowJoinToleranceSeconds) {
-		t.Error("the keys and default the Go join reads are not the netflow plugin's settings")
+	// The keys the settings are stored under, the plugin settings' <plugin>_<key> rule (Lot 2 hand-back, decision 2).
+	if plugin.StorageKey("netflow", "join_tolerance_seconds") != "netflow_join_tolerance_seconds" ||
+		plugin.StorageKey("netflow", "retention_flow_record_seconds") != "netflow_retention_flow_record_seconds" {
+		t.Error("the netflow plugin's settings are not stored under <plugin>_<key>")
 	}
 
 	// A setting out of its bounds is refused through the plugin settings write, as it was by the NetFlow

@@ -12,7 +12,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/discovery"
 	"github.com/NaejEL/opnview/internal/collect/kinds/declared"
 	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
-	"github.com/NaejEL/opnview/internal/collect/kinds/flowrecords"
 	"github.com/NaejEL/opnview/internal/collect/kinds/leases"
 	"github.com/NaejEL/opnview/internal/collect/kinds/lookups"
 	"github.com/NaejEL/opnview/internal/collect/kinds/measurements"
@@ -40,7 +39,6 @@ type Collector struct {
 	*securityevents.SecurityEventCoordinator
 	*resolverrecords.ResolverRecordCoordinator
 	*measurements.MeasurementCoordinator
-	*flowrecords.FlowRecordCoordinator
 	*declared.DeclaredKindCoordinator
 }
 
@@ -57,7 +55,6 @@ func compose(state *core.Collector) *Collector {
 		SecurityEventCoordinator:  securityevents.On(state),
 		ResolverRecordCoordinator: resolverrecords.On(state),
 		MeasurementCoordinator:    measurements.On(state),
-		FlowRecordCoordinator:     flowrecords.On(state),
 		DeclaredKindCoordinator:   declared.On(state),
 	}
 }

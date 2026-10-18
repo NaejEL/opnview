@@ -1,6 +1,0 @@
-{
-  "language": "en",
-  "strings": {
-    "dataset.flow_record": "NetFlow flow records, as exported, each with its join state: a sum over records that are not joined counts copies, the translated and parent copies a packet is exported again as"
-  }
-}

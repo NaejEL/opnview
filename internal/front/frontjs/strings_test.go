@@ -17,7 +17,6 @@ import (
 	"github.com/NaejEL/opnview/internal/front"
 	"github.com/NaejEL/opnview/internal/front/frontjs"
 	"github.com/NaejEL/opnview/internal/store/flows"
-	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/owners"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/widget/request"
@@ -186,10 +185,16 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 		// The renderers' shared words (front/core/kit.js, placeReason, direction, directionState): the
 		// places traffic can be, the lookup states of an address, the directions, NetFlow's per-direction
 		// states and the blocking engines.
-		"column.scope.":           {"north_south", "east_west", "this_firewall"},
-		"reason.":                 {"miss", "pending", "no_row", "no_coordinates"},
-		"column.direction.":       {"in", "out", "inbound", "outbound"},
-		"column.direction_state.": netflow.VolumeStates(),
+		"column.scope.":     {"north_south", "east_west", "this_firewall"},
+		"reason.":           {"miss", "pending", "no_row", "no_coordinates"},
+		"column.direction.": {"in", "out", "inbound", "outbound"},
+		// The per-direction states the front labels (front/core/kit.js, directionState): the twelve the netflow
+		// measure declared before the live validation of 17 October 2026. Its two later states, ambiguous_records
+		// and not_expected_when_refused, have no catalogue string yet: labelling them is interface work, deferred
+		// to factory-ui-builder (Lot 3 hand-back).
+		"column.direction_state.": {"measured", "in_progress", "awaiting_export", "missing", "export_gap",
+			"not_exported_when_refused", "forwarding_export_unsettled", "ingress_not_captured", "parent_copies_only",
+			"interface_not_exported", "interface_not_captured", "capture_configuration_unknown"},
 		"column.engine.": {"firewall_rule", "security_engine", "dns_advertising_list", "dns_threat_list",
 			"dns_unassigned_list", "dns_list_not_recorded"},
 		"scope.all.":                 scopeKinds,

@@ -118,9 +118,6 @@ type Collector struct {
 	// Live is the live sampling: the lease it runs under and when each live pass last ran
 	// (live.go).
 	Live LiveSampling
-	// Netflow is the flow_record kind's state: the filter log's read-through instant, the join
-	// tolerance, the capture histories and what is to be derived again (flowrecord.go).
-	Netflow NetflowState
 	// SequenceBoundObserver is told every recorded read of a sequence bound (pushhandlers.go). The mutex
 	// guards it.
 	SequenceBoundObserver SequenceBoundObserver

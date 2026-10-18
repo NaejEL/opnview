@@ -84,15 +84,15 @@ func refreshOfHour(t *testing.T, heard <-chan sqldb.Notification, hour int64) {
 // every flow of the hour, and announces that hour on commit.
 func TestEachFilterLogPassAnnouncesTheCurrentHourItRefreshed(t *testing.T) {
 	t.Parallel()
-	harness := collecttest.NewNetflowHarness(t)
+	harness := newNetflowHarness(t)
 	heard := heardFrom(t, harness.Store)
-	hour := vocab.PeriodHour.SlotStart(collecttest.NetflowReadSecond)
+	hour := vocab.PeriodHour.SlotStart(NetflowReadSecond)
 	passes := []struct {
 		at   int64
-		legs []collecttest.LegRow
+		legs []LegRow
 	}{
-		{hour + 600, []collecttest.LegRow{singleLeg("fresh-1", hour+595, "tcp", 6, 50001, 443, "pass")}},
-		{hour + 620, []collecttest.LegRow{singleLeg("fresh-2", hour+615, "tcp", 6, 50002, 443, "pass")}},
+		{hour + 600, []LegRow{singleLeg("fresh-1", hour+595, "tcp", 6, 50001, 443, "pass")}},
+		{hour + 620, []LegRow{singleLeg("fresh-2", hour+615, "tcp", 6, 50002, 443, "pass")}},
 		{hour + 640, nil},
 	}
 	for index, pass := range passes {

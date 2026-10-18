@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/plugintables"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
@@ -108,11 +107,6 @@ func (s *PurgeStore) Purge(ctx context.Context, now int64) error {
 	// The tables plugins own, each by its own declared retention
 	// (internal/store/plugindecl/plugintables.go).
 	if err := plugintables.On(s.Handle).PurgePluginTables(ctx, transaction, now); err != nil {
-		return err
-	}
-	// The NetFlow tables, the flow records by their own retention
-	// (internal/store/netflow/flowrecord.go).
-	if err := netflow.PurgeNetflow(ctx, transaction, now); err != nil {
 		return err
 	}
 	if err := transaction.Commit(); err != nil {

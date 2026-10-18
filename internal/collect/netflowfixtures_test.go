@@ -1,4 +1,4 @@
-package collecttest
+package collect_test
 
 import (
 	"encoding/json"
@@ -17,8 +17,8 @@ import (
 // exporter sends, and what the join and the measured volume must make of them. Every file carries
 // __provenance__, naming what of the capture analysis it follows and what was rewritten or synthesised.
 
-// JoinFixtureDirectory is the fixtures' directory, relative to internal/collect.
-const JoinFixtureDirectory = "testdata/netflowjoin"
+// JoinFixtureDirectory is the fixtures' directory, the netflow plugin's own, relative to internal/collect.
+const JoinFixtureDirectory = "../../plugins/netflow/testdata/join"
 
 // WorldCapture is one interface of a fixture's capture configuration.
 type WorldCapture struct {
@@ -215,7 +215,7 @@ func readJSON(t *testing.T, path string, into any) {
 
 // DeliverFixtureRecords sends the records of fixtures a filter keeps, each fixture's records grouped in
 // its datagrams, exported at LegInstant plus the fixture's export_at plus the datagram's ordinal.
-func (h *NetflowHarness) DeliverFixtureRecords(t *testing.T, fixtures []JoinFixture, keep func(FixtureRecord) bool) {
+func (h *netflowWorld) DeliverFixtureRecords(t *testing.T, fixtures []JoinFixture, keep func(FixtureRecord) bool) {
 	t.Helper()
 	for _, fixture := range fixtures {
 		datagrams := map[int][]FlowRecord{}

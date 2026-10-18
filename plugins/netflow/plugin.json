@@ -1,10 +1,12 @@
 {
   "api_version": 2,
   "name": "netflow",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "display_name": "NetFlow export",
-  "description": "Receives the flow records OPNsense's NetFlow export sends (version 9, over UDP) -- every interface may be captured -- and reads which interfaces the export captures on, whether each is actually exported, and which VLANs a captured interface exports again as their parent: the core joins each record to the logged connection its own interfaces name, and counts each direction of a connection once.",
+  "description": "Receives the flow records OPNsense's NetFlow export sends (version 9, over UDP) -- every interface may be captured -- reads which interfaces the export captures on, whether each is actually exported, which VLANs a captured interface exports again as their parent, and what each exporter's interface index names; then joins each record, from its own two indexes, to the logged connection leg they name, classes the records no leg explains as translated or parent copies, and counts each direction of a logged connection once, as the measure netflow. Every rule reads the records, the legs, the capture configuration and the firewall's addresses, and names no device, interface or address. A second measure beside the logged one, never summed with it; like every figure opnview draws, a lower bound, and traffic between two clients behind one interface is in no figure.",
   "script": "netflow.js",
+  "datasets": ["leg", "interface", "this_firewall_address", "provider_value", "collection_gap", "read_through",
+    "retention_purge"],
   "endpoints": [
     {
       "name": "getconfig",
@@ -28,7 +30,210 @@
       "method": "GET",
       "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources",
       "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/OverviewController.php",
-      "note": "Read-only, called with the argument 1 (details). The standard search envelope; each row a device's ifconfig details (legacy_interfaces_details, src/etc/inc/interfaces.lib.inc). Read: identifier, device, macaddr (the ether line's address, all zeros without one: S5c) and vlan.parent (S6c)."
+      "note": "Read-only, called with the argument 1 (details). The standard search envelope; each row a device's ifconfig details (legacy_interfaces_details, src/etc/inc/interfaces.lib.inc). Read: identifier, device, macaddr (the ether line's address, all zeros without one: S5c), vlan.parent (S6c), statistics.index, the kernel interface index ng_netflow exports (parseIfInfo, legacy_interface_stats: S6), and flags, whose loopback names the loopback interface (S6b)."
+    }
+  ],
+  "kinds": [{"kind": "flow_record", "push": true, "bindable": false}],
+  "providers": [
+    {
+      "kind": "flow_record",
+      "display_name": "NetFlow export",
+      "cadence_seconds": 60,
+      "min_cadence_seconds": 10
+    }
+  ],
+  "tables": [
+    {
+      "name": "flow_record",
+      "nature": "event",
+      "columns": [
+        {"name": "delivery", "type": "text"},
+        {"name": "delivery_position", "type": "integer", "role": "dimension"},
+        {"name": "flow_start_at", "type": "instant"},
+        {"name": "flow_end_at", "type": "instant", "role": "dimension"},
+        {"name": "collected_at", "type": "instant", "role": "dimension"},
+        {"name": "exporter_address", "type": "text"},
+        {"name": "observation_domain", "type": "integer", "role": "dimension"},
+        {"name": "ingress_interface", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "egress_interface", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "ip_version", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "protocol", "type": "integer", "role": "dimension"},
+        {"name": "src_address", "type": "text"},
+        {"name": "dst_address", "type": "text"},
+        {"name": "src_port", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "dst_port", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "tcp_flags", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "octets", "type": "integer", "role": "measure", "unit": "byte"},
+        {"name": "packets", "type": "integer", "role": "measure", "unit": "packet"},
+        {"name": "identity", "type": "text", "nullable": true},
+        {"name": "start_at", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "start_millisecond", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "end_at", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "end_millisecond", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "received_at", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "ingress_role", "type": "text", "nullable": true},
+        {"name": "ingress_identifier", "type": "text", "nullable": true},
+        {"name": "ingress_device", "type": "text", "nullable": true},
+        {"name": "egress_role", "type": "text", "nullable": true},
+        {"name": "egress_identifier", "type": "text", "nullable": true},
+        {"name": "egress_device", "type": "text", "nullable": true},
+        {"name": "loss_detectable", "type": "boolean", "nullable": true},
+        {"name": "tuple_key", "type": "text", "nullable": true},
+        {"name": "join_state", "type": "text", "nullable": true},
+        {"name": "joined_flow_id", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "copy_kind", "type": "text", "nullable": true},
+        {"name": "copy_flow_id", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "orientation", "type": "text", "nullable": true},
+        {"name": "counted_copy", "type": "boolean", "nullable": true},
+        {"name": "unmatched_reason", "type": "text", "nullable": true},
+        {"name": "decided_at", "type": "integer", "role": "dimension", "nullable": true}
+      ],
+      "primary_key": ["delivery", "delivery_position", "flow_start_at"],
+      "indexes": [
+        {"columns": ["join_state", "start_at"]},
+        {"columns": ["tuple_key", "start_at"]},
+        {"columns": ["joined_flow_id"]},
+        {"columns": ["copy_flow_id"]}
+      ],
+      "retention": {"column": "flow_start_at", "seconds": 0, "setting": "retention_flow_record_seconds"}
+    },
+    {
+      "name": "capture_configuration",
+      "columns": [
+        {"name": "first_read_at", "type": "integer", "role": "dimension"},
+        {"name": "last_read_at", "type": "integer", "role": "dimension"},
+        {"name": "readable", "type": "boolean"},
+        {"name": "outcome", "type": "text", "nullable": true},
+        {"name": "detail", "type": "text", "nullable": true},
+        {"name": "enabled", "type": "boolean", "nullable": true},
+        {"name": "export_version", "type": "text", "nullable": true},
+        {"name": "active_timeout_seconds", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "inactive_timeout_seconds", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "fingerprint", "type": "text", "nullable": true}
+      ],
+      "primary_key": ["first_read_at"]
+    },
+    {
+      "name": "capture_interface",
+      "columns": [
+        {"name": "first_read_at", "type": "integer", "role": "dimension"},
+        {"name": "identifier", "type": "text"},
+        {"name": "ingress", "type": "boolean"},
+        {"name": "egress", "type": "boolean"},
+        {"name": "exported", "type": "text"},
+        {"name": "not_exported_reason", "type": "text", "nullable": true},
+        {"name": "parent_of", "type": "text"}
+      ],
+      "primary_key": ["first_read_at", "identifier"]
+    },
+    {
+      "name": "interface_index",
+      "columns": [
+        {"name": "interface_index", "type": "integer", "role": "dimension"},
+        {"name": "device", "type": "text"},
+        {"name": "identifier", "type": "text", "nullable": true},
+        {"name": "loopback", "type": "boolean"},
+        {"name": "in_map", "type": "boolean"},
+        {"name": "read_at", "type": "integer", "role": "dimension"}
+      ],
+      "primary_key": ["interface_index"]
+    },
+    {
+      "name": "unmatched_record",
+      "counters": true,
+      "columns": [
+        {"name": "period_start_at", "type": "integer", "role": "dimension"},
+        {"name": "period_end_at", "type": "integer"},
+        {"name": "ingress_interface", "type": "text"},
+        {"name": "egress_interface", "type": "text"},
+        {"name": "protocol", "type": "integer", "role": "dimension"},
+        {"name": "ip_version", "type": "integer", "role": "dimension"},
+        {"name": "reason", "type": "text"},
+        {"name": "bytes", "type": "integer", "role": "measure", "unit": "byte"},
+        {"name": "packets", "type": "integer", "role": "measure", "unit": "packet"},
+        {"name": "records", "type": "integer", "role": "measure"}
+      ],
+      "primary_key": ["period_start_at", "period_end_at", "ingress_interface", "egress_interface", "protocol",
+        "ip_version", "reason"],
+      "retention": {"column": "period_end_at", "seconds": 0}
+    },
+    {
+      "name": "unmatched_record_24h",
+      "counters": true,
+      "columns": [
+        {"name": "period_start_at", "type": "integer", "role": "dimension"},
+        {"name": "period_end_at", "type": "integer"},
+        {"name": "ingress_interface", "type": "text"},
+        {"name": "egress_interface", "type": "text"},
+        {"name": "protocol", "type": "integer", "role": "dimension"},
+        {"name": "ip_version", "type": "integer", "role": "dimension"},
+        {"name": "reason", "type": "text"},
+        {"name": "bytes", "type": "integer", "role": "measure", "unit": "byte"},
+        {"name": "packets", "type": "integer", "role": "measure", "unit": "packet"},
+        {"name": "records", "type": "integer", "role": "measure"}
+      ],
+      "primary_key": ["period_start_at", "period_end_at", "ingress_interface", "egress_interface", "protocol",
+        "ip_version", "reason"],
+      "retention": {"column": "period_end_at", "seconds": 0}
+    },
+    {
+      "name": "unmatched_record_7d",
+      "counters": true,
+      "columns": [
+        {"name": "period_start_at", "type": "integer", "role": "dimension"},
+        {"name": "period_end_at", "type": "integer"},
+        {"name": "ingress_interface", "type": "text"},
+        {"name": "egress_interface", "type": "text"},
+        {"name": "protocol", "type": "integer", "role": "dimension"},
+        {"name": "ip_version", "type": "integer", "role": "dimension"},
+        {"name": "reason", "type": "text"},
+        {"name": "bytes", "type": "integer", "role": "measure", "unit": "byte"},
+        {"name": "packets", "type": "integer", "role": "measure", "unit": "packet"},
+        {"name": "records", "type": "integer", "role": "measure"}
+      ],
+      "primary_key": ["period_start_at", "period_end_at", "ingress_interface", "egress_interface", "protocol",
+        "ip_version", "reason"],
+      "retention": {"column": "period_end_at", "seconds": 0}
+    },
+    {
+      "name": "unmatched_record_30d",
+      "counters": true,
+      "columns": [
+        {"name": "period_start_at", "type": "integer", "role": "dimension"},
+        {"name": "period_end_at", "type": "integer"},
+        {"name": "ingress_interface", "type": "text"},
+        {"name": "egress_interface", "type": "text"},
+        {"name": "protocol", "type": "integer", "role": "dimension"},
+        {"name": "ip_version", "type": "integer", "role": "dimension"},
+        {"name": "reason", "type": "text"},
+        {"name": "bytes", "type": "integer", "role": "measure", "unit": "byte"},
+        {"name": "packets", "type": "integer", "role": "measure", "unit": "packet"},
+        {"name": "records", "type": "integer", "role": "measure"}
+      ],
+      "primary_key": ["period_start_at", "period_end_at", "ingress_interface", "egress_interface", "protocol",
+        "ip_version", "reason"],
+      "retention": {"column": "period_end_at", "seconds": 0}
+    },
+    {
+      "name": "measure_due",
+      "columns": [
+        {"name": "connection", "type": "integer", "role": "dimension"},
+        {"name": "connection_start_at", "type": "integer"},
+        {"name": "due_at", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "held", "type": "boolean"}
+      ],
+      "primary_key": ["connection", "connection_start_at"],
+      "indexes": [{"columns": ["due_at"]}],
+      "retention": {"column": "connection_start_at", "seconds": 0}
+    },
+    {
+      "name": "join_progress",
+      "columns": [
+        {"name": "name", "type": "text"},
+        {"name": "number", "type": "integer", "role": "dimension", "nullable": true},
+        {"name": "text", "type": "text", "nullable": true}
+      ],
+      "primary_key": ["name"]
     }
   ],
   "push": [
@@ -39,6 +244,11 @@
         "require": ["octetDeltaCount", "packetDeltaCount", "protocolIdentifier", "flowStartMilliseconds", "flowEndMilliseconds", "collectionTimeMilliseconds", "observationDomainId"]
       },
       "fields": {
+        "delivery": "delivery",
+        "delivery_position": "delivery_position",
+        "flow_start_at": "flowStartMilliseconds",
+        "flow_end_at": "flowEndMilliseconds",
+        "collected_at": "collectionTimeMilliseconds",
         "exporter_address": ["exporterIPv4Address", "exporterIPv6Address"],
         "observation_domain": "observationDomainId",
         "ingress_interface": "ingressInterface",
@@ -51,20 +261,26 @@
         "dst_port": "destinationTransportPort",
         "tcp_flags": "tcpControlBits",
         "octets": "octetDeltaCount",
-        "packets": "packetDeltaCount",
-        "start_at": "flowStartMilliseconds",
-        "end_at": "flowEndMilliseconds",
-        "received_at": "collectionTimeMilliseconds"
+        "packets": "packetDeltaCount"
       },
-      "kind": "flow_record",
+      "output_table": "flow_record",
       "sequence_bound": {"value": "sequence_counters"},
       "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources"
     }
   ],
-  "providers": [
+  "derivations": [
     {
-      "kind": "flow_record",
-      "display_name": "NetFlow export"
+      "name": "join",
+      "after_passes": ["firewall_log", "flow_record"],
+      "after_push": ["flow_records"],
+      "cadence_seconds": 60,
+      "datasets": ["leg", "interface", "this_firewall_address", "provider_value", "collection_gap", "read_through",
+        "retention_purge"],
+      "outputs": {
+        "tables": ["flow_record", "interface_index", "unmatched_record", "unmatched_record_24h", "unmatched_record_7d",
+          "unmatched_record_30d", "measure_due", "join_progress"],
+        "measures": ["netflow"]
+      }
     }
   ],
   "settings": [
@@ -113,7 +329,9 @@
         {"name": "parent_copies_only", "covered": false},
         {"name": "interface_not_exported", "covered": false},
         {"name": "interface_not_captured", "covered": false},
-        {"name": "capture_configuration_unknown", "covered": false}
+        {"name": "capture_configuration_unknown", "covered": false},
+        {"name": "ambiguous_records", "covered": false},
+        {"name": "not_expected_when_refused", "covered": true}
       ],
       "complete_state": "measured",
       "refused_state": "not_exported_when_refused",

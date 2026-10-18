@@ -7,7 +7,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/live"
-	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/push"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -21,38 +20,6 @@ type LiveSampling struct {
 	Last map[int64]time.Time
 	// Passes counts the live passes run, for a test.
 	Passes int
-}
-
-// NetflowState is what the collector holds for the flow_record kind.
-type NetflowState struct {
-	Mutex sync.Mutex
-	// ReadThrough is the filter log's read-through instant: every record the firewall logged before it
-	// has been stored, or recorded as a gap. A flow record is decided only once it has passed the
-	// record's start plus the tolerance (PS19 rule 8).
-	ReadThrough int64
-	// Histories caches each provider's capture configurations.
-	Histories map[int64]*CaptureHistory
-	// Dirty is the connection window and legs whose measured volume must be computed again.
-	Dirty     bool
-	DirtyFrom int64
-	DirtyTo   int64
-	DirtyLegs map[int64]bool
-	// NotActive counts the records of a provider that is not the active one, which are not stored.
-	NotActive int64
-	// IndexMapStale says the exporter restarted since the index map was last read: the next mapping
-	// reads it afresh, whatever the broker's mirror holds (NJ3, a reboot can renumber interfaces).
-	IndexMapStale bool
-}
-
-// CaptureHistory is one provider's capture configurations.
-type CaptureHistory struct {
-	Configurations []netflow.CaptureConfiguration
-}
-
-// ConfigurationAt returns the configuration in force at an instant, or nil when it is unknown
-// (store.CaptureConfigurationAt, which the widget API's measure reads too).
-func (h *CaptureHistory) ConfigurationAt(at int64) *netflow.CaptureConfiguration {
-	return netflow.CaptureConfigurationAt(h.Configurations, at)
 }
 
 // OrderingHooks let a test stop a pass between its store and its derivation, see a

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -206,27 +205,5 @@ func TestAPullGapIsClippedByThePushPeriod(t *testing.T) {
 	}
 	if from != lineSecond(20) || to != lineSecond(30) {
 		t.Errorf("the gap runs from %d to %d, want %d to %d", from, to, lineSecond(20), lineSecond(30))
-	}
-}
-
-// TestInterfaceIndexesAreReadThroughTheBroker is PS-AC17: the index-to-interface mapping is the
-// broker's read of interfaces_info with details; a row with no index maps nothing.
-func TestInterfaceIndexesAreReadThroughTheBroker(t *testing.T) {
-	t.Parallel()
-	h := collecttest.NewProbeHarness(t)
-	h.Fake.AnswerJSON(opnsense.InterfacesInfo, map[string]any{"total": 2, "rowCount": 2, "current": 1, "rows": []any{
-		map[string]any{"identifier": "lan", "device": "exdev0", "statistics": map[string]any{"index": "3"}},
-		map[string]any{"identifier": "opt1", "device": "exdev1", "statistics": map[string]any{}},
-	}})
-	indexes, err := h.Collector.InterfaceIndexes(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(indexes) != 1 || indexes[3].Identifier != "lan" || indexes[3].Device != "exdev0" {
-		t.Errorf("indexes %+v", indexes)
-	}
-	requests := h.Fake.RequestsTo(opnsense.InterfacesInfo)
-	if len(requests) != 1 || !strings.HasSuffix(requests[0].Path, "/interfaces_info/1") {
-		t.Errorf("requests %+v", requests)
 	}
 }

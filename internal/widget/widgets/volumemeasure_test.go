@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/plugin"
-	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/widget"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
@@ -65,19 +64,19 @@ func newMeasureWorld(t *testing.T) *fixture {
 	return f
 }
 
-// configureNetflow makes a provider of flow_record active, with one readable capture configuration in
-// force since before the window, capturing both directions on the interfaces named.
+// configureNetflow makes a provider of flow_record active, with the netflow measure's window recorded as its
+// derivation records it from one readable capture configuration in force since before the window: covered
+// (capture_configured) when it captures an interface, netflow_not_configured when it captures none.
 func (f *fixture) configureNetflow(t *testing.T, interfaces ...string) {
 	t.Helper()
 	f.exec(t, `INSERT INTO provider (id, kind, provider_key, display_name, is_active, registered_at)
 		VALUES (900, 'flow_record', 'example_exporter', 'Example exporter', true, 0)`)
-	f.exec(t, `INSERT INTO capture_configuration (id, provider_id, first_read_at, last_read_at, fingerprint,
-		outcome, detail, enabled, export_version, active_timeout_seconds, inactive_timeout_seconds)
-		VALUES (1, 900, $1, $2, 'example', NULL, NULL, true, '9', 60, 15)`, f.now-7200, f.now)
-	for _, identifier := range interfaces {
-		f.exec(t, `INSERT INTO capture_interface (capture_configuration_id, identifier, ingress, egress, exported)
-			VALUES (1, $1, true, true, 'yes')`, identifier)
+	state := "capture_configured"
+	if len(interfaces) == 0 {
+		state = "netflow_not_configured"
 	}
+	f.exec(t, `INSERT INTO measure_interval (measure, provider_id, starts_at, ends_at, state)
+		VALUES ('netflow', 900, $1, NULL, $2)`, f.now-7200, state)
 }
 
 // measured records one direction of a connection's measured volume.
@@ -329,7 +328,7 @@ func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T
 			encoded(t, logged), encoded(t, best))
 	}
 	if detail := best.StateDetails[stateNetflowNotCoveringWindow]; len(detail.IntervalStates) != 1 ||
-		detail.IntervalStates[0] != netflow.CaptureConfigured {
+		detail.IntervalStates[0] != "capture_configured" {
 		t.Errorf("the detail of netflow_not_covering_window is %+v, not the one interval state capture_configured",
 			best.StateDetails)
 	}
@@ -355,7 +354,7 @@ func TestUnderAnUnknownConfigurationBestAvailableIsLoggedAndNetflowCarriesNoFigu
 	t.Parallel()
 	f := newMeasureWorld(t)
 	f.configureNetflow(t, "example_if_a", "example_if_b")
-	f.exec(t, `UPDATE capture_configuration SET fingerprint = NULL, outcome = 'unavailable', enabled = NULL`)
+	f.exec(t, `UPDATE measure_interval SET state = 'capture_configuration_unknown'`)
 	f.measureEverything(t)
 	for _, widgetType := range volumeTypes(t, f.service) {
 		best := f.respond(t, widgetType, measureParameters(f.service, widgetType, ""))
@@ -552,7 +551,7 @@ func TestAThirdPartyWidgetGetsTheMeasureFromItsManifestAlone(t *testing.T) {
 	// whose state carries the interval states met.
 	hidden := newMeasureWorld(t)
 	hidden.configureNetflow(t, "example_if_a", "example_if_b")
-	hidden.exec(t, `UPDATE capture_configuration SET fingerprint = NULL, outcome = 'unavailable', enabled = NULL`)
+	hidden.exec(t, `UPDATE measure_interval SET state = 'capture_configuration_unknown'`)
 	hidden.measureEverything(t)
 	hidden.service = pluginService(t, hidden, dataDir)
 	answer := hidden.respond(t, "example_volume_total", map[string]any{"period": "1h"})
@@ -567,7 +566,7 @@ func TestAThirdPartyWidgetGetsTheMeasureFromItsManifestAlone(t *testing.T) {
 	answer = uncovered.respond(t, "example_volume_total", map[string]any{"period": "1h"})
 	detail := answer.StateDetails[stateNetflowNotCoveringWindow]
 	if !params.Contains(answer.States, stateNetflowNotCoveringWindow) ||
-		strings.Join(detail.IntervalStates, ",") != netflow.CaptureConfigured {
+		strings.Join(detail.IntervalStates, ",") != "capture_configured" {
 		t.Errorf("under partial coverage the third party's widget answered %s", encoded(t, answer))
 	}
 }
@@ -634,15 +633,15 @@ func TestTheWindowStateNamesWhyNetflowCannotAnswer(t *testing.T) {
 	}{
 		"unreadable": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
-			f.exec(t, `UPDATE capture_configuration SET fingerprint = NULL, outcome = 'unavailable', enabled = NULL`)
+			f.exec(t, `UPDATE measure_interval SET state = 'capture_configuration_unknown'`)
 		}, stateCaptureConfigurationUnknown},
 		"disabled": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
-			f.exec(t, `UPDATE capture_configuration SET enabled = false`)
+			f.exec(t, `UPDATE measure_interval SET state = 'netflow_not_configured'`)
 		}, stateNetflowNotConfigured},
 		"read_inside_the_window": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
-			f.exec(t, `UPDATE capture_configuration SET first_read_at = $1`, f.now-1800)
+			f.exec(t, `UPDATE measure_interval SET starts_at = $1`, f.now-1800)
 		}, stateNetflowNotCoveringWindow},
 	} {
 		f := newMeasureWorld(t)
@@ -656,7 +655,7 @@ func TestTheWindowStateNamesWhyNetflowCannotAnswer(t *testing.T) {
 		if test.state == stateNetflowNotCoveringWindow {
 			detail := answer.StateDetails[test.state]
 			if len(answer.StateDetails) != 1 || strings.Join(detail.IntervalStates, ",") !=
-				netflow.CaptureUnknown+","+netflow.CaptureConfigured {
+				"capture_configuration_unknown"+","+"capture_configured" {
 				t.Errorf("%s: the state details are %+v", name, answer.StateDetails)
 			}
 		} else if answer.StateDetails != nil {
@@ -664,46 +663,6 @@ func TestTheWindowStateNamesWhyNetflowCannotAnswer(t *testing.T) {
 		}
 		if total, _ := data(t, answer)["total"].(map[string]any); total["measure"] != envelope.MeasureLogged {
 			t.Errorf("%s: the total is %v", name, total)
-		}
-	}
-}
-
-// TestCaptureStatesAreReadFromTheStoredConfiguration is PS18's table, as NJ6 keeps it, on the store's
-// single definition, which the collector and the widget measure both read: unknown before the first
-// read and between two reads that differ, configured over a readable enabled run whatever the number of
-// interfaces it captures, and not configured over one capturing nothing.
-func TestCaptureStatesAreReadFromTheStoredConfiguration(t *testing.T) {
-	t.Parallel()
-	one := netflow.CaptureConfiguration{FirstReadAt: 100, LastReadAt: 200, Readable: true, Enabled: true,
-		Interfaces: []netflow.CaptureInterface{{Identifier: "example_if_a", Ingress: true, Egress: true}}}
-	two := one
-	two.FirstReadAt, two.LastReadAt = 300, 400
-	two.Interfaces = append(two.Interfaces, netflow.CaptureInterface{Identifier: "example_if_b", Egress: true})
-	none := netflow.CaptureConfiguration{FirstReadAt: 500, LastReadAt: 600, Readable: true, Enabled: true}
-	configurations := []netflow.CaptureConfiguration{one, two, none}
-	for _, check := range []struct {
-		at    int64
-		state string
-	}{
-		{50, netflow.CaptureUnknown},
-		{110, netflow.CaptureConfigured},
-		{250, netflow.CaptureUnknown},
-		{350, netflow.CaptureConfigured},
-		{550, netflow.CaptureNotConfigured},
-		{900, netflow.CaptureNotConfigured},
-	} {
-		if state, _ := netflow.CaptureStateAt(configurations, check.at); state != check.state {
-			t.Errorf("at %d: %s, not %s", check.at, state, check.state)
-		}
-	}
-	points := netflow.CaptureChangePoints(configurations, 0, 1000)
-	want := []int64{0, 100, 201, 300, 401, 500, 601}
-	if len(points) != len(want) {
-		t.Fatalf("the change points are %v, not %v", points, want)
-	}
-	for index := range want {
-		if points[index] != want[index] {
-			t.Errorf("the change points are %v, not %v", points, want)
 		}
 	}
 }
@@ -740,7 +699,7 @@ func TestACustomChartSeriesOfTheNetflowMeasures(t *testing.T) {
 
 	hidden := newMeasureWorld(t)
 	hidden.configureNetflow(t, "example_if_a", "example_if_b")
-	hidden.exec(t, `UPDATE capture_configuration SET fingerprint = NULL, outcome = 'unavailable', enabled = NULL`)
+	hidden.exec(t, `UPDATE measure_interval SET state = 'capture_configuration_unknown'`)
 	hidden.measureEverything(t)
 	answer := hidden.respond(t, "custom_chart", parameters)
 	lines, _ = data(t, answer)["series"].([]any)

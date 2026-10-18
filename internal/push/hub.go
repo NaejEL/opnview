@@ -176,9 +176,9 @@ type Options struct {
 	Now func() time.Time
 	// Resolve turns a zoneless timestamp into an instant with the firewall's measured offset (PS5).
 	Resolve func(ctx context.Context, zoneless string) (time.Time, error)
-	Senders    *Senders
-	Gaps       GapRecorder
-	History    ListenerHistory
+	Senders *Senders
+	Gaps    GapRecorder
+	History ListenerHistory
 	// OnLiveness is told every liveness change; nil tells nobody.
 	OnLiveness LivenessObserver
 	// Report is told what goes wrong outside any request: a gap that could not be recorded.

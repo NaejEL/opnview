@@ -11,7 +11,7 @@
 //
 // THE STORE IS COMPOSED OF PARTS, each a package below this one named by what it holds, each
 // embedding the one handle they all run on (sqldb/): accounts/, owners/, flows/, attribution/,
-// aggregates/, samples/, netflow/, push/, geo/, reads/, plugintables/ and purge/. Store embeds
+// aggregates/, samples/, push/, geo/, reads/, plugintables/ and purge/. Store embeds
 // every part, so a caller holds one Store and calls its methods without naming a part. The closed
 // vocabularies and row types are vocab/'s, a plugin table's declaration is plugindecl/'s; this
 // package opens the database and applies the schema.

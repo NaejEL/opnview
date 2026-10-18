@@ -133,10 +133,8 @@ func startPush(ctx context.Context, listens pushListens, extraSenders pushExtraS
 	}
 	service.hub = push.NewHub(push.Options{
 		Resolve: collector.ZonelessInstant,
-		// A NetFlow record's interface indexes, mapped through the broker at discovery's max age (PS11).
-		Interfaces: collector.InterfaceIndexes,
-		Gaps:       service,
-		History:    service,
+		Gaps:    service,
+		History: service,
 		OnLiveness: func(subscription string, alive bool, at time.Time) {
 			select {
 			case service.events <- livenessEvent{subscription: subscription, alive: alive, at: at}:

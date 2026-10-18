@@ -266,7 +266,7 @@ func TestAStateDetailIsServedOnlyWithItsState(t *testing.T) {
 	}
 	inside := newMeasureWorld(t)
 	inside.configureNetflow(t, "example_if_a")
-	inside.exec(t, `UPDATE capture_configuration SET first_read_at = $1`, inside.now-1800)
+	inside.exec(t, `UPDATE measure_interval SET starts_at = $1`, inside.now-1800)
 	inside.measureEverything(t)
 	answer = inside.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"})
 	if !strings.Contains(string(encoded(t, answer)),

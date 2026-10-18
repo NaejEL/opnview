@@ -67,7 +67,6 @@ func (protocol) FieldType(name string) (string, bool) {
 // UDP syslog carries no sequence number, so a datagram lost on the way is invisible (PS7).
 func (protocol) LossDetectable(transport string) bool { return transport == push.TransportTCP }
 
-
 // Filter is a syslog subscription's header filter: one or more programs by exact name, optionally
 // narrowed by facility and severity, named as RFC 5424 section 6.2.1 names them.
 type Filter struct {

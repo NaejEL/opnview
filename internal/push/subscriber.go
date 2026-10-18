@@ -347,4 +347,3 @@ func (s *subscriber) recordGap(ctx context.Context, reason string, gap *pendingG
 		s.hub.options.Report(err)
 	}
 }
-

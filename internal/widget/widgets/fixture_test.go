@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/netip"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -466,11 +465,6 @@ func (f *fixture) exec(t *testing.T, statement string, arguments ...any) {
 	t.Helper()
 	if _, err := f.db.DB().ExecContext(context.Background(), statement, arguments...); err != nil {
 		t.Fatalf("%s: %v", statement, err)
-	}
-	// A capture configuration written straight into the tables is recorded as the netflow measure's window
-	// intervals, as a capture read records it (internal/store/netflow, capture.go).
-	if strings.Contains(statement, "capture_") {
-		check(t, f.db.RecordMeasureIntervals(context.Background()))
 	}
 }
 

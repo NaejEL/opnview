@@ -14,7 +14,6 @@ import (
 	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/store/geo"
-	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/owners"
 	"github.com/NaejEL/opnview/internal/store/plugintables"
 	"github.com/NaejEL/opnview/internal/store/purge"
@@ -67,7 +66,6 @@ type Store struct {
 	*attribution.AttributionStore
 	*aggregates.AggregateStore
 	*samples.SampleStore
-	*netflow.NetflowStore
 	*push.PushStore
 	*geo.GeoStore
 	*reads.ReadStore
@@ -85,7 +83,6 @@ func compose(handle *sqldb.Handle) *Store {
 		AttributionStore: attribution.On(handle),
 		AggregateStore:   aggregates.On(handle),
 		SampleStore:      samples.On(handle),
-		NetflowStore:     netflow.On(handle),
 		PushStore:        push.On(handle),
 		GeoStore:         geo.On(handle),
 		ReadStore:        reads.On(handle),

@@ -1,6 +1,0 @@
-{
-  "language": "en",
-  "strings": {
-    "dataset.unmatched_record": "Unmatched NetFlow records, by ingress and egress interface and reason"
-  }
-}
