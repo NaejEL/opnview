@@ -68,18 +68,18 @@ GROUP BY f.dst_address, f.src_client_id, f.src_interface_id, g.lookup_state, g.c
 -- The same three reads in a declared measure, CAST(:measure AS TEXT), (measure.go): the same rows and flows, with the measure's
 -- bytes for their connections in place of the logged bytes, then the measure's
 -- parts, measure_parts (internal/store, schema.sql). A flow's figure is its connection's, read through
--- flow_measures; these read first legs only, so a connection is counted once.
+-- flow_measure; these read first legs only, so a connection is counted once.
 -- ---------------------------------------------------------------------------
 
 -- statement: widget_site_flows_measured
 SELECT a.site_name, f.src_client_id, f.src_interface_id, a.method, g.country_code, g.asn,
-       g.operator, count(*), sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))), sum(a.correlation_delay_seconds),
+       g.operator, count(*), sum(n.bytes), sum(a.correlation_delay_seconds),
        max(a.correlation_delay_seconds),
-       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
+       measure_parts_total(n.parts, n.not_known_index, n.part_width) AS measure_parts
 FROM flow AS f
 JOIN domain_attribution AS a ON a.flow_id = f.id
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
-LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measure(f.id, NULL, NULL, f.action, CAST(:measure AS TEXT)) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.dst_interface_id IS NULL
@@ -103,12 +103,12 @@ GROUP BY site_name, client_id;
 
 -- statement: widget_address_flows_measured
 SELECT f.dst_address, f.src_client_id, f.src_interface_id, coalesce(g.lookup_state, 'no_row'),
-       g.country_code, g.asn, g.operator, count(*), sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))),
-       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
+       g.country_code, g.asn, g.operator, count(*), sum(n.bytes),
+       measure_parts_total(n.parts, n.not_known_index, n.part_width) AS measure_parts
 FROM flow AS f
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
-LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measure(f.id, NULL, NULL, f.action, CAST(:measure AS TEXT)) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND a.flow_id IS NULL

@@ -836,12 +836,15 @@ takes `host.figures.measure` as its measure, and its figures are handed to `host
 - a statement of the widget's own that reads volume columns declares ONE twin, `<name>_measured`,
   which serves every declared measure: the same parameters and the same columns, with the measure's
   bytes in place of the logged ones, plus `measure` (`CAST(:measure AS TEXT) AS measure`) and the
-  measure's parts as `measure_parts`. A twin reading the flows joins each flow to every measure's
-  figures through `flow_measures`, the one place they are read from, and sums them with
-  `measure_parts_sum`; `measure_total_bytes(parts, measure)` and `measure_bytes(parts, measure, part)`
-  read a measure's bytes. The built-in `owner_activity`, `traffic_composition` and `traffic_sankey`
-  statement files show a twin over the flows; `internal/widget/traffic/buckets.statements.sql` one over
-  an aggregate family's `measure_parts`.
+  measure's parts as `measure_parts`. A twin reading the flows joins each flow to the measure's
+  figures through `flow_measure(f.id, f.pair_outcome, f.paired_flow_id, f.action, CAST(:measure AS
+  TEXT)) AS n`, sums `n.bytes`, and sums the parts with `measure_parts_total(n.parts,
+  n.not_known_index, n.part_width) AS measure_parts`: no JSON per flow, which is what a 30-day read
+  costs. `flow_measures` (every measure's parts as one object, summed with `measure_parts_sum`, read
+  with `measure_total_bytes(parts, measure)` and `measure_bytes(parts, measure, part)`) answers the
+  same figures and stays for the aggregate refresh and the purge. The built-in `owner_activity`,
+  `traffic_composition` and `traffic_sankey` statement files show a twin over the flows;
+  `internal/widget/traffic/buckets.statements.sql` one over an aggregate family's `measure_parts`.
 - **a twin binds exactly its statement's parameters and `:measure`**, and is a period template exactly
   when its statement is: the core runs it in the statement's place with the statement's parameters and
   the measure's name. A widget whose twin does not is refused when it loads, with

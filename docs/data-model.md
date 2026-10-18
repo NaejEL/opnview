@@ -3224,8 +3224,13 @@ the measure's complete state; some measured bytes; rows but no measured byte; no
 declared state the directions met and one per marker they carry; on a second leg the same, but a
 refused second leg's forward direction counts nothing and is counted in the measure's refused state.
 `flow_measures` answers every declared measure's parts as one object keyed by measure name. The
-aggregate refresh, the purge and every `_measured` twin join it (`LEFT JOIN LATERAL flow_measures(...)
-AS n ON true`), and none reads the table itself; PostgreSQL inlines both.
+aggregate refresh and the purge join it (`LEFT JOIN LATERAL flow_measures(...) AS n ON true`), and
+none reads the table itself; PostgreSQL inlines both. A `_measured` twin over the flows, read in one
+measure, joins **`flow_measure`** instead -- the same figures for that measure alone, without the JSON
+object of every measure: its bytes, its parts when the connection has a row in the measure, and
+otherwise the action part whose `not_known` class counts it -- and sums them with the aggregate
+**`measure_parts_total`** into the array `measure_parts_sum(...) -> measure` answers (PA-AC29 of the
+open-plugin-API amendment: building and summing that JSON per flow was most of a 30-day twin's time).
 `TestNoStatementCopiesThePerConnectionCounting` fails on a copy. A connection is **covered** in a
 measure when it has a row and no direction is in a state the measure declares not covered.
 

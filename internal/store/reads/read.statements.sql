@@ -41,7 +41,7 @@ GROUP BY f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope
 -- of the logged bytes, then the measure's parts (schema.sql, "THE LAYOUT OF A MEASURE'S PARTS"): per
 -- action, the packets, the coverage classes, the direction states met and the markers. The slots
 -- carry them in their measure_parts; at the edges a flow's figure is its connection's, read through
--- flow_measures and counted as the aggregate refresh counts it
+-- flow_measure and counted as the aggregate refresh counts it
 -- (aggregate.statements.sql, insert_volume): on the first leg's row, and on the second leg's row
 -- too where the figure was measured at that leg. The two measures are never summed.
 -- ---------------------------------------------------------------------------
@@ -65,16 +65,15 @@ GROUP BY src_interface_id, dst_interface_id, peer_address, traffic_scope, traffi
 -- statement: read_volume_flows_measured
 SELECT f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope,
        f.traffic_direction, f.exit_leg_device,
-       measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 0) + measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 1)
-           + measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 2),
-       measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 0), measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 1),
-       measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 2),
+       sum(n.bytes),
+       sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END), sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END),
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
-       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT)
+       measure_parts_total(n.parts, n.not_known_index, n.part_width)
 FROM classified_flow AS f
-LEFT JOIN LATERAL flow_measures(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measure(f.id, f.pair_outcome, f.paired_flow_id, f.action, CAST(:measure AS TEXT)) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
 GROUP BY f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope,

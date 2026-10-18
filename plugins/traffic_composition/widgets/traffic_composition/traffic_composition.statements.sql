@@ -52,17 +52,17 @@ GROUP BY d.engine_kind;
 -- statement: widget_traffic_composition_interface_measured
 SELECT f.local_interface_id AS member,
        f.traffic_direction AS traffic_direction,
-       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))) AS bytes,
-       sum(CASE WHEN f.action = 'pass' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS allowed_bytes,
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS blocked_bytes,
-       sum(CASE WHEN f.action = 'unknown' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS unknown_bytes,
+       sum(n.bytes) AS bytes,
+       sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END) AS allowed_bytes,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
+       sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END) AS unknown_bytes,
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
        CAST(:measure AS TEXT) AS measure,
-       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
+       measure_parts_total(n.parts, n.not_known_index, n.part_width) AS measure_parts
 FROM classified_flow AS f
-LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measure(f.id, NULL, NULL, f.action, CAST(:measure AS TEXT)) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL

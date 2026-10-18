@@ -56,22 +56,22 @@ GROUP BY period_start_at, src_interface_id, dst_interface_id, traffic_direction;
 -- ---------------------------------------------------------------------------
 -- The same two reads in a declared measure, CAST(:measure AS TEXT), (measure.go): the same rows and connections, with the
 -- measure's bytes for them, then the measure's parts, measure_parts (internal/store,
--- schema.sql). A flow's figure is its connection's, read through flow_measures and counted
+-- schema.sql). A flow's figure is its connection's, read through flow_measure and counted
 -- on its first leg's row as the aggregate refresh counts it (internal/store, insert_volume).
 -- ---------------------------------------------------------------------------
 
 -- statement: widget_traffic_buckets_measured
 SELECT f.observed_at - f.observed_at % :width, f.traffic_direction,
-       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))),
-       sum(CASE WHEN f.action = 'pass' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END),
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END),
-       sum(CASE WHEN f.action = 'unknown' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END),
+       sum(n.bytes),
+       sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END),
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
-       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
+       measure_parts_total(n.parts, n.not_known_index, n.part_width) AS measure_parts
 FROM classified_flow AS f
-LEFT JOIN LATERAL flow_measures(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measure(f.id, f.pair_outcome, f.paired_flow_id, f.action, CAST(:measure AS TEXT)) AS n ON true
 LEFT JOIN geo_asn AS g ON g.address = f.peer_address
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 WHERE f.observed_at >= :from

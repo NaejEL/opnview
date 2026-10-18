@@ -91,7 +91,7 @@ func TestNoStatementCopiesThePerConnectionCounting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, function := range []string{"flow_measures", "connection_measure_parts"} {
+	for _, function := range []string{"flow_measures", "flow_measure", "connection_measure_parts"} {
 		if !strings.Contains(string(schema), "CREATE OR REPLACE FUNCTION "+function+"(") {
 			t.Errorf("schema.sql defines no %s", function)
 		}

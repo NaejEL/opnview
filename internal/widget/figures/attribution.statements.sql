@@ -41,11 +41,11 @@ SELECT f.src_client_id,
        max(a.correlation_delay_seconds),
        coalesce(sum(CASE WHEN a.method = 'resolver_cache_answer' THEN 1 ELSE 0 END), 0),
        coalesce(sum(CASE WHEN a.method = 'lookup_timing' THEN 1 ELSE 0 END), 0),
-       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))),
-       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
+       sum(n.bytes),
+       measure_parts_total(n.parts, n.not_known_index, n.part_width) AS measure_parts
 FROM flow AS f
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
-LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measure(f.id, NULL, NULL, f.action, CAST(:measure AS TEXT)) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.dst_interface_id IS NULL

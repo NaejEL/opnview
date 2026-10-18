@@ -4008,6 +4008,113 @@ AS $flow_measures$
            END
 $flow_measures$;
 
+-- flow_measure is ONE measure's figures of one flow, for a statement read in that measure (a widget's
+-- _measured twin, :measure bound to the measure's name), without the measure_parts object of every
+-- declared measure that flow_measures builds per flow and that measure_parts_sum adds key by key -- the
+-- JSON that was most of what a twin read over a 30-day window cost (PA18.2 and PA-AC29 of the
+-- open-plugin-API amendment):
+--
+--     LEFT JOIN LATERAL flow_measure(f.id, f.pair_outcome, f.paired_flow_id, f.action,
+--                                    CAST(:measure AS TEXT)) AS n ON true
+--
+-- It answers, for the measure, what flow_measures(...) -> measure answers, split so that the statement
+-- sums it without JSON:
+--
+--   bytes            the measure's bytes in the flow's three action parts: what
+--                    measure_total_bytes(flow_measures(...).parts, measure) answers, 0 when the
+--                    connection has no row in the measure or the measure is not declared;
+--   parts            the connection's parts when it has a row in the measure, from
+--                    connection_measure_parts as flow_measures composes them; NULL otherwise;
+--   not_known_index  for a connection with no row in the measure, the action part (0 allowed,
+--                    1 blocked, 2 unknown) whose not_known class counts it -- its parts are the not_known
+--                    part in the slot of its action, zero elsewhere, which is all the measure says of it
+--                    -- and NULL for any other connection, or an action in no part;
+--   part_width       one part's width, 6 + states + markers; NULL when the measure is not declared.
+--
+-- measure_parts_total(parts, not_known_index, part_width) sums them per group into what
+-- measure_parts_sum(flow_measures(...).parts) -> measure answers. Both readers keep the counting in
+-- connection_measure_parts, and read connection_measure through its primary key.
+CREATE OR REPLACE FUNCTION flow_measure(leg_id BIGINT, leg_pair_outcome TEXT, leg_paired_flow_id BIGINT,
+                                        leg_action TEXT, measure_name TEXT)
+RETURNS TABLE (bytes BIGINT, parts BIGINT[], not_known_index INTEGER, part_width INTEGER)
+LANGUAGE sql STABLE PARALLEL SAFE
+AS $flow_measure$
+    SELECT CASE WHEN m.parts IS NULL THEN CAST(0 AS BIGINT)
+                ELSE coalesce(m.parts[1], 0) + coalesce(m.parts[1 + cardinality(m.parts) / 3], 0)
+                     + coalesce(m.parts[1 + 2 * (cardinality(m.parts) / 3)], 0) END,
+           m.parts,
+           CASE WHEN m.parts IS NOT NULL THEN NULL
+                WHEN leg_action = 'pass' THEN 0
+                WHEN leg_action IN ('block', 'reject') THEN 1
+                WHEN leg_action = 'unknown' THEN 2 END,
+           (SELECT cardinality(z.zero_part) FROM declared_measure AS z WHERE z.name = measure_name)
+    FROM (SELECT CASE WHEN EXISTS (SELECT 1
+                                   FROM connection_measure AS x
+                                   WHERE x.measure = measure_name
+                                     AND x.connection_flow_id = CASE WHEN leg_pair_outcome = 'second_leg'
+                                                                     THEN leg_paired_flow_id ELSE leg_id END)
+                      THEN (SELECT c.figures
+                            FROM connection_measure_parts(measure_name, leg_id, leg_pair_outcome,
+                                                          leg_paired_flow_id, leg_action) AS c)
+                 END AS parts
+          -- OFFSET 0 keeps the parts one subquery, composed once and read by every column above, rather
+          -- than composed again for each.
+          OFFSET 0) AS m
+$flow_measure$;
+
+-- measure_parts_add_flow is measure_parts_total's step: one flow of flow_measure added to the parts of
+-- the flows before it -- its parts element by element, or one to the not_known class of the part of
+-- its action -- the first flow's parts taken as they are.
+CREATE OR REPLACE FUNCTION measure_parts_add_flow(total BIGINT[], parts BIGINT[], not_known_index INTEGER,
+                                                  part_width INTEGER)
+RETURNS BIGINT[]
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE
+AS $measure_parts_add_flow$
+BEGIN
+    IF parts IS NOT NULL THEN
+        IF total IS NULL THEN
+            RETURN parts;
+        END IF;
+        FOR i IN 1 .. cardinality(parts) LOOP
+            total[i] := total[i] + parts[i];
+        END LOOP;
+        RETURN total;
+    END IF;
+    IF part_width IS NULL THEN
+        RETURN total;
+    END IF;
+    IF total IS NULL THEN
+        total := array_fill(CAST(0 AS BIGINT), ARRAY[3 * part_width]);
+    END IF;
+    IF not_known_index IS NOT NULL THEN
+        -- The not_known class is the sixth figure of a part.
+        total[6 + not_known_index * part_width] := total[6 + not_known_index * part_width] + 1;
+    END IF;
+    RETURN total;
+END
+$measure_parts_add_flow$;
+
+-- measure_parts_written is measure_parts_total's result: the parts as a JSON array, as
+-- measure_parts_sum(...) -> measure writes them (json rather than jsonb: the readers read the text, and
+-- building a jsonb of every group's array cost as much as the sum).
+CREATE OR REPLACE FUNCTION measure_parts_written(total BIGINT[])
+RETURNS JSON
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE
+AS $measure_parts_written$
+BEGIN
+    RETURN array_to_json(total);
+END
+$measure_parts_written$;
+
+-- measure_parts_total is the parts of the flows a group of a twin counts, read through flow_measure:
+-- what measure_parts_sum(flow_measures(...).parts) -> measure answers for them; NULL over no flow and
+-- for a measure not declared.
+CREATE OR REPLACE AGGREGATE measure_parts_total(BIGINT[], INTEGER, INTEGER) (
+    SFUNC = measure_parts_add_flow,
+    STYPE = BIGINT[],
+    FINALFUNC = measure_parts_written
+);
+
 -- measure_markers is the markers a direction carries -- its bits in connection_measure.markers -- as an
 -- object of every marker the measure declares, true or false: a direction with no row carries none.
 CREATE OR REPLACE FUNCTION measure_markers(measure_name TEXT, bits BIGINT) RETURNS JSONB
