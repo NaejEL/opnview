@@ -2,7 +2,6 @@ package sourcestest
 
 import (
 	"context"
-	"regexp"
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/store/reads"
@@ -31,24 +30,26 @@ func DropAvailability(h *webtest.Harness, kind, providerKey string) {
 	}
 }
 
-// GapReasonsOfSchema reads the reasons collection_gap's CHECK admits from the table's
-// own definition, so a reason the schema gains is a reason this test asks a key of.
-func GapReasonsOfSchema(t *testing.T, h *webtest.Harness) []string {
+// GapReasonsRegistered reads the reasons the database's gap-reason registry holds -- every reason a
+// collection gap may be recorded for, as the declarations wrote them -- so a reason a kind or a protocol
+// gains is a reason this test asks a key of.
+func GapReasonsRegistered(t *testing.T, h *webtest.Harness) []string {
 	t.Helper()
-	var definition string
-	if err := h.Store.DB().QueryRow(
-		`SELECT pg_get_constraintdef(oid) FROM pg_constraint
-		 WHERE conrelid = 'collection_gap'::regclass AND contype = 'c'
-		   AND pg_get_constraintdef(oid) LIKE '%reason%'`).
-		Scan(&definition); err != nil {
-		t.Fatalf("reading the collection_gap CHECK on reason: %v", err)
+	rows, err := h.Store.DB().Query(`SELECT reason FROM gap_reason ORDER BY reason`)
+	if err != nil {
+		t.Fatalf("reading the gap-reason registry: %v", err)
 	}
+	defer func() { _ = rows.Close() }()
 	var reasons []string
-	for _, quoted := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(definition, -1) {
-		reasons = append(reasons, quoted[1])
+	for rows.Next() {
+		var reason string
+		if err := rows.Scan(&reason); err != nil {
+			t.Fatal(err)
+		}
+		reasons = append(reasons, reason)
 	}
 	if len(reasons) < 4 {
-		t.Fatalf("read %d gap reasons out of the schema, which is fewer than it holds", len(reasons))
+		t.Fatalf("read %d gap reasons out of the registry, which is fewer than the declarations name", len(reasons))
 	}
 	return reasons
 }

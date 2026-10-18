@@ -244,7 +244,7 @@ func seedForPurge(t *testing.T, database *store.Store, now, cutoff int64) (map[s
 			t.Fatalf("seeding a flow: %v", err)
 		}
 
-		if err := database.InsertDNSResolution(ctx, vocab.DNSResolution{
+		if err := storetest.InsertDNSResolution(ctx, database, vocab.DNSResolution{
 			LookupKey:     "example-purge-lookup-" + string(suffix),
 			ClientAddress: "example-address-" + string(suffix),
 			Domain:        "example-domain", Resolver: "unbound", Action: "pass",

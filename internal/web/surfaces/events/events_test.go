@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web/surfaces/events"
 	"github.com/NaejEL/opnview/internal/web/webtest"
@@ -149,7 +150,7 @@ func TestACommitReachesAnOpenStreamAsItsEvent(t *testing.T) {
 	}
 
 	now := time.Now().Unix()
-	if _, err := harness.Store.RefreshAggregates(ctx, now, now, nil); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, harness.Store, now, now, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := nextNamed(t, stream, events.TypeAggregateRefresh)

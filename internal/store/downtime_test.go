@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
 // The intervals during which opnview was not running (SPEC-step-5b-widget-api.md, D2,
@@ -166,14 +167,14 @@ func TestReadNotRunningRunsAPlannedStatement(t *testing.T) {
 	if len(intervals) != 1 || intervals[0].From != downtimeStart || intervals[0].To != downtimeStart+7*86400 {
 		t.Fatalf("read %+v, not the one interval recorded", intervals)
 	}
-	outside, err := database.ReadStatementsOutsideTheFiles()
+	outside, err := storetest.ReadStatementsOutsideTheFiles(database)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(outside) != 0 {
 		t.Errorf("the read connections ran %d statements no statement file holds: %q", len(outside), outside)
 	}
-	if database.ReadStatementCount() == 0 {
+	if storetest.ReadStatementCount(database) == 0 {
 		t.Error("the read prepared nothing, so this assertion is vacuous")
 	}
 }

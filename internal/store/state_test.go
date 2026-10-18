@@ -6,6 +6,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/store"
 
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -85,7 +86,7 @@ func TestADepartureFromAReconciledSetIsDetectable(t *testing.T) {
 		t.Fatalf("writing today's set: %v", err)
 	}
 
-	departures, err := database.StateDepartures(ctx, providerID, "example-set")
+	departures, err := storetest.StateDepartures(ctx, database, providerID, "example-set")
 	if err != nil {
 		t.Fatalf("reading the departures: %v", err)
 	}
@@ -117,7 +118,7 @@ func TestADepartureFromAReconciledSetIsDetectable(t *testing.T) {
 	// NOT SILENTLY KEPT: the thing that left is absent from the current set. NOT SILENTLY
 	// DROPPED: it is still readable in the snapshot that held it, which is what makes the
 	// departure computable at all.
-	current, err := database.StateItemsAt(ctx, providerID, "example-set", today)
+	current, err := storetest.StateItemsAt(ctx, database, providerID, "example-set", today)
 	if err != nil {
 		t.Fatalf("reading today's set back: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestADepartureFromAReconciledSetIsDetectable(t *testing.T) {
 			t.Error("the thing that left is still in the current set")
 		}
 	}
-	previous, err := database.StateItemsAt(ctx, providerID, "example-set", yesterday)
+	previous, err := storetest.StateItemsAt(ctx, database, providerID, "example-set", yesterday)
 	if err != nil {
 		t.Fatalf("reading yesterday's set back: %v", err)
 	}
@@ -166,7 +167,7 @@ func TestAnEmptyReconciledSetReportsEveryThingAsDeparted(t *testing.T) {
 		t.Fatalf("writing the empty set: %v", err)
 	}
 
-	departures, err := database.StateDepartures(ctx, providerID, "example-set")
+	departures, err := storetest.StateDepartures(ctx, database, providerID, "example-set")
 	if err != nil {
 		t.Fatalf("reading the departures: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestASetObservedOnceReportsNoDeparture(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("writing the only set: %v", err)
 	}
-	departures, err := database.StateDepartures(ctx, providerID, "example-set")
+	departures, err := storetest.StateDepartures(ctx, database, providerID, "example-set")
 	if err != nil {
 		t.Fatalf("reading the departures: %v", err)
 	}
@@ -224,14 +225,14 @@ func TestOneProvidersSetsAreIndependent(t *testing.T) {
 		t.Fatalf("writing the second example-set-one: %v", err)
 	}
 
-	emptied, err := database.StateDepartures(ctx, providerID, "example-set-one")
+	emptied, err := storetest.StateDepartures(ctx, database, providerID, "example-set-one")
 	if err != nil {
 		t.Fatalf("reading the departures from the emptied set: %v", err)
 	}
 	if len(emptied) != 1 {
 		t.Errorf("%d things left the emptied set, want its one member", len(emptied))
 	}
-	untouched, err := database.StateDepartures(ctx, providerID, "example-set-two")
+	untouched, err := storetest.StateDepartures(ctx, database, providerID, "example-set-two")
 	if err != nil {
 		t.Fatalf("reading the departures from the untouched set: %v", err)
 	}
@@ -346,7 +347,7 @@ func TestAHalfWrittenReconciledSetIsNotStoredAtAll(t *testing.T) {
 	if stored := count(t, database, "state_snapshot"); stored != 1 {
 		t.Errorf("%d snapshots are stored, so the failed poll left one behind", stored)
 	}
-	departures, err := database.StateDepartures(ctx, providerID, "example-set")
+	departures, err := storetest.StateDepartures(ctx, database, providerID, "example-set")
 	if err != nil {
 		t.Fatalf("reading the departures: %v", err)
 	}

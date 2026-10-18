@@ -360,46 +360,6 @@ type OrphanedTable struct {
 	Rows   int64  `json:"rows"`
 }
 
-// OrphanedPluginTables returns the recorded tables of every plugin not among the loaded ones, with
-// their row counts. Nothing of them is touched: removing a plugin's data is the operator's act,
-// one statement (DROP SCHEMA plugin_<name> CASCADE), as docs/plugins.md says.
-func (s *PluginTableStore) OrphanedPluginTables(ctx context.Context, loaded []string) ([]OrphanedTable, error) {
-	rows, err := s.SQL.QueryContext(ctx, "SELECT plugin, table_name FROM plugin_table ORDER BY plugin, table_name")
-	if err != nil {
-		return nil, fmt.Errorf("store: listing the plugin tables: %w", err)
-	}
-	var orphaned []OrphanedTable
-	for rows.Next() {
-		var table OrphanedTable
-		if err := rows.Scan(&table.Plugin, &table.Table); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		if !plugindecl.Contains(loaded, table.Plugin) {
-			orphaned = append(orphaned, table)
-		}
-	}
-	_ = rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for index := range orphaned {
-		exists, err := s.relationExists(ctx, plugindecl.PluginSchema(orphaned[index].Plugin), orphaned[index].Table)
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			continue
-		}
-		if err := s.SQL.QueryRowContext(ctx, "SELECT count(*) FROM "+
-			plugindecl.PluginTable{Plugin: orphaned[index].Plugin, Table: orphaned[index].Table}.Quoted()).
-			Scan(&orphaned[index].Rows); err != nil {
-			return nil, err
-		}
-	}
-	return orphaned, nil
-}
-
 // PluginRows are the rows one plugin pass emitted, per table name (the plugin's own, not the
 // qualified name), each row a map from column to value: an int64, a float64, a string or nil.
 type PluginRows map[string][]map[string]any

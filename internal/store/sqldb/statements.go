@@ -102,14 +102,6 @@ func RegisterStatements(owner string, files fs.FS) error {
 	return nil
 }
 
-// RegistrationFailures returns every refusal RegisterStatements met, for the test that asserts
-// there were none.
-func RegistrationFailures() []error {
-	statementsMutex.RLock()
-	defer statementsMutex.RUnlock()
-	return append([]error(nil), registrationFailures...)
-}
-
 // StatementOwner names the owner that registered a statement, or "" for an unknown one.
 func StatementOwner(name string) string {
 	statementsMutex.RLock()
@@ -167,12 +159,6 @@ func StatementNames() ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
-}
-
-// IsPeriodTemplate reports whether a statement is a period template.
-func IsPeriodTemplate(name string) bool {
-	text, err := Statement(name)
-	return err == nil && strings.Contains(text, periodToken)
 }
 
 // ParseStatements splits one statements file on its markers, exactly as RegisterStatements does,

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -48,7 +49,7 @@ func TestTheOutcomeCheckHoldsExactlyTheClosedSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := database.AvailabilityOutcomeOf(ctx, providerID); err != nil ||
+	if outcome, err := storetest.AvailabilityOutcomeOf(ctx, database, providerID); err != nil ||
 		outcome != vocab.OutcomeNotYetProbed {
 		t.Errorf("a fresh availability row reads %q (%v), not %q", outcome, err, vocab.OutcomeNotYetProbed)
 	}

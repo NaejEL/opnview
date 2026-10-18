@@ -289,7 +289,7 @@ func New(options Options) (*Server, error) {
 		fmt.Fprintf(os.Stderr, "opnview: web: %v\n", refusal)
 	}
 
-	catalogue, err := buildCatalogue(SourceLanguage, accepted, withDatasetStrings(SourceLanguage,
+	catalogue, err := buildCatalogue(SourceLanguage, accepted, WithDatasetStrings(SourceLanguage,
 		server.plugins.Strings(SourceLanguage)))
 	if err != nil {
 		return nil, err

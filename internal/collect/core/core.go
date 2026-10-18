@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/broker"
@@ -264,14 +263,4 @@ func (c *Collector) DiscoverClock(ctx context.Context) error {
 func (c *Collector) Storing() func() {
 	c.PurgeMutex.RLock()
 	return c.PurgeMutex.RUnlock
-}
-
-// SortedKeys returns a map's keys, sorted.
-func SortedKeys[V any](values map[string]V) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }

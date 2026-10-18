@@ -140,7 +140,7 @@ func Setting(h *webtest.Harness, key string) string {
 // CatalogueText is the source-language string of one key.
 func CatalogueText(t *testing.T, key webtest.MessageKey) string {
 	t.Helper()
-	catalogue, err := web.ProductCatalogue(web.SourceLanguage)
+	catalogue, err := webtest.ProductCatalogue(web.SourceLanguage)
 	if err != nil {
 		t.Fatalf("loading the catalogue: %v", err)
 	}

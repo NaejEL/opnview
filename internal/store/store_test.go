@@ -14,6 +14,7 @@ import (
 	"github.com/NaejEL/opnview/internal/testtiming"
 
 	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -324,11 +325,11 @@ func TestEveryRegisteredProviderHasExactlyOneAvailabilityRow(t *testing.T) {
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
-	providers, err := database.CountRows(ctx, "provider")
+	providers, err := storetest.CountRows(ctx, database, "provider")
 	if err != nil {
 		t.Fatalf("counting the registry: %v", err)
 	}
-	availability, err := database.CountRows(ctx, "source_availability")
+	availability, err := storetest.CountRows(ctx, database, "source_availability")
 	if err != nil {
 		t.Fatalf("counting the availability rows: %v", err)
 	}
@@ -363,7 +364,7 @@ func TestActivatingASecondProviderOfOneKindReplacesTheFirst(t *testing.T) {
 	if err := database.SetActiveProviders(ctx, "dns_lookup", "dnsmasq"); err != nil {
 		t.Fatalf("activating the second resolver: %v", err)
 	}
-	id, active, err := database.ActiveProviderID(ctx, "dns_lookup")
+	id, active, err := storetest.ActiveProviderID(ctx, database, "dns_lookup")
 	if err != nil || !active {
 		t.Fatalf("reading the active resolver: active %v err %v", active, err)
 	}
@@ -379,7 +380,7 @@ func TestActivatingASecondProviderOfOneKindReplacesTheFirst(t *testing.T) {
 	if err := database.SetActiveProviders(ctx, "dns_lookup", ""); err != nil {
 		t.Fatalf("leaving the kind with no active provider: %v", err)
 	}
-	if _, active, err := database.ActiveProviderID(ctx, "dns_lookup"); err != nil {
+	if _, active, err := storetest.ActiveProviderID(ctx, database, "dns_lookup"); err != nil {
 		t.Fatalf("reading back: %v", err)
 	} else if active {
 		t.Fatal("the kind still has an active provider after being cleared")

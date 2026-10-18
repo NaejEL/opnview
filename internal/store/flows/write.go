@@ -190,35 +190,6 @@ func (s *FlowStore) ProviderKey(ctx context.Context, providerID int64) (string, 
 	return key, nil
 }
 
-// ActiveProviderID returns the active provider of one EXCLUSIVE kind, and whether
-// there is one. None is active on a fresh database: activeness is decided by the
-// probe round, never by the schema.
-//
-// It refuses a kind that admits several active providers, rather than returning
-// the first row and letting a caller read one source where there are three. Such a
-// caller wants ActiveProviderIDs.
-func (s *FlowStore) ActiveProviderID(ctx context.Context, kind string) (int64, bool, error) {
-	concurrent, err := s.kindConcurrent(ctx, s.SQL, kind)
-	if err != nil {
-		return 0, false, err
-	}
-	if concurrent {
-		return 0, false, fmt.Errorf(
-			"store: the %s kind admits several active providers, so asking for THE active one "+
-				"would read one source where there may be several", kind)
-	}
-	var id int64
-	err = s.SQL.QueryRowContext(ctx,
-		"SELECT id FROM provider WHERE kind = $1 AND is_active", kind).Scan(&id)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return 0, false, nil
-	case err != nil:
-		return 0, false, fmt.Errorf("store: looking up the active %s provider: %w", kind, err)
-	}
-	return id, true, nil
-}
-
 // ActiveProviderIDs returns every active provider of one kind, in registry order.
 // For an exclusive kind the answer holds at most one id; for a concurrent one it
 // is the whole stack the firewall is running.
@@ -847,15 +818,6 @@ func (s *FlowStore) UpsertBlocklist(ctx context.Context, name string, lookedUpAt
 	return id, nil
 }
 
-// InsertDNSResolution writes one resolver lookup, resolving the blocklist name to
-// a row first when the endpoint named one. A lookup made before the furthest horizon
-// the purge has applied is not stored, checked inside the insert for the reason
-// InsertFlow gives: the resolver's buffer keeps offering lookups the purge removed.
-func (s *FlowStore) InsertDNSResolution(ctx context.Context, lookup vocab.DNSResolution) error {
-	_, err := s.StoreDNSResolution(ctx, lookup)
-	return err
-}
-
 // StoreDNSResolution is InsertDNSResolution, reporting whether the lookup was stored:
 // false when its lookup_key is already held or it is older than the purge horizon.
 // The resolver collector decides from it, and not from the lookup's instant, whether a
@@ -1096,72 +1058,6 @@ func (s *FlowStore) InsertStateSnapshot(ctx context.Context, snapshot vocab.Stat
 	return nil
 }
 
-// StateItemsAt returns the members of one snapshot, by set and instant.
-func (s *FlowStore) StateItemsAt(ctx context.Context, providerID int64, setKey string,
-	capturedAt int64) ([]vocab.StateItem, error) {
-	rows, err := s.SQL.QueryContext(ctx,
-		`SELECT i.item_key, i.attributes, i.valid_until_at
-		 FROM state_snapshot AS s
-		 JOIN state_item AS i ON i.snapshot_id = s.id
-		 WHERE s.provider_id = $1 AND s.set_key = $2 AND s.captured_at = $3
-		 ORDER BY i.item_key`,
-		providerID, setKey, capturedAt)
-	if err != nil {
-		return nil, fmt.Errorf("store: reading the %s set: %w", setKey, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var items []vocab.StateItem
-	for rows.Next() {
-		var item vocab.StateItem
-		if err := rows.Scan(&item.ItemKey, &item.Attributes, &item.ValidUntilAt); err != nil {
-			return nil, fmt.Errorf("store: reading the %s set: %w", setKey, err)
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: reading the %s set: %w", setKey, err)
-	}
-	return items, nil
-}
-
-// StateDepartures returns what was in the previous complete snapshot of a set and
-// is not in the latest one.
-//
-// It reads the state_item_departure view rather than composing the comparison
-// here, so the statement a screen reads and the statement a test asserts are the
-// same one. A set observed only once yields nothing, which is correct: nothing can
-// be said to have left a set seen once.
-func (s *FlowStore) StateDepartures(ctx context.Context, providerID int64, setKey string) (
-	[]vocab.StateDeparture, error) {
-	rows, err := s.SQL.QueryContext(ctx,
-		`SELECT provider_id, set_key, item_key, attributes, valid_until_at,
-		        last_present_at, absent_since_at
-		 FROM state_item_departure
-		 WHERE provider_id = $1 AND set_key = $2
-		 ORDER BY item_key`,
-		providerID, setKey)
-	if err != nil {
-		return nil, fmt.Errorf("store: reading the departures from the %s set: %w", setKey, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var departures []vocab.StateDeparture
-	for rows.Next() {
-		var departure vocab.StateDeparture
-		if err := rows.Scan(&departure.ProviderID, &departure.SetKey, &departure.ItemKey,
-			&departure.Attributes, &departure.ValidUntilAt,
-			&departure.LastPresentAt, &departure.AbsentSinceAt); err != nil {
-			return nil, fmt.Errorf("store: reading the departures from the %s set: %w", setKey, err)
-		}
-		departures = append(departures, departure)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: reading the departures from the %s set: %w", setKey, err)
-	}
-	return departures, nil
-}
-
 // RecordCollectionGap writes one interval opnview knows it did not cover. It is
 // never smoothed over and never written as a zero.
 func (s *FlowStore) RecordCollectionGap(ctx context.Context, gap vocab.CollectionGap) error {
@@ -1177,20 +1073,6 @@ func (s *FlowStore) RecordCollectionGap(ctx context.Context, gap vocab.Collectio
 	return nil
 }
 
-// CountRows returns the number of rows in one table. It exists for the tests and
-// for the diagnostics a later cycle puts on a screen; it takes no user input, so
-// the table name is never interpolated from anything but a constant in the
-// caller.
-func (s *FlowStore) CountRows(ctx context.Context, table string) (int, error) {
-	var count int
-	// The table name cannot be a bound parameter in SQL. Every caller passes a
-	// literal, and an unknown name fails here rather than reading anything.
-	if err := s.SQL.QueryRowContext(ctx, "SELECT count(*) FROM \""+table+"\"").Scan(&count); err != nil {
-		return 0, fmt.Errorf("store: counting %s: %w", table, err)
-	}
-	return count, nil
-}
-
 // LatestInterfaceDiscoveryAt returns the instant of the latest discovery that wrote the
 // interfaces -- every interface of one discovery carries its instant in last_seen_at --
 // and whether there was one. A discovery pass reads it before it writes anything, and
@@ -1201,14 +1083,4 @@ func (s *FlowStore) LatestInterfaceDiscoveryAt(ctx context.Context) (int64, bool
 		return 0, false, fmt.Errorf("store: reading the latest discovery: %w", err)
 	}
 	return latest.Int64, latest.Valid, nil
-}
-
-// AvailabilityOutcomeOf reads back one provider's outcome code.
-func (s *FlowStore) AvailabilityOutcomeOf(ctx context.Context, providerID int64) (vocab.AvailabilityOutcome, error) {
-	var outcome string
-	if err := s.SQL.QueryRowContext(ctx,
-		"SELECT outcome FROM source_availability WHERE provider_id = $1", providerID).Scan(&outcome); err != nil {
-		return "", fmt.Errorf("store: reading the availability outcome of provider %d: %w", providerID, err)
-	}
-	return vocab.AvailabilityOutcome(outcome), nil
 }

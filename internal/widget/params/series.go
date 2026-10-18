@@ -319,16 +319,3 @@ func SeriesMeasuresOf(source string) []string {
 	}
 	return measures
 }
-
-// MeasuredSeriesFigure reads a traffic series measure naming a declared measure's figure: the measure and
-// the figure, bytes or packets; ok is false for any other measure.
-func MeasuredSeriesFigure(name string) (measure, figure string, ok bool) {
-	for _, declared := range vocab.Measures() {
-		for _, candidate := range []string{"bytes", "packets"} {
-			if name == declared.Name+"_"+candidate {
-				return declared.Name, candidate, true
-			}
-		}
-	}
-	return "", "", false
-}

@@ -955,21 +955,6 @@ func ShapeName(shape decode.Shape) string {
 	}
 }
 
-// ShapeOf is the decode.Shape of a script's ttl_shape.
-func ShapeOf(name string) (decode.Shape, bool) {
-	switch name {
-	case "absent":
-		return decode.ShapeAbsent, true
-	case "null":
-		return decode.ShapeNull, true
-	case "string":
-		return decode.ShapeString, true
-	case "other":
-		return decode.ShapeOther, true
-	}
-	return decode.ShapeAbsent, false
-}
-
 // JSONShape returns a value as encoding/json decodes it -- every number a float64 -- which is
 // the shape internal/decode reads. A value the firewall answered is already in that shape and is
 // returned as it is; a value a script built may hold integers, which are converted.

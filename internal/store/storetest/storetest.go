@@ -12,7 +12,7 @@ import (
 // with its read role, when the test and its subtests end.
 func Database(t testing.TB) string {
 	t.Helper()
-	database, err := store.NewTestDatabase(context.Background())
+	database, err := store.NewTestDatabase(context.Background(), store.TestDatabaseOptions{})
 	if err != nil {
 		t.Fatalf("creating the test database: %v", err)
 	}
@@ -73,7 +73,7 @@ func Fixture[T any](t testing.TB, key string, build func(t testing.TB, dsn strin
 	fixturesMutex.Unlock()
 	entry.once.Do(func() {
 		entry.failed = true
-		template, err := store.NewTestDatabase(context.Background())
+		template, err := store.NewTestDatabase(context.Background(), store.TestDatabaseOptions{})
 		if err != nil {
 			t.Fatalf("creating the fixture database: %v", err)
 		}
@@ -86,7 +86,7 @@ func Fixture[T any](t testing.TB, key string, build func(t testing.TB, dsn strin
 		t.Fatalf("the fixture %s failed to build in another test", key)
 		return zero, ""
 	}
-	clone, err := store.NewTestDatabaseFrom(context.Background(), entry.template)
+	clone, err := store.NewTestDatabase(context.Background(), store.TestDatabaseOptions{From: entry.template})
 	if err != nil {
 		t.Fatalf("cloning the fixture %s: %v", key, err)
 	}
@@ -113,10 +113,10 @@ func DropFixtures() {
 }
 
 // DatabasePrepared creates a database for the test, cloned from the derived template of a preparation
-// (store.NewTestDatabasePrepared), and drops it when the test ends.
+// (store.TestDatabaseOptions.Prepare), and drops it when the test ends.
 func DatabasePrepared(t testing.TB, revision string, prepare func(ctx context.Context, dsn string) error) string {
 	t.Helper()
-	database, err := store.NewTestDatabasePrepared(context.Background(), revision, prepare)
+	database, err := store.NewTestDatabase(context.Background(), store.TestDatabaseOptions{Revision: revision, Prepare: prepare})
 	if err != nil {
 		t.Fatalf("creating the test database: %v", err)
 	}

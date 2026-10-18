@@ -121,7 +121,7 @@ func TestALookupIngestedBeforeAnyLeasePassIsExaminedByTheFirstOne(t *testing.T) 
 	network := storetest.NewNetwork(t, 2, 3)
 	ctx := context.Background()
 	logged := "example-restart.example.invalid"
-	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 		LookupKey: "example-restart", ClientAddress: logged, ClientHostname: &logged,
 		ClientResolution: vocab.ClientResolutionUnknown, Domain: "example.invalid", Resolver: "unbound",
 		Action: "pass", LookedUpAt: network.Now - 600, IngestedAt: network.Now - 590,

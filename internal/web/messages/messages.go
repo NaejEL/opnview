@@ -47,16 +47,3 @@ const (
 	// MsgCollectionValueInvalid refuses an interval that is not a positive whole number.
 	MsgCollectionValueInvalid Key = "error.collection_value_invalid"
 )
-
-// CoreKeys is every key the core's Go code chooses, in one place, so a test can assert that
-// each exists in the catalogue and that no catalogue entry is unreachable. The registry's
-// vocabulary (messages_registry.go) is included.
-//
-// It is a function rather than a variable so nothing can append to it at run time.
-func CoreKeys() []Key {
-	return append([]Key{
-		MsgSetupClosed, MsgSessionExpired, MsgFormTokenRefused, MsgKeyFileRefused, MsgInternal,
-		MsgUnitDay, MsgUnitDays, MsgUnitHour, MsgUnitHours, MsgUnitMinute, MsgUnitMinutes,
-		MsgUnitSecond, MsgUnitSeconds, MsgDurationUnitUnknown, MsgCollectionIntervalTooLarge, MsgCollectionValueInvalid,
-	}, append(vocabularyKeys(), availabilityKeys()...)...)
-}

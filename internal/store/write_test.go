@@ -11,6 +11,7 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -689,7 +690,7 @@ func exampleTwoInterfaces(t *testing.T, database *store.Store) (int64, int64) {
 // count counts a table, failing the test on an error.
 func count(t *testing.T, database *store.Store, table string) int {
 	t.Helper()
-	value, err := database.CountRows(context.Background(), table)
+	value, err := storetest.CountRows(context.Background(), database, table)
 	if err != nil {
 		t.Fatalf("counting %s: %v", table, err)
 	}

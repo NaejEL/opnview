@@ -306,7 +306,7 @@ func TestAThirdPartyPluginAddsAMeasureInJavaScriptAlone(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the derivation failed: %v", err)
 		}
-		if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now+5, outcome.Instants); err != nil {
+		if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now+5, outcome.Instants); err != nil {
 			t.Fatal(err)
 		}
 		return outcome

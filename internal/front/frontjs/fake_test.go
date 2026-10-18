@@ -9,10 +9,10 @@ import (
 	opnview "github.com/NaejEL/opnview"
 	"github.com/NaejEL/opnview/internal/front"
 	"github.com/NaejEL/opnview/internal/front/frontjs"
-	"github.com/NaejEL/opnview/internal/web"
 
 	// The surfaces' catalogue files are part of the merged catalogue a browser is served.
 	_ "github.com/NaejEL/opnview/internal/web/surfaces"
+	"github.com/NaejEL/opnview/internal/web/webtest"
 )
 
 // A fake server for the front: every route the views read answers a synthesised fixture.
@@ -34,7 +34,7 @@ func englishCatalogue(t testing.TB) map[string]string {
 	catalogueOnce.Do(func() {
 		index, err := front.Build(front.Options{Builtin: opnview.BuiltinFront(),
 			CoreStrings: func(language string) map[string]string {
-				merged, err := web.ProductCatalogue(language)
+				merged, err := webtest.ProductCatalogue(language)
 				if err != nil {
 					return map[string]string{}
 				}

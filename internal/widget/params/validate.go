@@ -116,14 +116,9 @@ var (
 	StatementNamePattern = regexp.MustCompile(`^widget_[a-z0-9]+(_[a-z0-9]+)*$`)
 )
 
-// ValidateManifest checks a manifest against every rule that needs nothing but the manifest, binding the
-// core's bindable kinds. Rules that need the world -- the directory, the script, the query -- are the loader's.
-func ValidateManifest(manifest Manifest) *Refusal {
-	return ValidateManifestWith(manifest, CoreBindableKinds())
-}
-
-// ValidateManifestWith is ValidateManifest binding the kinds an installation's loaded plugins make
-// bindable: the core's and the plugins' own.
+// ValidateManifestWith checks a manifest against every rule that needs nothing but the manifest, binding
+// the kinds an installation's loaded plugins make bindable: the core's (CoreBindableKinds) and the plugins'
+// own. Rules that need the world -- the directory, the script, the query -- are the loader's.
 func ValidateManifestWith(manifest Manifest, bindable []string) *Refusal {
 	name := manifest.Type
 	if name == "" {

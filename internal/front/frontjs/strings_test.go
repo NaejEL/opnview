@@ -13,12 +13,14 @@ import (
 	"testing"
 
 	opnview "github.com/NaejEL/opnview"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/front"
 	"github.com/NaejEL/opnview/internal/front/frontjs"
+	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/store/owners"
-	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
@@ -79,6 +81,17 @@ func schemaVocabulary(t *testing.T, table, column string) []string {
 		t.Fatalf("the table %s holds no CHECK on %s", table, column)
 	}
 	return regexp.MustCompile(`'([a-z_]+)'`).FindAllString(found[1], -1)
+}
+
+// declaredGapReasons are the reasons a collection gap may be recorded for: those the declarations name
+// (store.GapReasons), which the schema's gap_reason registry holds -- the schema lists none.
+func declaredGapReasons() []string {
+	kinds, _ := provider.CoreDeclarations()
+	var reasons []string
+	for _, declared := range store.GapReasons(kinds) {
+		reasons = append(reasons, string(declared.Reason))
+	}
+	return reasons
 }
 
 // composedValues are, for every prefix a front file composes a key with, the values the data can
@@ -221,7 +234,7 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 			"duplicate_client", "invalid_owner_assigned_at", "unknown_owner", "purpose_not_in_vocabulary",
 			"unknown_blocklist", "palette_unknown", "mode_unknown", "language_unknown",
 			"revision_conflict", "unknown_dashboard", "nothing_to_undo", "form_invalid"},
-		"gap_reason.":             unquote(schemaVocabulary(t, "collection_gap", "reason")),
+		"gap_reason.":             declaredGapReasons(),
 		"outcome.":                unquote(schemaVocabulary(t, "source_availability", "outcome")),
 		"parts.origin.":           {front.OriginBuiltin, front.OriginDataDirectory},
 		"parts.part.":             {front.PartTheme, front.PartLanguage, front.PartWidget, front.PartWidgetStrings},
@@ -461,12 +474,12 @@ func TestEveryCatalogueEntryOfTheCoreTheSurfacesAndTheFrontIsReached(t *testing.
 	for key := range usedKeys(t) {
 		reached[key] = true
 	}
-	for _, key := range web.AllHandlerKeys() {
+	for _, key := range webtest.AllHandlerKeys() {
 		reached[string(key)] = true
 	}
 	// Keys composed from a registry row, held to an entry by the surfaces' registry test.
 	composedByRegistry := []string{"collection.kind.", "provider.", "gap_reason.", "dataset."}
-	sources, err := web.CatalogueSources()
+	sources, err := webtest.CatalogueSources()
 	if err != nil {
 		t.Fatal(err)
 	}

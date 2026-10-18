@@ -120,58 +120,6 @@ func (s *ReadStore) WidgetRow(ctx context.Context, name string, parameters map[s
 	return found, err
 }
 
-// ReadStatementCount reports how many distinct statement texts the read connections have run since
-// the store opened. A text is translated to PostgreSQL's numbering once and nothing is prepared on
-// the server (internal/store/sqldb, translate.go and driver.go), so a second call of a read function adds nothing to
-// it; a test observes that (AC31 of 5B, restated by P-AC13).
-func (s *ReadStore) ReadStatementCount() int {
-	if s.Reader == nil {
-		return 0
-	}
-	return s.Reader.RunCount()
-}
-
-// ReadStatementsOutsideTheFiles returns the text of every statement the read connections
-// have run that is not a registered named statement, nor one of
-// their period expansions. sql/schema-checks.sh plans every named statement at both seed
-// sizes and nothing else, so a text returned here is one the API runs unplanned (AC17); a
-// test serves every widget type and asserts that the list is empty.
-func (s *ReadStore) ReadStatementsOutsideTheFiles() ([]string, error) {
-	if s.Reader == nil {
-		return nil, nil
-	}
-	names, err := sqldb.StatementNames()
-	if err != nil {
-		return nil, err
-	}
-	planned := map[string]bool{}
-	for _, name := range names {
-		text, err := sqldb.Statement(name)
-		if err != nil {
-			return nil, err
-		}
-		planned[text] = true
-		planned[translated(text)] = true
-		if sqldb.IsPeriodTemplate(name) {
-			for _, period := range vocab.Periods() {
-				expanded, err := sqldb.PeriodStatement(name, period)
-				if err != nil {
-					return nil, err
-				}
-				planned[expanded] = true
-				planned[translated(expanded)] = true
-			}
-		}
-	}
-	var outside []string
-	for _, text := range s.Reader.RunTexts() {
-		if !planned[text] {
-			outside = append(outside, text)
-		}
-	}
-	return outside, nil
-}
-
 // NullInt64 and NullString re-export the nullable scan targets, so a widget handler scans
 // a NULL as absent rather than as a zero without importing database/sql for it.
 type (
@@ -179,13 +127,3 @@ type (
 	NullString  = sql.NullString
 	NullFloat64 = sql.NullFloat64
 )
-
-// translated is the text a :name statement runs as, which the read connections record; a text that
-// does not translate is returned as it is.
-func translated(text string) string {
-	translation, err := sqldb.Translate(text)
-	if err != nil {
-		return text
-	}
-	return translation.Text
-}

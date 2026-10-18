@@ -72,7 +72,7 @@ func derivedSnapshot(t *testing.T, database *store.Store) string {
 func recomputeEverything(t *testing.T, network *storetest.Network) {
 	t.Helper()
 	instants := allFlowInstants(t, network.DB)
-	if _, err := network.DB.RefreshAggregates(context.Background(), 0, network.Now, instants); err != nil {
+	if _, err := storetest.RefreshAggregates(context.Background(), network.DB, 0, network.Now, instants); err != nil {
 		t.Fatalf("recomputing: %v", err)
 	}
 }
@@ -237,7 +237,7 @@ func TestALookupIsPlacedFromTheSameEvidenceAsAFlow(t *testing.T) {
 	client := network.Clients[1]
 	stranger := storetest.Outside(5, true)
 	for index, address := range []string{client.Address, stranger} {
-		if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+		if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-lookup-%d", index), ClientAddress: address,
 			Domain: "example.invalid", Resolver: "unbound", Action: "pass",
 			LookedUpAt: network.Now - 60, IngestedAt: network.Now - 60,
@@ -325,7 +325,7 @@ func TestReclassifyingAStepFourDatabaseClearsTheRemoteClients(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("writing an event: %v", err)
 		}
-		if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+		if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-step4-lookup-%d", index), ClientAddress: remote,
 			ClientID: &clientID, Domain: "example.invalid", Resolver: "unbound", Action: "pass",
 			LookedUpAt: network.Now - 300, IngestedAt: network.Now - 300,
@@ -333,7 +333,7 @@ func TestReclassifyingAStepFourDatabaseClearsTheRemoteClients(t *testing.T) {
 			t.Fatalf("writing a lookup: %v", err)
 		}
 	}
-	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now, nil); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now, nil); err != nil {
 		t.Fatalf("refreshing the step-4 state: %v", err)
 	}
 
@@ -342,7 +342,7 @@ func TestReclassifyingAStepFourDatabaseClearsTheRemoteClients(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reclassifying: %v", err)
 		}
-		if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now, result.FlowInstants); err != nil {
+		if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now, result.FlowInstants); err != nil {
 			t.Fatalf("refreshing: %v", err)
 		}
 		if _, err := network.DB.PurgeUnreferencedClients(ctx); err != nil {
@@ -407,7 +407,7 @@ func TestALeaseNamingAnAddressSeenOnlyInFlowsRepointsItsRows(t *testing.T) {
 		{ObservedAt: network.Now - 4000, Device: client.Device, Direction: "in", Src: client.Address,
 			Dst: storetest.Outside(2, client.V6), DstPort: &port, Protocol: "tcp", Action: "pass", Bytes: 200},
 	})
-	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 		LookupKey: "example-lookup-before", ClientAddress: client.Address, Domain: "example.invalid",
 		Resolver: "unbound", Action: "pass", AnswerSource: storetest.Ptr("Recursion"),
 		LookedUpAt: network.Now - 42, IngestedAt: network.Now - 42,
@@ -450,7 +450,7 @@ func TestALeaseNamingAnAddressSeenOnlyInFlowsRepointsItsRows(t *testing.T) {
 		t.Fatalf("attributing again: %v", err)
 	}
 	forced := append(result.FlowInstants, attribution.FlowInstants...)
-	if _, err := network.DB.RefreshAggregates(ctx, network.Now, network.Now, forced); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, network.Now, network.Now, forced); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 

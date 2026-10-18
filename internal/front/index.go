@@ -392,16 +392,6 @@ func (i *Index) Asset(published string) (*Asset, bool) {
 // Shell returns the shell document.
 func (i *Index) Shell() *Asset { return i.shell }
 
-// AssetPaths returns every published path, sorted, for a test.
-func (i *Index) AssetPaths() []string {
-	paths := make([]string, 0, len(i.assets))
-	for published := range i.assets {
-		paths = append(paths, published)
-	}
-	sort.Strings(paths)
-	return paths
-}
-
 // Themes returns the accepted themes, the default first.
 func (i *Index) Themes() []Theme { return append([]Theme(nil), i.themes...) }
 

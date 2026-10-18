@@ -39,7 +39,7 @@ func TestEveryStatementPreparesForEveryPeriod(t *testing.T) {
 			if composed != 3 {
 				t.Errorf("the composition %s was expanded for %d periods, not the three with a finer one", name, composed)
 			}
-		} else if sqldb.IsPeriodTemplate(name) {
+		} else if storetest.IsPeriodTemplate(name) {
 			for _, period := range vocab.Periods() {
 				text, err := sqldb.PeriodStatement(name, period)
 				if err != nil {

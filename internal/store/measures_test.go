@@ -107,7 +107,7 @@ func TestADeclaredMeasureIsAggregatedPurgedAndCountedOnTheExitRow(t *testing.T) 
 		check(t, err)
 	}
 	instants := allFlowInstants(t, network.DB)
-	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now+5, instants); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now+5, instants); err != nil {
 		t.Fatal(err)
 	}
 
@@ -139,7 +139,7 @@ func TestADeclaredMeasureIsAggregatedPurgedAndCountedOnTheExitRow(t *testing.T) 
 	if left := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM connection_measure WHERE measure = 'example_rate'"); left >= int64(len(written)) {
 		t.Fatalf("the purge removed no measure output (%d rows left)", left)
 	}
-	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now+5, instants); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now+5, instants); err != nil {
 		t.Fatal(err)
 	}
 	for period, got := range periodParts() {

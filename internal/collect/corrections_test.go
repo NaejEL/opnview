@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 
@@ -172,7 +173,7 @@ func TestAnOperatorNetworkChangesClassificationAtTheNextDerivation(t *testing.T)
 		t.Fatalf("adding the network: %v", err)
 	}
 	// The edit alone changes nothing stored; the next derivation does.
-	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.Derive(ctx, derive.Derivation{}); err != nil {
 		t.Fatalf("deriving: %v", err)
 	}
 	if placed := collecttest.ScalarCount(t, harness.Store,

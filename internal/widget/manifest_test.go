@@ -21,7 +21,7 @@ func TestAManifestMayLeaveOutWhatHasADefault(t *testing.T) {
 		t.Errorf("the defaults are no_domains none, no renderer of its own (its shape's draws it), not windowed: %+v",
 			manifest)
 	}
-	if refusal := params.ValidateManifest(manifest); refusal != nil {
+	if refusal := params.ValidateManifestWith(manifest, params.CoreBindableKinds()); refusal != nil {
 		t.Errorf("the minimal manifest is refused: %v", refusal)
 	}
 	withParameter, err := params.DecodeManifest([]byte(strings.Replace(minimalManifest, `"queries"`,
@@ -95,7 +95,7 @@ func TestValidateManifestNamesTheRuleBroken(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 			continue
 		}
-		refusal := params.ValidateManifest(manifest)
+		refusal := params.ValidateManifestWith(manifest, params.CoreBindableKinds())
 		if refusal == nil {
 			t.Errorf("%s: accepted", name)
 			continue

@@ -118,7 +118,7 @@ func storeHostLookup(t *testing.T, database *store.Store, c dualStackCase) {
 	if err != nil {
 		t.Fatalf("resolving %s: %v", logged, err)
 	}
-	if err := database.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(ctx, database, vocab.DNSResolution{
 		LookupKey: "dual-stack-" + logged, ClientAddress: address, ClientHostname: &logged,
 		ClientResolution: resolution, ClientFamily: c.familyPointer(), Domain: "example-site.example.com",
 		Resolver: "unbound", Action: "pass", LookedUpAt: storetest.ReferenceNow, IngestedAt: storetest.ReferenceNow + 2,
@@ -283,7 +283,7 @@ func TestTheQueryingFamilyOutsideFourAndSixIsRefused(t *testing.T) {
 	database, _ := openTestStore(t)
 	family := int64(5)
 	logged := dualStackHost
-	if err := database.InsertDNSResolution(context.Background(), vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(context.Background(), database, vocab.DNSResolution{
 		LookupKey: "dual-stack-bad-family", ClientAddress: logged, ClientHostname: &logged,
 		ClientResolution: vocab.ClientResolutionUnknown, ClientFamily: &family, Domain: "example.com",
 		Resolver: "unbound", Action: "pass", LookedUpAt: storetest.ReferenceNow, IngestedAt: storetest.ReferenceNow,

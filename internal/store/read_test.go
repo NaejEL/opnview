@@ -299,7 +299,7 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 		t.Errorf("a past window with no lookup reads %v although only today's probe was reachable", rate.Rate)
 	}
 	// And a past window holding a lookup is defined although the resolver is unreachable now.
-	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 		LookupKey: "example-past-lookup", ClientAddress: network.Clients[0].Address,
 		Domain: "past.example.invalid", Resolver: "unbound", Action: "pass",
 		AnswerSource: storetest.Ptr("Recursion"), LookedUpAt: past + 600, IngestedAt: past + 700,

@@ -298,7 +298,7 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 	check(t, rows.Close())
 	recursion := "Recursion"
 	for index, item := range lookups {
-		check(t, database.InsertDNSResolution(ctx, vocab.DNSResolution{LookupKey: fmt.Sprintf("example-lookup-%d", index),
+		check(t, storetest.InsertDNSResolution(ctx, database, vocab.DNSResolution{LookupKey: fmt.Sprintf("example-lookup-%d", index),
 			ClientAddress: item.address, ClientResolution: vocab.ClientResolutionLoggedAddress,
 			Domain: f.sites[index%len(f.sites)], Resolver: "unbound", Action: "pass", AnswerSource: &recursion,
 			LookedUpAt: item.at - 1,
@@ -307,7 +307,7 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 	// Refused lookups: two lists, one with an assigned purpose, and one refusal attributed to no list.
 	for index, list := range []string{"example-list-a", "example-list-b", ""} {
 		action := "block"
-		check(t, database.InsertDNSResolution(ctx, vocab.DNSResolution{LookupKey: fmt.Sprintf("example-refused-%d", index),
+		check(t, storetest.InsertDNSResolution(ctx, database, vocab.DNSResolution{LookupKey: fmt.Sprintf("example-refused-%d", index),
 			ClientAddress: f.clients[index%len(f.clients)].address, ClientResolution: vocab.ClientResolutionLoggedAddress,
 			Domain: fmt.Sprintf("blocked%d.example", index), Resolver: "unbound", Action: action, BlocklistName: list,
 			LookedUpAt: f.now - 600 - int64(index)*3600, IngestedAt: f.now - 1}))
@@ -349,7 +349,7 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 		}
 	}
 
-	_, err = database.RefreshAggregates(ctx, 0, f.now, nil)
+	_, err = storetest.RefreshAggregates(ctx, database, 0, f.now, nil)
 	check(t, err)
 	f.allReachable(t)
 	check(t, database.Close())

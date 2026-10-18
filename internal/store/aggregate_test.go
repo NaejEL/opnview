@@ -290,7 +290,7 @@ func attributeNetwork(t *testing.T, network *storetest.Network) {
 		if flow.srcClient.Valid {
 			clientID = &flow.srcClient.Int64
 		}
-		if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+		if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-lookup-%d", flow.id), ClientAddress: flow.srcAddress,
 			ClientID: clientID, Domain: fmt.Sprintf("site-%d.example.invalid", flow.id%7),
 			Resolver: "unbound", Action: "pass", AnswerSource: storetest.Ptr("Recursion"),
@@ -303,7 +303,7 @@ func attributeNetwork(t *testing.T, network *storetest.Network) {
 	if err != nil {
 		t.Fatalf("attributing: %v", err)
 	}
-	if _, err := network.DB.RefreshAggregates(ctx, network.Now, network.Now, result.FlowInstants); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, network.Now, network.Now, result.FlowInstants); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 }
@@ -443,7 +443,7 @@ func TestTheRefreshRewritesExactlyTheSlotsTheContractNames(t *testing.T) {
 		t.Fatalf("classifying: %v", err)
 	}
 	before := computedAt()
-	refresh, err := network.DB.RefreshAggregates(ctx, network.Now+1, later, nil)
+	refresh, err := storetest.RefreshAggregates(ctx, network.DB, network.Now+1, later, nil)
 	if err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestTheRefreshRewritesExactlyTheSlotsTheContractNames(t *testing.T) {
 
 	// A pass with nothing new rewrites only the current slots.
 	quiet := later + 60
-	refresh, err = network.DB.RefreshAggregates(ctx, later+1, quiet, nil)
+	refresh, err = storetest.RefreshAggregates(ctx, network.DB, later+1, quiet, nil)
 	if err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestTheRefreshRewritesExactlyTheSlotsTheContractNames(t *testing.T) {
 	// A slot whose computed_at is not older than its newest ingested_at is not rewritten,
 	// even when the pass is asked to consider every flow ever ingested.
 	everything := quiet + 60
-	refresh, err = network.DB.RefreshAggregates(ctx, 0, everything, nil)
+	refresh, err = storetest.RefreshAggregates(ctx, network.DB, 0, everything, nil)
 	if err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
@@ -572,7 +572,7 @@ func TestThePairVolumeIsDerivedFromFlowOnTheRealDestinationPort(t *testing.T) {
 	if _, err := network.DB.Reclassify(ctx, addresses, network.Now); err != nil {
 		t.Fatalf("classifying: %v", err)
 	}
-	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now, nil); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now, nil); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	low, high := a.Address, b.Address
@@ -646,7 +646,7 @@ func TestAMonthStraddlingTheHorizonKeepsWhatThePurgeRemoved(t *testing.T) {
 	}
 
 	// A forced rewrite of every slot the two flows touched.
-	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now+60, []int64{early, late}); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now+60, []int64{early, late}); err != nil {
 		t.Fatalf("the forced refresh: %v", err)
 	}
 	for _, table := range []string{"volume_aggregate_30d", "rule_volume_aggregate_30d",
@@ -666,7 +666,7 @@ func TestAMonthStraddlingTheHorizonKeepsWhatThePurgeRemoved(t *testing.T) {
 	if _, err := network.DB.Reclassify(ctx, addresses, network.Now+100); err != nil {
 		t.Fatalf("classifying: %v", err)
 	}
-	if _, err := network.DB.RefreshAggregates(ctx, network.Now+61, network.Now+120, nil); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, network.Now+61, network.Now+120, nil); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	if got := monthBytes("volume_aggregate_30d"); got != 600 {

@@ -105,3 +105,14 @@ func TestTheDocumentedContractsAreTheContracts(t *testing.T) {
 		}
 	}
 }
+
+// Contracts returns, for the document test, the contracts of the core kinds a plugin may implement, ordered by kind.
+func Contracts() []Contract {
+	var contracts []Contract
+	for _, contract := range Kinds() {
+		if contract.CoreOnly == "" {
+			contracts = append(contracts, contract)
+		}
+	}
+	return contracts
+}

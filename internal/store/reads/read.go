@@ -575,14 +575,6 @@ func sortedVolumeRows(sums map[string]*VolumeRow) []VolumeRow {
 	return rows
 }
 
-// keyOr renders a nullable id as a node key, or the fallback when it is NULL.
-func keyOr(prefix string, value sql.NullInt64, fallback string) string {
-	if !value.Valid {
-		return prefix + ":" + fallback
-	}
-	return fmt.Sprintf("%s:%d", prefix, value.Int64)
-}
-
 // AttributionRate is the share of a client's outbound flows that carry a site name.
 type AttributionRate struct {
 	// EligibleFlows are the flows with an outside destination in the window.

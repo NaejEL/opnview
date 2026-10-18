@@ -76,7 +76,7 @@ func vetOne(host Host, surface Surface, keysSeen map[string]map[string]string,
 	table map[string]string) (vetted, []Route, string) {
 	candidate := vetted{surface: surface}
 
-	localised, err := surfaceStrings(surface.Files)
+	localised, err := SurfaceStrings(surface.Files)
 	if err != nil {
 		return candidate, nil, err.Error()
 	}
@@ -154,8 +154,8 @@ func tryMount(mux *http.ServeMux, route Route) (failure string) {
 	return ""
 }
 
-// surfaceStrings reads every language file of a surface: locale/<language>.json.
-func surfaceStrings(files fs.FS) (map[string]map[string]string, error) {
+// SurfaceStrings reads every language file of a surface: locale/<language>.json.
+func SurfaceStrings(files fs.FS) (map[string]map[string]string, error) {
 	found := map[string]map[string]string{}
 	if files == nil {
 		return found, nil

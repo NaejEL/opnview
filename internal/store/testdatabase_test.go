@@ -11,7 +11,7 @@ import (
 // it when the test ends. It returns the connection parameter.
 func testDatabase(t testing.TB) string {
 	t.Helper()
-	database, err := store.NewTestDatabase(context.Background())
+	database, err := store.NewTestDatabase(context.Background(), store.TestDatabaseOptions{})
 	if err != nil {
 		t.Fatalf("creating the test database: %v", err)
 	}

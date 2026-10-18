@@ -91,12 +91,6 @@ type Refresh struct {
 	Rewritten []SlotRef
 }
 
-// RefreshAggregates applies the contract with nothing ingesting concurrently: the
-// refresh's watermark is its own instant. See RefreshAggregatesAt.
-func (s *AggregateStore) RefreshAggregates(ctx context.Context, since, now int64, forced []int64) (Refresh, error) {
-	return s.RefreshAggregatesAt(ctx, since, now, now, forced)
-}
-
 // RefreshAggregatesAt applies the contract: every slot holding a flow ingested at or
 // after since or a purged part a purge wrote at or after since, every slot holding
 // one of the forced instants, and the current slot

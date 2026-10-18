@@ -13,6 +13,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/store/plugintables"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
 // listening starts a listener on every channel and returns what it hears, once it is known to be
@@ -121,7 +122,7 @@ func TestACommittedPassEmitsItsNotificationAndARolledBackOneNone(t *testing.T) {
 	}
 
 	now := int64(1790000000)
-	refresh, err := database.RefreshAggregates(ctx, now, now, nil)
+	refresh, err := storetest.RefreshAggregates(ctx, database, now, now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

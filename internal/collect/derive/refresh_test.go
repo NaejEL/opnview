@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -21,14 +22,14 @@ func TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.ArrangeFilterLogCollection(t)
 	ctx := context.Background()
-	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.Derive(ctx, derive.Derivation{}); err != nil {
 		t.Fatalf("the first refresh: %v", err)
 	}
 
 	stamped, token := harness.Collector.BeginIngest()
 	harness.Clock.Advance(5 * time.Second)
 	// Another pass finishes meanwhile, and its derivation refreshes.
-	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.Derive(ctx, derive.Derivation{}); err != nil {
 		t.Fatalf("the concurrent refresh: %v", err)
 	}
 
@@ -45,7 +46,7 @@ func TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot(t *testing.T) {
 	harness.Collector.EndIngest(token)
 
 	harness.Clock.Advance(5 * time.Second)
-	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.Derive(ctx, derive.Derivation{}); err != nil {
 		t.Fatalf("the next refresh: %v", err)
 	}
 	if bytes := collecttest.ScalarCount(t, harness.Store, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h

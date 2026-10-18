@@ -159,7 +159,7 @@ func TestTwoRefusalsOfOneProviderAreDistinguishableThroughTheDetail(t *testing.T
 func TestEveryRecentGapIsAnsweredWithItsReason(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
-	catalogue, err := web.ProductCatalogue(web.SourceLanguage)
+	catalogue, err := webtest.ProductCatalogue(web.SourceLanguage)
 	if err != nil {
 		t.Fatalf("loading the catalogue: %v", err)
 	}
@@ -168,9 +168,9 @@ func TestEveryRecentGapIsAnsweredWithItsReason(t *testing.T) {
 	}
 
 	now := h.Clock.Now().Unix()
-	reasons := sourcestest.GapReasonsOfSchema(t, h)
+	reasons := sourcestest.GapReasonsRegistered(t, h)
 	for index, reason := range reasons {
-		if _, present := catalogue.Strings[string(messages.GapReasonKey(reason))]; !present {
+		if _, present := catalogue.Strings[string(webtest.GapReasonKey(reason))]; !present {
 			t.Errorf("the gap reason %s has no catalogue key", reason)
 		}
 		start := now - int64(3600*(index+1))
@@ -316,7 +316,7 @@ func TestAnUnreadableAvailabilityIsAFailureAndNeverANought(t *testing.T) {
 func TestEveryKindAndProviderHasACatalogueLabel(t *testing.T) {
 	t.Parallel()
 	h := webtest.New(t)
-	catalogue, err := web.ProductCatalogue(web.SourceLanguage)
+	catalogue, err := webtest.ProductCatalogue(web.SourceLanguage)
 	if err != nil {
 		t.Fatalf("loading the catalogue: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestEveryKindAndProviderHasACatalogueLabel(t *testing.T) {
 		t.Fatal("the registry is empty, so this assertion is vacuous")
 	}
 	for _, row := range rows {
-		for _, key := range []messageKey{messages.KindLabelKey(row.Kind), messages.ProviderLabelKey(row.Kind, row.ProviderKey)} {
+		for _, key := range []messageKey{webtest.KindLabelKey(row.Kind), webtest.ProviderLabelKey(row.Kind, row.ProviderKey)} {
 			if _, present := catalogue.Strings[string(key)]; !present {
 				t.Errorf("%s/%s has no catalogue label %s", row.Kind, row.ProviderKey, key)
 			}

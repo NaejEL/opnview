@@ -49,7 +49,7 @@ func outboundFlow(client storetest.Client, at, bytes int64, peer int, ingested i
 // carries a site name and the domain family has a row.
 func lookupBefore(t *testing.T, network *storetest.Network, key string, address string, at int64) {
 	t.Helper()
-	if err := network.DB.InsertDNSResolution(context.Background(), vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(context.Background(), network.DB, vocab.DNSResolution{
 		LookupKey: key, ClientAddress: address, Domain: "example-site.example.invalid",
 		Resolver: "unbound", Action: "pass", AnswerSource: storetest.Ptr("Recursion"),
 		LookedUpAt: at - 2, IngestedAt: at,
@@ -84,7 +84,7 @@ func TestARetentionShorterThanAnHourStillFillsTheCurrentSlots(t *testing.T) {
 	if err := network.DB.Purge(ctx, network.Now); err != nil {
 		t.Fatalf("purging: %v", err)
 	}
-	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now, nil); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now, nil); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	for _, period := range vocab.Periods() {
@@ -121,7 +121,7 @@ func TestTheCurrentSlotsEqualTheSumsOverFlowWhateverTheRetention(t *testing.T) {
 					t.Fatalf("emptying %s: %v", table, err)
 				}
 			}
-			if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now, nil); err != nil {
+			if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now, nil); err != nil {
 				t.Fatalf("refreshing: %v", err)
 			}
 			for _, period := range vocab.Periods() {
@@ -189,7 +189,7 @@ func TestAnHourHoldingTheHorizonTakesALateFlowAndAReclassification(t *testing.T)
 	if _, err := network.DB.Reclassify(ctx, addresses, late); err != nil {
 		t.Fatalf("classifying: %v", err)
 	}
-	if _, err := network.DB.RefreshAggregates(ctx, network.Now, late+1, nil); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, network.Now, late+1, nil); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	for _, family := range []string{"volume", "rule", "client", "owner", "peer"} {
@@ -217,7 +217,7 @@ func TestAnHourHoldingTheHorizonTakesALateFlowAndAReclassification(t *testing.T)
 	if len(result.FlowInstants) == 0 {
 		t.Fatal("the operator network moved no flow, so the test proves nothing")
 	}
-	if _, err := network.DB.RefreshAggregates(ctx, late+2, late+30, result.FlowInstants); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, late+2, late+30, result.FlowInstants); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	byDirection := func(direction string) int64 {
@@ -340,7 +340,7 @@ func TestDistinctPeersIsExactInAComposedAndARolledUpSlot(t *testing.T) {
 		t.Fatalf("%d flows survived the purge, not the present one", flows)
 	}
 	forced := []int64{day + 60, day + 3660, yesterday + 60}
-	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now+5, forced); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now+5, forced); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	check("after the purge")
@@ -554,7 +554,7 @@ func TestOperatorNetworksFollowDecisionD1(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reclassifying: %v", err)
 		}
-		if _, err := network.DB.RefreshAggregates(ctx, 0, at, result.FlowInstants); err != nil {
+		if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, at, result.FlowInstants); err != nil {
 			t.Fatalf("refreshing: %v", err)
 		}
 		settled := derivedSnapshot(t, network.DB)

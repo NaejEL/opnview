@@ -50,7 +50,7 @@ func TestAPurgeCommittingDuringAFilterLogPassDoesNotCountTwice(t *testing.T) {
 		collecttest.ReferenceEpoch(), providerID, newestStored, hasStored, &stored); err != nil {
 		t.Fatalf("storing the page: %v", err)
 	}
-	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.Derive(ctx, derive.Derivation{}); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	purged := collecttest.ScalarCount(t, harness.Store, "SELECT coalesce(sum(bytes), 0) FROM purged_flow_hour")

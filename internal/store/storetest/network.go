@@ -316,7 +316,7 @@ func (n *Network) ClassifyAndRefresh(t *testing.T, addresses []string) aggregate
 	if _, err := n.DB.Reclassify(ctx, addresses, n.Now); err != nil {
 		t.Fatalf("classifying: %v", err)
 	}
-	refresh, err := n.DB.RefreshAggregates(ctx, 0, n.Now, nil)
+	refresh, err := RefreshAggregates(ctx, n.DB, 0, n.Now, nil)
 	if err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
@@ -443,7 +443,7 @@ func (n *Network) DerivePairs(t *testing.T, addresses []string, from, to int64) 
 	if err != nil {
 		t.Fatalf("pairing: %v", err)
 	}
-	if _, err := n.DB.RefreshAggregates(ctx, 0, n.Now, paired.FlowInstants); err != nil {
+	if _, err := RefreshAggregates(ctx, n.DB, 0, n.Now, paired.FlowInstants); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	return paired

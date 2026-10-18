@@ -6,6 +6,7 @@ import (
 	"net/netip"
 
 	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 )
@@ -99,7 +100,7 @@ func Fingerprint(h *webtest.Harness) string {
 // NetworkRowCount counts the interface_network rows.
 func NetworkRowCount(h *webtest.Harness) int {
 	h.T.Helper()
-	count, err := h.Store.CountRows(context.Background(), "interface_network")
+	count, err := storetest.CountRows(context.Background(), h.Store, "interface_network")
 	if err != nil {
 		h.T.Fatalf("counting the networks: %v", err)
 	}

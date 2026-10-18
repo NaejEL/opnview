@@ -12,7 +12,6 @@ import (
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/secret"
@@ -158,25 +157,4 @@ type Host interface {
 	// FormToken is the form token the request's reader writes with -- the session's own, or the
 	// one in the browser's own cookie, set when there is none -- for a JSON answer to carry.
 	FormToken(writer http.ResponseWriter, request *http.Request) (string, error)
-}
-
-// AllHandlerKeys is every catalogue key the Go code of the core and of every registered
-// surface can choose, and every key a built-in plugin carries -- reached through the registry
-// rows and the settings its manifest declares, which the loader confines its keys to -- so a
-// test can assert that each exists.
-func AllHandlerKeys() []MessageKey {
-	keys := messages.CoreKeys()
-	for _, surface := range RegisteredSurfaces() {
-		if surface.Keys != nil {
-			keys = append(keys, surface.Keys()...)
-		}
-	}
-	for key := range plugin.BuiltinsLoaded().Strings(SourceLanguage) {
-		keys = append(keys, MessageKey(key))
-	}
-	core, _ := dataset.Core()
-	for _, declaration := range core {
-		keys = append(keys, MessageKey(declaration.Label))
-	}
-	return keys
 }

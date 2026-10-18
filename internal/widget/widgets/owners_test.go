@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
 )
 
@@ -73,7 +74,7 @@ func TestAReassignmentMovesTheClientsVolumeToItsNewOwnerAfterTheNextDerivation(t
 				period, got)
 		}
 	}
-	if _, err := f.db.RefreshAggregates(ctx, f.now, f.now, nil); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, f.db, f.now, f.now, nil); err != nil {
 		t.Fatalf("deriving: %v", err)
 	}
 	for _, period := range periods {

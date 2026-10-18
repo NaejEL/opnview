@@ -45,11 +45,11 @@ type Derivation struct {
 	pair     bool
 	pairFrom int64
 	pairTo   int64
-	// everything reclassifies every address any row carries, which is what a
+	// Everything reclassifies every address any row carries, which is what a
 	// change of the upstream interfaces or of the networks that count calls for.
 	// derive sets it itself when what classification reads of the interfaces has
 	// changed since the last derivation that placed every address.
-	everything bool
+	Everything bool
 	// Hostnames resolves again the lookups whose logged host name named no single
 	// address, which a lease pass that read every active backend calls for, and only
 	// those ingested before hostnamesBefore, the instant its lease read began: a lookup
@@ -118,7 +118,7 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 	}
 	c.Mutex.RLock()
 	if onLink != c.OnLinkFingerprint {
-		request.everything = true
+		request.Everything = true
 	}
 	c.Mutex.RUnlock()
 
@@ -138,7 +138,7 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 	var forced []int64
 	var placed []int64
 	var lookups []int64
-	if request.everything {
+	if request.Everything {
 		result, err := c.Store.ReclassifyAll(ctx, now)
 		if err != nil {
 			return err
@@ -198,7 +198,7 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 	}
 	c.setRefreshedSince(watermark)
 
-	if request.everything {
+	if request.Everything {
 		// Every reference to a remote-address client was cleared by the
 		// reclassification and every slot it fed was rewritten above, so the rows
 		// themselves can go now.
@@ -334,21 +334,4 @@ func (c *Deriver) pairingWindow() int64 {
 	c.Mutex.RLock()
 	defer c.Mutex.RUnlock()
 	return c.PairingWindowSeconds
-}
-
-// ReclassifyEverything places every address any stored row carries and refreshes
-// every slot that moved. It is what clears the remote-address clients an earlier
-// classification created, and running it again changes nothing.
-//
-// The records it moves can span the whole retained history, and the pairing they call
-// for is decided and written in chunks of store.PairingChunkSeconds rather than in one
-// transaction over that span (B8b of specs/SPEC-step-5b-widget-api.md), with the same
-// result.
-func (c *Deriver) ReclassifyEverything(ctx context.Context) error {
-	return c.Derive(ctx, Derivation{everything: true})
-}
-
-// RefreshAggregates runs the refresh on its own, with nothing forced.
-func (c *Deriver) RefreshAggregates(ctx context.Context) error {
-	return c.Derive(ctx, Derivation{})
 }

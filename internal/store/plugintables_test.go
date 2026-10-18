@@ -8,6 +8,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/store/plugindecl"
 	"github.com/NaejEL/opnview/internal/store/plugintables"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
 // exampleReadings is a plugin table with a time column, a dimension and a measure with a unit.
@@ -224,14 +225,14 @@ func TestARemovedPluginsTablesAreListedAndKept(t *testing.T) {
 		{"sampled_at": int64(1790000000), "subject": "a", "value": 1.0}}}, nil, 1790000000); err != nil {
 		t.Fatal(err)
 	}
-	orphaned, err := database.OrphanedPluginTables(ctx, []string{"example_present"})
+	orphaned, err := storetest.OrphanedPluginTables(ctx, database, []string{"example_present"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(orphaned) != 1 || orphaned[0].Plugin != "example_gone" || orphaned[0].Rows != 1 {
 		t.Errorf("the orphaned tables are %+v", orphaned)
 	}
-	if orphaned, _ := database.OrphanedPluginTables(ctx, []string{"example_gone"}); len(orphaned) != 0 {
+	if orphaned, _ := storetest.OrphanedPluginTables(ctx, database, []string{"example_gone"}); len(orphaned) != 0 {
 		t.Errorf("a loaded plugin's tables were listed as orphaned: %+v", orphaned)
 	}
 	if _, err := database.Reader.DB.QueryContext(ctx, "SELECT count(*) FROM plugin_example_gone.readings"); err != nil {

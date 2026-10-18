@@ -206,7 +206,7 @@ func newTestWorld(ctx context.Context, directory string) (*testWorld, error) {
 	// (store.NewTestDatabase), dropped when the test ends.
 	world.settings = newMemorySettings()
 	if ownsTables(directory) {
-		database, err := store.NewTestDatabase(ctx)
+		database, err := store.NewTestDatabase(ctx, store.TestDatabaseOptions{})
 		if err != nil {
 			_ = os.RemoveAll(dataDir)
 			return nil, fmt.Errorf("plugin: the plugin declares tables, so its tests need a PostgreSQL test "+

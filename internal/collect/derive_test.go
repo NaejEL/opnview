@@ -13,6 +13,7 @@ import (
 	"github.com/NaejEL/opnview/internal/store/vocab"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -476,7 +477,7 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.ArrangeFilterLogCollection(t)
 	ctx := context.Background()
-	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.Derive(ctx, derive.Derivation{}); err != nil {
 		t.Fatalf("the first refresh: %v", err)
 	}
 
@@ -496,7 +497,7 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 	insert("refresh-race-first")
 	harness.Clock.Advance(5 * time.Second)
 	// Another pass's derivation runs between the two rows, and finds the slot holding the first.
-	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.Derive(ctx, derive.Derivation{}); err != nil {
 		t.Fatalf("the concurrent refresh: %v", err)
 	}
 	if bytes := collecttest.ScalarCount(t, harness.Store, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h
@@ -508,7 +509,7 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 	harness.Collector.EndIngest(token)
 
 	harness.Clock.Advance(5 * time.Second)
-	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.Derive(ctx, derive.Derivation{}); err != nil {
 		t.Fatalf("the next refresh: %v", err)
 	}
 	flowBytes := collecttest.ScalarCount(t, harness.Store, `SELECT sum(packet_bytes) FROM flow
@@ -522,7 +523,7 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 	}
 	// And a refresh with nothing in flight stamps the slot later than its rows, so it rests.
 	harness.Clock.Advance(5 * time.Second)
-	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.Derive(ctx, derive.Derivation{}); err != nil {
 		t.Fatalf("a quiet refresh: %v", err)
 	}
 	if computed := collecttest.ScalarCount(t, harness.Store, `SELECT max(computed_at) FROM volume_aggregate_1h

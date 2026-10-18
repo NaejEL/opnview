@@ -37,14 +37,14 @@ func TestTheReadFunctionsRunPreparedStatementsFromOneCache(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	before := network.DB.ReadStatementCount()
+	before := storetest.ReadStatementCount(network.DB)
 	readAll()
-	first := network.DB.ReadStatementCount()
+	first := storetest.ReadStatementCount(network.DB)
 	if first <= before {
 		t.Fatal("the read functions prepared nothing, so they did not run through the cache")
 	}
 	readAll()
-	if second := network.DB.ReadStatementCount(); second != first {
+	if second := storetest.ReadStatementCount(network.DB); second != first {
 		t.Errorf("a second round of reads prepared %d statements again", second-first)
 	}
 }

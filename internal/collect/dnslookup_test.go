@@ -9,6 +9,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/decode"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -252,7 +253,7 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 	ctx := context.Background()
 
 	oldest := oldestLookupInstant(t, "search_queries_page1.json")
-	if err := harness.Store.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(ctx, harness.Store, vocab.DNSResolution{
 		LookupKey:     "content:an-earlier-pass-stored-this",
 		ClientAddress: "example-address",
 		Domain:        "example-domain",

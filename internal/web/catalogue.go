@@ -9,7 +9,6 @@ import (
 	"sort"
 
 	"github.com/NaejEL/opnview/internal/dataset"
-	"github.com/NaejEL/opnview/internal/plugin"
 )
 
 // The string catalogue.
@@ -34,10 +33,10 @@ import (
 // type -- and a JSON answer carries its closed code, which the front resolves. That is what makes "no handler emits a
 // user-visible literal" a property a test can check rather than a habit.
 
-// locales holds the core's catalogue files.
+// CoreLocales holds the core's catalogue files.
 //
 //go:embed locale/*.json
-var locales embed.FS
+var CoreLocales embed.FS
 
 // SourceLanguage is the language every other catalogue is translated from.
 const SourceLanguage = "en"
@@ -70,7 +69,7 @@ func decodeCatalogue(language string, raw []byte) (Catalogue, error) {
 // the vocabulary shared by several surfaces. The product's catalogue is the union of this
 // and every surface's file; Server.Catalogue returns it.
 func LoadCatalogue(language string) (Catalogue, error) {
-	raw, err := locales.ReadFile("locale/" + language + ".json")
+	raw, err := CoreLocales.ReadFile("locale/" + language + ".json")
 	if err != nil {
 		return Catalogue{}, fmt.Errorf("web: reading the %s catalogue: %w", language, err)
 	}
@@ -142,9 +141,9 @@ func (s *Server) CatalogueStrings(language string) map[string]string {
 		}
 		return copied
 	}
-	merged, err := buildCatalogue(language, s.surfaces, withDatasetStrings(language, s.plugins.Strings(language)))
+	merged, err := buildCatalogue(language, s.surfaces, WithDatasetStrings(language, s.plugins.Strings(language)))
 	if err != nil {
-		return withDatasetStrings(language, s.plugins.Strings(language))
+		return WithDatasetStrings(language, s.plugins.Strings(language))
 	}
 	return merged.Strings
 }
@@ -183,75 +182,9 @@ func (c Catalogue) Translate(key MessageKey) (string, error) { return c.translat
 // isMissing reports whether an error is a file that is not there.
 func isMissing(err error) bool { return errors.Is(err, fs.ErrNotExist) }
 
-// ProductCatalogue returns the catalogue of every surface linked into this binary and of every
-// built-in plugin, together with the core's: what a server built with the registered surfaces
-// serves. A test uses it to name the string a reader sees without building a
-// server.
-func ProductCatalogue(language string) (Catalogue, error) {
-	merged, err := LoadCatalogue(language)
-	if err != nil {
-		return Catalogue{}, err
-	}
-	combined := make(map[string]string, len(merged.Strings))
-	for key, value := range merged.Strings {
-		combined[key] = value
-	}
-	for _, surface := range RegisteredSurfaces() {
-		localised, err := surfaceStrings(surface.Files)
-		if err != nil {
-			return Catalogue{}, fmt.Errorf("web: the surface %q: %s", surface.Name, err)
-		}
-		for key, value := range localised[language] {
-			combined[key] = value
-		}
-	}
-	for key, value := range withDatasetStrings(language, plugin.BuiltinsLoaded().Strings(language)) {
-		if _, taken := combined[key]; !taken {
-			combined[key] = value
-		}
-	}
-	merged.Strings = combined
-	return merged, nil
-}
-
-// CatalogueSources returns the text of every catalogue file of the core and of every
-// registered surface, by a path that names its owner. A test reads them to assert what no
-// language file may contain.
-func CatalogueSources() (map[string]string, error) {
-	sources := map[string]string{}
-	entries, err := locales.ReadDir("locale")
-	if err != nil {
-		return nil, fmt.Errorf("web: listing the core's catalogue files: %w", err)
-	}
-	for _, entry := range entries {
-		raw, err := locales.ReadFile("locale/" + entry.Name())
-		if err != nil {
-			return nil, fmt.Errorf("web: reading %s: %w", entry.Name(), err)
-		}
-		sources["locale/"+entry.Name()] = string(raw)
-	}
-	for _, surface := range RegisteredSurfaces() {
-		if surface.Files == nil {
-			continue
-		}
-		localeEntries, err := fs.ReadDir(surface.Files, "locale")
-		if err != nil {
-			continue
-		}
-		for _, entry := range localeEntries {
-			raw, err := fs.ReadFile(surface.Files, "locale/"+entry.Name())
-			if err != nil {
-				return nil, fmt.Errorf("web: reading %s of %s: %w", entry.Name(), surface.Name, err)
-			}
-			sources["surfaces/"+surface.Name+"/locale/"+entry.Name()] = string(raw)
-		}
-	}
-	return sources, nil
-}
-
-// withDatasetStrings adds the core datasets' labels to a set of plugin strings: each core dataset
+// WithDatasetStrings adds the core datasets' labels to a set of plugin strings: each core dataset
 // carries its own (internal/dataset), so adding one edits no shipped catalogue file.
-func withDatasetStrings(language string, plugins map[string]string) map[string]string {
+func WithDatasetStrings(language string, plugins map[string]string) map[string]string {
 	merged := dataset.Strings(language)
 	for key, value := range plugins {
 		merged[key] = value

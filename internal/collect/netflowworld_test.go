@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
@@ -227,7 +228,7 @@ func (h *netflowWorld) Refresh(t *testing.T) {
 	t.Helper()
 	h.At(NetflowReadSecond)
 	h.Derive(t)
-	if err := h.Collector.RefreshAggregates(context.Background()); err != nil {
+	if err := h.Collector.Derive(context.Background(), derive.Derivation{}); err != nil {
 		t.Fatal(err)
 	}
 }

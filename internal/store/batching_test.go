@@ -162,7 +162,7 @@ func TestTheRefreshOfOneAndOfAHundredTouchedHoursRunsTheSameStatements(t *testin
 			}
 		}
 		write := func(database *store.Store) {
-			result, err := database.RefreshAggregates(ctx, 0, lastHour+40*86400, nil)
+			result, err := storetest.RefreshAggregates(ctx, database, 0, lastHour+40*86400, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -227,7 +227,7 @@ func TestTheRefreshNumbersItsRowsOncePerStatementWithoutGaps(t *testing.T) {
 		return count, low, high, distinct
 	}
 	insertHours(0, 50)
-	if _, err := database.RefreshAggregates(ctx, 0, lastHour+40*86400, nil); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, database, 0, lastHour+40*86400, nil); err != nil {
 		t.Fatal(err)
 	}
 	before := map[string]int64{}
@@ -246,7 +246,7 @@ func TestTheRefreshNumbersItsRowsOncePerStatementWithoutGaps(t *testing.T) {
 	}
 	// Older hours, refreshed after: their rows are numbered on from the largest id, with no gap.
 	insertHours(50, 30)
-	if _, err := database.RefreshAggregates(ctx, 0, lastHour+40*86400, nil); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, database, 0, lastHour+40*86400, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range tables {

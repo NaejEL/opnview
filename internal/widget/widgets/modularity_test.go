@@ -88,7 +88,7 @@ func TestEveryBuiltinWidgetIsADirectoryWithAValidSelfContainedManifest(t *testin
 			t.Errorf("%s: %v", directory.Path, err)
 			continue
 		}
-		if refusal := params.ValidateManifest(manifest); refusal != nil {
+		if refusal := params.ValidateManifestWith(manifest, params.CoreBindableKinds()); refusal != nil {
 			t.Errorf("%s: %v", directory.Path, refusal)
 		}
 		if manifest.Type != directory.Type {
@@ -152,11 +152,11 @@ func TestTheServedBuiltinsAreExactlyTheDirectoriesOfTheTree(t *testing.T) {
 func TestNoStatementFileFailedToRegister(t *testing.T) {
 	t.Parallel()
 	newFixture(t, fixtureSpec{interfaces: 1, clients: 1, flows: 1, span: 3600})
-	if failures := sqldb.RegistrationFailures(); len(failures) != 0 {
-		t.Fatalf("statement registration failed: %v", failures)
-	}
+	// StatementNames fails with every refusal the registration met.
 	names, err := sqldb.StatementNames()
-	check(t, err)
+	if err != nil {
+		t.Fatalf("statement registration failed: %v", err)
+	}
 	owners := map[string]int{}
 	for _, name := range names {
 		if strings.HasPrefix(name, "widget_") {

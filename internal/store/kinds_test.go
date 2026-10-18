@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -100,13 +101,13 @@ func TestAskingForTheSingleActiveProviderOfAConcurrentKindIsRefused(t *testing.T
 		if !kind.Concurrent {
 			continue
 		}
-		if _, _, err := database.ActiveProviderID(ctx, kind.Kind); err == nil {
+		if _, _, err := storetest.ActiveProviderID(ctx, database, kind.Kind); err == nil {
 			t.Errorf("asking for the single active provider of %s succeeded, and that kind "+
 				"admits several", kind.Kind)
 		}
 	}
 	// And an exclusive kind answers, because it has a single answer to give.
-	if _, _, err := database.ActiveProviderID(ctx, "dns_lookup"); err != nil {
+	if _, _, err := storetest.ActiveProviderID(ctx, database, "dns_lookup"); err != nil {
 		t.Errorf("asking for the single active dns_lookup provider failed: %v", err)
 	}
 }

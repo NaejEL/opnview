@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -28,7 +29,7 @@ func TestALeasePassResolvesOnlyTheHostNameLookupsSinceThePreviousOne(t *testing.
 		if err != nil {
 			t.Fatalf("building the lookup: %v", err)
 		}
-		if err := harness.Store.InsertDNSResolution(ctx, lookup); err != nil {
+		if err := storetest.InsertDNSResolution(ctx, harness.Store, lookup); err != nil {
 			t.Fatalf("writing the lookup: %v", err)
 		}
 	}
@@ -120,7 +121,7 @@ func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.
 		if err != nil {
 			t.Fatalf("building the lookup: %v", err)
 		}
-		if err := harness.Store.InsertDNSResolution(ctx, lookup); err != nil {
+		if err := storetest.InsertDNSResolution(ctx, harness.Store, lookup); err != nil {
 			t.Fatalf("writing the lookup: %v", err)
 		}
 		if _, err := harness.Store.Reclassify(ctx, []string{lookup.ClientAddress}, collecttest.ReferenceEpoch()); err != nil {
@@ -194,7 +195,7 @@ func TestAHostNameLookupReadBeforeItsLeaseIsResolvedByTheLeasePass(t *testing.T)
 	if lookup.ClientResolution != vocab.ClientResolutionUnknown {
 		t.Fatalf("with no lease stored the lookup is %s, not unknown", lookup.ClientResolution)
 	}
-	if err := harness.Store.InsertDNSResolution(ctx, lookup); err != nil {
+	if err := storetest.InsertDNSResolution(ctx, harness.Store, lookup); err != nil {
 		t.Fatalf("writing the lookup: %v", err)
 	}
 

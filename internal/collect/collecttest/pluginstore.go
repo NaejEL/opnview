@@ -16,7 +16,7 @@ import (
 
 // A test store with the built-in plugins already loaded into it: their tables created, their
 // registry rows, measures and values written. It is cloned from a derived template
-// (store.NewTestDatabasePrepared) built once, so a test world that loads the built-ins over its
+// (store.TestDatabaseOptions.Prepare) built once, so a test world that loads the built-ins over its
 // store pays a load that finds everything in place, rather than creating every table again in
 // every database (carried item 1 of Lot 4 of the plugin-API amendment). The world still calls
 // plugin.Load itself, exactly as the service does at start, so what it tests is unchanged.

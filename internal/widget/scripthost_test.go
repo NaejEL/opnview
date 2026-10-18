@@ -20,7 +20,7 @@ func TestAScriptManifestIsValidatedLikeEveryOther(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", text, err)
 		}
-		refusal := params.ValidateManifest(manifest)
+		refusal := params.ValidateManifestWith(manifest, params.CoreBindableKinds())
 		if (refusal == nil) != accepted {
 			t.Errorf("%s: accepted %v, refusal %v", text, refusal == nil, refusal)
 		}

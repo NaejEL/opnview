@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/request"
 )
@@ -30,7 +31,7 @@ func TestCoverageGapsAndBucketsNeverInventAZero(t *testing.T) {
 	check(t, f.db.RecordCollectionGap(ctx, vocab.CollectionGap{ProviderID: provider, IntervalStartAt: gapStart,
 		IntervalEndAt: gapStart + 1200, Reason: vocab.GapDigestOutsideWindow, DetectedAt: f.now}))
 	f.exec(t, "DELETE FROM flow WHERE observed_at >= $1 AND observed_at < $2", gapStart, gapStart+1200)
-	_, err = f.db.RefreshAggregates(ctx, 0, f.now, []int64{gapStart})
+	_, err = storetest.RefreshAggregates(ctx, f.db, 0, f.now, []int64{gapStart})
 	check(t, err)
 
 	response := f.respond(t, "traffic_over_time_by_scope", map[string]any{"period": "24h"})

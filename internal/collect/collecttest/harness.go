@@ -126,7 +126,7 @@ func NewTestStore(t *testing.T) *store.Store {
 // CountRows counts a table, failing the test on an error.
 func CountRows(t *testing.T, database *store.Store, table string) int {
 	t.Helper()
-	count, err := database.CountRows(context.Background(), table)
+	count, err := storetest.CountRows(context.Background(), database, table)
 	if err != nil {
 		t.Fatalf("counting %s: %v", table, err)
 	}
@@ -284,7 +284,7 @@ func UnresolvedLookup(t *testing.T, database *store.Store, key, hostname string,
 	t.Helper()
 	resolver := ReadArrangement(t, "lease_collection").Resolver
 	name := hostname
-	if err := database.InsertDNSResolution(context.Background(), vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(context.Background(), database, vocab.DNSResolution{
 		LookupKey: key, ClientAddress: name, ClientHostname: &name,
 		ClientResolution: vocab.ClientResolutionUnknown, Domain: "example-site.example.invalid",
 		Resolver: resolver, Action: "pass", LookedUpAt: lookedUpAt, IngestedAt: ingestedAt,
@@ -315,7 +315,7 @@ func (h *ProbeHarness) OutcomeOf(t *testing.T, kind, providerKey string) vocab.A
 	if err != nil {
 		t.Fatalf("looking up %s/%s: %v", kind, providerKey, err)
 	}
-	outcome, err := h.Store.AvailabilityOutcomeOf(ctx, providerID)
+	outcome, err := storetest.AvailabilityOutcomeOf(ctx, h.Store, providerID)
 	if err != nil {
 		t.Fatalf("reading the outcome of %s/%s: %v", kind, providerKey, err)
 	}

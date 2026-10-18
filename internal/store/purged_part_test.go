@@ -86,7 +86,7 @@ func TestALeaseNamingAPurgedAddressMovesItsPurgedPart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("classifying: %v", err)
 	}
-	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now+5, result.FlowInstants); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now+5, result.FlowInstants); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	for _, period := range []vocab.Period{vocab.PeriodHour, vocab.PeriodDay} {
@@ -132,7 +132,7 @@ func TestAPurgeUnderAShortRetentionKeepsEveryFamilyWhole(t *testing.T) {
 			if left := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM flow"); left >= int64(len(flows)) {
 				t.Fatalf("the purge removed no flow (%d left)", left)
 			}
-			if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now+5, instants); err != nil {
+			if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now+5, instants); err != nil {
 				t.Fatalf("refreshing: %v", err)
 			}
 			for _, period := range vocab.Periods() {

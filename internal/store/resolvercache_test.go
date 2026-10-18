@@ -331,7 +331,7 @@ func newCacheScenario(t *testing.T, v6, eastWest bool) *cacheScenario {
 func (s *cacheScenario) lookup(t *testing.T, domain string, secondsBefore int64, source, action string) {
 	t.Helper()
 	s.lookups++
-	if err := s.network.DB.InsertDNSResolution(context.Background(), vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(context.Background(), s.network.DB, vocab.DNSResolution{
 		LookupKey: fmt.Sprintf("example-scenario-lookup-%d", s.lookups), ClientAddress: s.client.Address,
 		Domain: domain, Resolver: "unbound", Action: action, AnswerSource: storetest.Ptr(source),
 		LookedUpAt: s.flowAt - secondsBefore, IngestedAt: s.network.Now,
@@ -847,7 +847,7 @@ func storeOrderingBatch(t *testing.T, network *storetest.Network, data orderingD
 		*addresses = append(*addresses, network.Insert(t, data.flows)...)
 	case "lookups":
 		for _, lookup := range data.lookups {
-			if err := network.DB.InsertDNSResolution(ctx, lookup); err != nil {
+			if err := storetest.InsertDNSResolution(ctx, network.DB, lookup); err != nil {
 				t.Fatalf("writing a lookup: %v", err)
 			}
 			*addresses = append(*addresses, lookup.ClientAddress)

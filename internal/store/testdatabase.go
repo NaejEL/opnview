@@ -92,8 +92,29 @@ func newTestDatabase(dsn, name, admin string, cloneStarted time.Time) *TestDatab
 	return database
 }
 
-// NewTestDatabase creates an empty database with the schema applied, cloned from the template.
-func NewTestDatabase(ctx context.Context) (*TestDatabase, error) {
+// TestDatabaseOptions says what a test database is cloned from. The zero value clones the base template:
+// an empty database with the schema applied and the built-ins' registry rows written.
+type TestDatabaseOptions struct {
+	// Prepare, when set, clones the derived template of a preparation instead: the base template with
+	// Prepare run once over it. Revision must change whenever what Prepare writes does. Prepare is handed
+	// the connection string of the database it prepares, and closes every connection it opens before it
+	// returns, since a database being cloned holds none.
+	Revision string
+	Prepare  func(ctx context.Context, dsn string) error
+	// From, when set, clones another test database, which no connection may hold: a fixture built once
+	// and given to every test that asks for it.
+	From *TestDatabase
+}
+
+// NewTestDatabase creates a test database, cloned as its options say.
+func NewTestDatabase(ctx context.Context, options TestDatabaseOptions) (*TestDatabase, error) {
+	if options.From != nil {
+		role, shared := sharedReadRole(options.From.name)
+		if !shared {
+			role = sqldb.ReadRoleName(options.From.name)
+		}
+		return cloneTestDatabase(ctx, options.From.admin, options.From.name, role)
+	}
 	admin := os.Getenv(TestDatabaseVariable)
 	if admin == "" {
 		return nil, fmt.Errorf("store: %s is not set; the tests run inside the development containers, "+
@@ -103,15 +124,38 @@ func NewTestDatabase(ctx context.Context) (*TestDatabase, error) {
 	if templateErr != nil {
 		return nil, templateErr
 	}
+	template := templateName
+	if options.Prepare != nil {
+		derivedTemplates.mutex.Lock()
+		derived, found := derivedTemplates.built[options.Revision]
+		if !found {
+			derived = &derivedTemplate{}
+			derivedTemplates.built[options.Revision] = derived
+		}
+		derivedTemplates.mutex.Unlock()
+		derived.once.Do(func() {
+			derived.name, derived.err = ensureDerivedTemplate(ctx, admin, options.Revision, options.Prepare)
+		})
+		if derived.err != nil {
+			return nil, derived.err
+		}
+		template = derived.name
+	}
+	return cloneTestDatabase(ctx, admin, template, sqldb.ReadRoleName(templateName))
+}
+
+// cloneTestDatabase creates a database cloned from a template, its read connections logging in as a
+// shared role.
+func cloneTestDatabase(ctx context.Context, admin, template, role string) (*TestDatabase, error) {
 	name, err := uniqueName("opnview_test_")
 	if err != nil {
 		return nil, err
 	}
 	started := time.Now()
-	if err := createDatabase(ctx, admin, name, templateName); err != nil {
+	if err := createDatabase(ctx, admin, name, template); err != nil {
 		return nil, err
 	}
-	shareReadRole(name, sqldb.ReadRoleName(templateName))
+	shareReadRole(name, role)
 	dsn, err := withDatabase(admin, name)
 	if err != nil {
 		return nil, err
@@ -137,48 +181,6 @@ type derivedTemplate struct {
 	once sync.Once
 	name string
 	err  error
-}
-
-// NewTestDatabasePrepared creates a database cloned from the derived template of a preparation:
-// the template, with prepare run once over it. revision must change whenever what prepare writes
-// does. prepare is handed the connection string of the database it prepares, and closes every
-// connection it opens before it returns, since a database being cloned holds none.
-func NewTestDatabasePrepared(ctx context.Context, revision string,
-	prepare func(ctx context.Context, dsn string) error) (*TestDatabase, error) {
-	admin := os.Getenv(TestDatabaseVariable)
-	if admin == "" {
-		return nil, fmt.Errorf("store: %s is not set; the tests run inside the development containers, "+
-			"which set it (docker compose run --rm checks)", TestDatabaseVariable)
-	}
-	templateOnce.Do(func() { templateName, templateErr = ensureTemplate(ctx, admin) })
-	if templateErr != nil {
-		return nil, templateErr
-	}
-	derivedTemplates.mutex.Lock()
-	derived, found := derivedTemplates.built[revision]
-	if !found {
-		derived = &derivedTemplate{}
-		derivedTemplates.built[revision] = derived
-	}
-	derivedTemplates.mutex.Unlock()
-	derived.once.Do(func() { derived.name, derived.err = ensureDerivedTemplate(ctx, admin, revision, prepare) })
-	if derived.err != nil {
-		return nil, derived.err
-	}
-	name, err := uniqueName("opnview_test_")
-	if err != nil {
-		return nil, err
-	}
-	started := time.Now()
-	if err := createDatabase(ctx, admin, name, derived.name); err != nil {
-		return nil, err
-	}
-	shareReadRole(name, sqldb.ReadRoleName(templateName))
-	dsn, err := withDatabase(admin, name)
-	if err != nil {
-		return nil, err
-	}
-	return newTestDatabase(dsn, name, admin, started), nil
 }
 
 // ensureDerivedTemplate returns the derived template of a preparation, building it from the base
@@ -457,29 +459,6 @@ func uniqueName(prefix string) (string, error) {
 		return "", err
 	}
 	return prefix + hex.EncodeToString(raw), nil
-}
-
-// NewTestDatabaseFrom creates a database cloned from another test database, which no connection
-// may hold: a fixture built once and given to every test that asks for it.
-func NewTestDatabaseFrom(ctx context.Context, template *TestDatabase) (*TestDatabase, error) {
-	name, err := uniqueName("opnview_test_")
-	if err != nil {
-		return nil, err
-	}
-	started := time.Now()
-	if err := createDatabase(ctx, template.admin, name, template.name); err != nil {
-		return nil, err
-	}
-	role, shared := sharedReadRole(template.name)
-	if !shared {
-		role = sqldb.ReadRoleName(template.name)
-	}
-	shareReadRole(name, role)
-	dsn, err := withDatabase(template.admin, name)
-	if err != nil {
-		return nil, err
-	}
-	return newTestDatabase(dsn, name, template.admin, started), nil
 }
 
 // THE TEST DATABASES OF ONE TEMPLATE SHARE ITS READ ROLE (orchestrator decision 1 of Lot 2 of the

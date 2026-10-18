@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -466,7 +467,7 @@ func TestAPurgeBeforeTheFirstDerivationPlacesWhatItRemoves(t *testing.T) {
 		t.Errorf("the purged part is %q, not %q: a row with membership evidence was frozen unplaced", rows, want)
 	}
 
-	if err := collector.RefreshAggregates(ctx); err != nil {
+	if err := collector.Derive(ctx, derive.Derivation{}); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	assertSlotsArePurgedPartPlusFlows(t, earlier.Store)

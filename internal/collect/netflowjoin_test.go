@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 )
 
 // The NetFlow join with every interface captured (NJ4 to NJ8 of the amendment "the NetFlow join with every
@@ -43,7 +44,7 @@ func TestTheJoinWithEveryInterfaceCaptured(t *testing.T) {
 					"SELECT coalesce(sum(computed_at), 0) + coalesce(sum(1), 0) FROM connection_measure")
 				decided := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(decided_at), 0) FROM plugin_netflow.flow_record")
 				h.At(NetflowReadSecond + 1)
-				if err := h.Collector.RefreshAggregates(context.Background()); err != nil {
+				if err := h.Collector.Derive(context.Background(), derive.Derivation{}); err != nil {
 					t.Fatal(err)
 				}
 				if collecttest.ScalarCount(t, h.Store,

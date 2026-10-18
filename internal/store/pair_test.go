@@ -279,7 +279,7 @@ func pairedNetwork(t *testing.T, interfaces, clients int) *storetest.Network {
 	// The clients looked their peers up just before, so the domain family has rows.
 	ctx := context.Background()
 	for index, client := range network.Clients {
-		if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+		if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-paired-lookup-%d", index), ClientAddress: client.Address,
 			Domain: fmt.Sprintf("site-%d.example.invalid", index), Resolver: "unbound", Action: "pass",
 			AnswerSource: storetest.Ptr("Recursion"), LookedUpAt: network.Now - 1000 - int64(index)*37 - 1,

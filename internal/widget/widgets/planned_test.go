@@ -3,6 +3,7 @@ package widgets
 import (
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/widget/params"
 )
 
@@ -41,12 +42,12 @@ func TestEveryStatementTheAPIRunsIsAPlannedStatement(t *testing.T) {
 	f.respond(t, "client_traffic_detail", map[string]any{"client": map[string]any{"kind": "client",
 		"by": "hostname", "value": "example-host"}})
 
-	outside, err := f.db.ReadStatementsOutsideTheFiles()
+	outside, err := storetest.ReadStatementsOutsideTheFiles(f.db)
 	check(t, err)
 	if len(outside) != 0 {
 		t.Errorf("the API ran %d statements no planned statement file holds:\n%q", len(outside), outside)
 	}
-	if f.db.ReadStatementCount() == 0 {
+	if storetest.ReadStatementCount(f.db) == 0 {
 		t.Fatal("the read connections prepared nothing, so this assertion is vacuous")
 	}
 }

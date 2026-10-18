@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/store"
 )
@@ -73,14 +74,14 @@ func TestReclassifyEverythingWallTimeAtTheMillionRowSeed(t *testing.T) {
 	collector := collecttest.NewTestCollector(t, providertest.NewClient(t, fake), database, clock)
 
 	started := time.Now()
-	if err := collector.ReclassifyEverything(ctx); err != nil {
+	if err := collector.Derive(ctx, derive.Derivation{Everything: true}); err != nil {
 		t.Fatalf("reclassifying everything: %v", err)
 	}
 	first := time.Since(started)
 	before := pairingAndSlots(t, database)
 
 	started = time.Now()
-	if err := collector.ReclassifyEverything(ctx); err != nil {
+	if err := collector.Derive(ctx, derive.Derivation{Everything: true}); err != nil {
 		t.Fatalf("reclassifying everything again: %v", err)
 	}
 	second := time.Since(started)

@@ -81,7 +81,7 @@ func TestAttributionFollowsTheRuleExactly(t *testing.T) {
 					Direction: "in", Src: client.Address, Dst: destination, DstPort: &port,
 					Protocol: "tcp", Action: "pass", Bytes: 100}})
 				for number, lookup := range testCase.lookups {
-					if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+					if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 						LookupKey:     fmt.Sprintf("example-case-lookup-%d", number),
 						ClientAddress: client.Address, Domain: lookup.domain, Resolver: "unbound",
 						Action: lookup.action, AnswerSource: storetest.Ptr(lookup.source),
@@ -138,7 +138,7 @@ func TestAttributionIsStoredWhateverTheAggregateModeSays(t *testing.T) {
 	addresses := network.Insert(t, []storetest.Flow{{ObservedAt: network.Now - 50, Device: client.Device,
 		Direction: "in", Src: client.Address, Dst: storetest.Outside(1, client.V6), DstPort: &port,
 		Protocol: "tcp", Action: "pass", Bytes: 100}})
-	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 		LookupKey: "example-mode-lookup", ClientAddress: client.Address, Domain: "mode.example.invalid",
 		Resolver: "unbound", Action: "pass", AnswerSource: storetest.Ptr("Recursion"),
 		LookedUpAt: network.Now - 52, IngestedAt: network.Now,
@@ -150,7 +150,7 @@ func TestAttributionIsStoredWhateverTheAggregateModeSays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attributing: %v", err)
 	}
-	if _, err := network.DB.RefreshAggregates(ctx, network.Now, network.Now, result.FlowInstants); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, network.Now, network.Now, result.FlowInstants); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM domain_attribution"); rows != 1 {
@@ -178,7 +178,7 @@ func TestPurgingALookupOrAFlowRemovesItsAttribution(t *testing.T) {
 			Dst: storetest.Outside(2, client.V6), DstPort: &port, Protocol: "tcp", Action: "pass", Bytes: 100},
 	})
 	for index, instant := range []int64{network.Now - 51, network.Now - 501} {
-		if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+		if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-purge-lookup-%d", index), ClientAddress: client.Address,
 			Domain: fmt.Sprintf("purge-%d.example.invalid", index), Resolver: "unbound", Action: "pass",
 			AnswerSource: storetest.Ptr("Recursion"), LookedUpAt: instant, IngestedAt: network.Now,
@@ -208,7 +208,7 @@ func TestPurgingALookupOrAFlowRemovesItsAttribution(t *testing.T) {
 
 	// And through the retention purge itself, on an attribution that is still there when the
 	// purge runs: the surviving flow is named again from a fresh lookup first.
-	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 		LookupKey: "example-purge-lookup-again", ClientAddress: client.Address,
 		Domain: "purge-again.example.invalid", Resolver: "unbound", Action: "pass",
 		AnswerSource: storetest.Ptr("Recursion"), LookedUpAt: network.Now - 52, IngestedAt: network.Now,

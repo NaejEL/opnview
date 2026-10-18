@@ -55,7 +55,7 @@ func TestAPurgeBetweenAPassStoreAndItsRefreshLeavesEverySlotWhole(t *testing.T) 
 	}
 	// The previous pass's refresh.
 	previous := network.Now - 30
-	if _, err := network.DB.RefreshAggregates(ctx, 0, previous, nil); err != nil {
+	if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, previous, nil); err != nil {
 		t.Fatalf("the previous refresh: %v", err)
 	}
 

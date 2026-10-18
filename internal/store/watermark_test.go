@@ -43,7 +43,7 @@ func TestARecordOlderThanThePurgeWatermarkIsRefusedByTheInsertItself(t *testing.
 		t.Errorf("flow holds %d bytes: the record older than the watermark was stored, or the other was not", got)
 	}
 	for index, at := range []int64{watermark - 1, watermark} {
-		if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+		if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-watermark-%d", index), ClientAddress: client.Address,
 			Domain: "example.invalid", Resolver: "unbound", Action: "pass",
 			LookedUpAt: at, IngestedAt: network.Now,
@@ -117,7 +117,7 @@ func TestReResolvingHostNamesIsBoundedToTheLookupsNotYetExamined(t *testing.T) {
 	since := network.Now - 600
 	for index := 0; index < 50; index++ {
 		hostname := fmt.Sprintf("example-static-%d.example.invalid", index)
-		if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+		if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-old-%d", index), ClientAddress: hostname,
 			ClientHostname: &hostname, ClientResolution: vocab.ClientResolutionUnknown,
 			Domain: "example.invalid", Resolver: "unbound", Action: "pass",
@@ -136,7 +136,7 @@ func TestReResolvingHostNamesIsBoundedToTheLookupsNotYetExamined(t *testing.T) {
 	}
 
 	recent := "example-late.example.invalid"
-	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 		LookupKey: "example-recent", ClientAddress: recent, ClientHostname: &recent,
 		ClientResolution: vocab.ClientResolutionUnknown, Domain: "example.invalid", Resolver: "unbound",
 		Action: "pass", LookedUpAt: network.Now - 120, IngestedAt: network.Now - 100,

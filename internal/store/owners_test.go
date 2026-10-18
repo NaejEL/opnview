@@ -432,7 +432,7 @@ func TestAReassignmentForcesTheOwnerFamilyToBeRecomputed(t *testing.T) {
 	}
 	refresh := func() {
 		t.Helper()
-		if _, err := database.RefreshAggregates(ctx, network.Now, network.Now, nil); err != nil {
+		if _, err := storetest.RefreshAggregates(ctx, database, network.Now, network.Now, nil); err != nil {
 			t.Fatalf("refreshing: %v", err)
 		}
 		if pending := storetest.QueryInt(t, database, "SELECT count(*) FROM owner_reassigned_hour"); pending != 0 {

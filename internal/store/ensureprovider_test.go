@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -26,7 +27,7 @@ func TestEnsureProviderRegistersAnImplementationTheSchemaDoesNotSeed(t *testing.
 	if state != vocab.StateUnavailable || probe != "not_yet_probed" || checkedAt != 0 {
 		t.Errorf("the new row starts as %q / %q / %d", state, probe, checkedAt)
 	}
-	outcome, err := database.AvailabilityOutcomeOf(ctx, id)
+	outcome, err := storetest.AvailabilityOutcomeOf(ctx, database, id)
 	if err != nil || outcome != vocab.OutcomeNotYetProbed {
 		t.Errorf("the new row's outcome is %q, %v", outcome, err)
 	}

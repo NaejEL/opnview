@@ -149,7 +149,7 @@ func TestThisFirewallIsRecognisedAtEveryEndInBothFamilies(t *testing.T) {
 				}); err != nil {
 					t.Fatalf("writing an event: %v", err)
 				}
-				if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+				if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 					LookupKey: fmt.Sprintf("example-firewall-lookup-%d", index), ClientAddress: address,
 					Domain: "example.invalid", Resolver: "unbound", Action: "pass",
 					LookedUpAt: network.Now - 5, IngestedAt: network.Now - 1,
@@ -162,7 +162,7 @@ func TestThisFirewallIsRecognisedAtEveryEndInBothFamilies(t *testing.T) {
 			if err != nil || resolution != vocab.ClientResolutionThisFirewall {
 				t.Fatalf("`localhost` resolved to %q, %q, %v; it names this firewall", address, resolution, err)
 			}
-			if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+			if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 				LookupKey: "example-localhost-lookup", ClientAddress: address, ClientHostname: &localhost,
 				ClientResolution: resolution, Domain: "example.invalid", Resolver: "unbound",
 				Action: "pass", LookedUpAt: network.Now - 5, IngestedAt: network.Now - 1,
@@ -389,7 +389,7 @@ func TestAFlowToThisFirewallIsNeverAttributedAndAFlowFromItIsOutsideTheRate(t *t
 					Direction: "in", Src: client.Address, Dst: target, DstPort: &dns, Protocol: "udp",
 					Action: "pass", Bytes: 70})
 				// The client looked one name up just before: the only lookup in the window.
-				if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+				if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 					LookupKey: fmt.Sprintf("example-before-firewall-%t", v6), ClientAddress: client.Address,
 					Domain: "example-one.example.invalid", Resolver: "unbound", Action: "pass",
 					AnswerSource: storetest.Ptr("Recursion"), LookedUpAt: network.Now - 52, IngestedAt: network.Now - 1,
@@ -462,7 +462,7 @@ func TestAnAttributionMadeBeforeTheFirewallWasRecognisedIsRemoved(t *testing.T) 
 	network.Insert(t, []storetest.Flow{{ObservedAt: network.Now - 50, Device: network.Inside[0].Device,
 		Direction: "in", Src: client.Address, Dst: network.Inside[0].Address, DstPort: &dns,
 		Protocol: "udp", Action: "pass", Bytes: 70}})
-	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := storetest.InsertDNSResolution(ctx, network.DB, vocab.DNSResolution{
 		LookupKey: "example-stale", ClientAddress: client.Address, Domain: "example.invalid",
 		Resolver: "unbound", Action: "pass", AnswerSource: storetest.Ptr("Recursion"),
 		LookedUpAt: network.Now - 52, IngestedAt: network.Now - 1,
@@ -558,7 +558,7 @@ func TestReclassifyEverythingPurgesThePhantomClientsAtFirewallAddresses(t *testi
 			if err != nil {
 				t.Fatalf("reclassifying everything: %v", err)
 			}
-			if _, err := network.DB.RefreshAggregates(ctx, network.Now, network.Now, result.FlowInstants); err != nil {
+			if _, err := storetest.RefreshAggregates(ctx, network.DB, network.Now, network.Now, result.FlowInstants); err != nil {
 				t.Fatalf("refreshing: %v", err)
 			}
 			if left := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM client

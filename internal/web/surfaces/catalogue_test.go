@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/webtest"
 )
 
 // The catalogue's own rules, which hold whatever draws its strings. What the front draws -- that
@@ -17,11 +18,11 @@ import (
 // words the front shows for it.
 func TestEveryKeyTheGoCodeChoosesExists(t *testing.T) {
 	t.Parallel()
-	catalogue, err := web.ProductCatalogue(web.SourceLanguage)
+	catalogue, err := webtest.ProductCatalogue(web.SourceLanguage)
 	if err != nil {
 		t.Fatalf("loading the catalogue: %v", err)
 	}
-	keys := web.AllHandlerKeys()
+	keys := webtest.AllHandlerKeys()
 	if len(keys) == 0 {
 		t.Fatal("the Go code chooses no key, so this assertion is vacuous")
 	}
@@ -36,7 +37,7 @@ func TestEveryKeyTheGoCodeChoosesExists(t *testing.T) {
 // decision, written here, or a duplicate of an entry that is already there.
 func TestNoTwoEntriesCarryTheSameWordsUndecided(t *testing.T) {
 	t.Parallel()
-	catalogue, err := web.ProductCatalogue(web.SourceLanguage)
+	catalogue, err := webtest.ProductCatalogue(web.SourceLanguage)
 	if err != nil {
 		t.Fatalf("loading the catalogue: %v", err)
 	}
@@ -181,7 +182,7 @@ func TestNoCatalogueEntryIsExplanatoryCopy(t *testing.T) {
 		"please",
 		"note that",
 	}
-	catalogue, err := web.ProductCatalogue(web.SourceLanguage)
+	catalogue, err := webtest.ProductCatalogue(web.SourceLanguage)
 	if err != nil {
 		t.Fatalf("loading the catalogue: %v", err)
 	}
