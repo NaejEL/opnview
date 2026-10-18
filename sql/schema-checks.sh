@@ -127,7 +127,8 @@ PURGE_ALT_DB=schema_checks_purge_alt
 RECLASSIFY_DB=schema_checks_reclassify
 RESTORED_DB=schema_checks_restored
 # The backup round trip's own copy of the 100 000-row seed (decision 4 of the performance cycle, 18
-# October 2026): P-AC22 dumps it, so the dump reads a database no other check reads or writes.
+# October 2026): P-AC22 dumps it and the 100 000-row budgets read it (budgets_job); no other check
+# reads or writes it.
 BACKUP_DB=schema_checks_backup
 
 # THE KEPT SEEDS, each by its exact name, and never among the declared databases: a run leaves
@@ -335,11 +336,18 @@ drop_database() {
 # original's role -- the backup restored for P-AC22 carries schema_checks_main_reader's -- so a
 # role whose database went first could outlive the run when its copy is dropped after it (found
 # on 17 October 2026: schema_checks_main_reader and schema_checks_scale_reader survived runs).
+#
+# THE DATABASES ARE DROPPED SIDE BY SIDE (decision 4 of the performance cycle, 18 October 2026). Every
+# DROP of a database forces a checkpoint of the whole instance, and checkpoints requested while one is
+# running are served by the next: dropped one after the other, fourteen databases waited for fourteen
+# checkpoints, 34 s of the preamble beside the pre-deployment command's go test runs on 18 October 2026;
+# dropped side by side, they share a few. Each is still dropped by its exact name.
 remove_declared_databases() {
     local db
     for db in "${DECLARED_DATABASES[@]}"; do
-        drop_database "$db"
+        drop_database "$db" &
     done
+    wait
     for db in "${DECLARED_DATABASES[@]}"; do
         admin "DROP ROLE IF EXISTS \"${db}_reader\";" > /dev/null
     done
@@ -706,8 +714,10 @@ KEPT_BEFORE=''
 for db in "${KEPT_DATABASES[@]}"; do
     [ "$(database_exists "$db")" = '0' ] || KEPT_BEFORE="$KEPT_BEFORE $db"
 done
+# The drops of databases a stopped run left behind first, side by side (remove_declared_databases); then
+# each created empty, one at a time: two copies of one template at once may find it held.
+remove_declared_databases
 for db in "${DECLARED_DATABASES[@]}"; do
-    drop_database "$db"
     create_database "$db"
 done
 remove_declared_databases
@@ -1053,11 +1063,24 @@ budget_seed() {
 
 # THE BUDGETS ARE TIMED ONE SEED AFTER THE OTHER (decision 3 of the performance cycle, 18 October 2026,
 # revisiting Phase E decision 8): side by side, the two seeds' requests were each other's load, on one
-# instance and on the machine, and a budget measures the product, not the load. budgets_job runs once
-# MAIN_DB is complete (E21): the 1 000 000-row seed's budgets as soon as the scale job has the seed ready,
-# then the 100 000-row seed's, later in the run, where less of the pre-deployment command's other steps
-# runs beside it. Each status is written to a file the section reads, and each output says when it ran.
+# instance and on the machine, and a budget measures the product, not the load. budgets_job starts with
+# the seed jobs: the 1 000 000-row seed's budgets as soon as the scale job has the seed ready, its plugin
+# tables included; then the 100 000-row seed's, on BACKUP_DB, the copy of the kept seed the backup round
+# trip reads, once its plugin tables are seeded (backup_job): it holds MAIN_DB's rows, and nothing copies
+# it, so the budgets wait neither for MAIN_DB's copies (E21) nor for the main thread. Each status is
+# written to a file the section reads, and each output says when it ran. The 100 000-row seed's, whose
+# budgets are the tighter, run first, and the backup's restore, which writes the most of any step of the
+# run, waits for them to end (backup_job).
 budgets_job() {
+    if wait_marker backup backup_tables_ready; then
+        budget_seed "$BACKUP_DB" 100k 250ms 500ms
+        printf -- '%d\n' "$?" > "$WORK/budget_100k.status"
+    else
+        printf -- '  the copy of the 100 000-row seed was never ready: the backup job ended without it\n' \
+            > "$WORK/budget_100k.txt"
+        printf -- '1\n' > "$WORK/budget_100k.status"
+    fi
+    : > "$WORK/budget_100k_done"
     if wait_marker scale scale_ready; then
         budget_seed "$SCALE_DB" 1m 1s 2s 100ms
         printf -- '%d\n' "$?" > "$WORK/budget_1m.status"
@@ -1065,19 +1088,29 @@ budgets_job() {
         printf -- '  the 1 000 000-row seed was never ready: the scale job ended without it\n' > "$WORK/budget_1m.txt"
         printf -- '1\n' > "$WORK/budget_1m.status"
     fi
-    budget_seed "$MAIN_DB" 100k 250ms 500ms
-    printf -- '%d\n' "$?" > "$WORK/budget_100k.status"
 }
 
 # backup_job — P-AC22's round trip on BACKUP_DB, the copy of the kept 100 000-row seed the main job made
-# for it alone, every verdict written to a file its section reads: the plugin tables created by the
-# loader, as on MAIN_DB, the dump, the source's row counts as dumped, the restore into RESTORED_DB, and
+# for it and the 100 000-row budgets, which only read it, every verdict written to a file its section
+# reads: the plugin tables created by the loader, as on MAIN_DB (the marker backup_tables_ready), the dump, the source's row counts as dumped, the restore into RESTORED_DB, and
 # the restored row counts. Each step's wall time is written to $WORK/backup_steps.txt.
 backup_job() {
     local status=0 begun
+    if ! wait_marker main backup_copy_ready; then
+        printf -- 'the main job ended without the copy\n' > "$WORK/pg_dump.err"
+        return 1
+    fi
     begun="$(date +%s%N)"
     plugin_tables "$BACKUP_DB" 400 backup "$WORK/plugin-data-backup"
-    printf -- '%d\n' "$?" > "$WORK/backup_plugin.status"
+    status=$?
+    # Vacuumed and analysed as MAIN_DB's are, so the budgets reading them (budgets_job) plan them with
+    # their statistics.
+    while IFS=$'\t' read -r table _ _; do
+        q "$BACKUP_DB" "VACUUM (ANALYZE) $table;" > /dev/null || status=1
+    done < "$WORK/plugin_tables_backup.txt"
+    printf -- '%d\n' "$status" > "$WORK/backup_plugin.status"
+    : > "$WORK/backup_tables_ready"
+    status=0
     printf -- 'the plugin tables, created by the loader\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) \
         > "$WORK/backup_steps.txt"
     begun="$(date +%s%N)"
@@ -1087,12 +1120,26 @@ backup_job() {
     begun="$(date +%s%N)"
     every_schema_counts "$BACKUP_DB" > "$WORK/backup_source_counts.txt"
     printf -- 'the source'"'"'s row counts\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) >> "$WORK/backup_steps.txt"
+    # The restore writes the most of any step of the run: it waits for the 100 000-row budgets, which
+    # read this copy, to end, so they are not timed beside it.
+    # budgets_job writes the marker whatever its budgets found; the bound only stops a wait for a job
+    # stopped from outside.
+    local waited=0
+    while [ ! -f "$WORK/budget_100k_done" ] && [ "$waited" -lt 3000 ]; do
+        sleep 0.2
+        waited=$(( waited + 1 ))
+    done
     begun="$(date +%s%N)"
     drop_database "$RESTORED_DB"
     create_database "$RESTORED_DB"
     "${PSQL[@]}" -d "$(dsn "$RESTORED_DB")" -c 'CREATE EXTENSION IF NOT EXISTS timescaledb;' \
         -c 'SELECT timescaledb_pre_restore();' > /dev/null 2> "$WORK/restore.err" || status=1
-    pg_restore --exit-on-error --dbname="$(dsn "$RESTORED_DB")" "$WORK/opnview.dump" 2>> "$WORK/restore.err" || status=1
+    # The restore's session commits without waiting for its write-ahead log to reach the disk: the
+    # database is the run's own and dropped at its end, and a commit that waits for the disk was most
+    # of the restore's 72 to 100 s beside the other steps (18 October 2026). What is restored, and by
+    # what commands, is the documented procedure's.
+    PGOPTIONS="$PGOPTIONS -c synchronous_commit=off" \
+        pg_restore --exit-on-error --dbname="$(dsn "$RESTORED_DB")" "$WORK/opnview.dump" 2>> "$WORK/restore.err" || status=1
     "${PSQL[@]}" -d "$(dsn "$RESTORED_DB")" -c 'SELECT timescaledb_post_restore();' > /dev/null \
         2>> "$WORK/restore.err" || status=1
     printf -- '%d\n' "$status" > "$WORK/restore.status"
@@ -1192,13 +1239,36 @@ for kept in "$SCALE_SEED_DB:$SCALE_SEED_DIGEST" "$SCALE_PURGED_DB:$SCALE_PURGED_
 done
 start_build scale scale_job
 # main_job — the kept main seed, then the backup round trip's own copy of it (P-AC22), made WAL_LOG while
-# no session holds the seed, before AC7 clones it.
+# no session holds the seed, before AC7 clones it; the marker backup_copy_ready says the copy is whole.
 main_job() {
     prepare_kept_seed "$MAIN_SEED_DB" "$MAIN_SEED_DIGEST" "${MAIN_SEED_PARAMS[@]}" || return
     copy_database "$MAIN_SEED_DB" "$BACKUP_DB" WAL_LOG || return 20
+    : > "$WORK/backup_copy_ready"
+}
+# THE COPIES THE WRITING CHECKS READ THAT NEED NO PLUGIN TABLE ARE COPIES OF THE SECOND KEPT BUILD
+# (decision 4 of the performance cycle, 18 October 2026). MEAS-AC6, PN-AC8, ST-AC4 and DL-AC5 each write
+# to a copy of their own and read only the core's tables there; the second 100 000-row build holds the
+# same rows as the first -- AC7 proves it -- and no other session reads it but AC7's row counts, which
+# this job takes first. So they are copied from it here, in the background from the start, rather than
+# from MAIN_DB once its plugin tables are seeded (E21), where six copies of it took most of that
+# section's 75 s beside the pre-deployment command's go test runs. The purge's two copies still read
+# the plugin tables, and are still copies of MAIN_DB.
+#
+# repeat_job — the second kept build, its row counts for AC7 (the marker repeat_counted), then the four
+# copies.
+repeat_job() {
+    local copy status=0
+    prepare_kept_seed "$REPEAT_SEED_DB" "$MAIN_SEED_DIGEST" "${MAIN_SEED_PARAMS[@]}" || status=$?
+    printf -- '%d\n' "$status" > "$WORK/repeat_status"
+    [ "$status" -eq 0 ] && table_counts "$REPEAT_SEED_DB" > "$WORK/counts_repeat.txt"
+    : > "$WORK/repeat_counted"
+    [ "$status" -eq 0 ] || return "$status"
+    for copy in "$MEAS_DB" "$REGISTER_DB" "$STATE_DB" "$LEASE_DB"; do
+        copy_database "$REPEAT_SEED_DB" "$copy" WAL_LOG &
+    done
+    wait
 }
 start_build main main_job
-start_build repeat prepare_kept_seed "$REPEAT_SEED_DB" "$MAIN_SEED_DIGEST" "${MAIN_SEED_PARAMS[@]}"
 start_build alt alt_job
 
 # THE SHELL SCRIPTS' STATIC ANALYSIS, started now beside the jobs: it reads only the files, and its
@@ -1344,6 +1414,15 @@ entity_type() {
     q "$1" "SELECT type FROM $CORE_ENTITIES WHERE name = '$2';"
 }
 
+# The jobs that read what the catalogue readers above count start once those are defined: the second
+# kept build and its copies (repeat_job), the backup round trip (P-AC22) and the response budgets
+# (S5B-AC18), each waiting for what it reads -- the backup for its copy, the budgets for each seed ready,
+# its plugin tables included.
+start_build repeat repeat_job
+cp -R "$PLUGIN_DATA" "$WORK/plugin-data-backup"
+start_build backup backup_job
+start_build budgets budgets_job
+
 # ===========================================================================
 section 'AC1, AC4 — the schema applies cleanly, and re-applying changes nothing'
 # ===========================================================================
@@ -1433,8 +1512,10 @@ section 'AC7 — deterministic seed, and the baseline row count'
 # writes writes to the clone.
 MAIN_SEED_STATUS=0
 wait_build main || MAIN_SEED_STATUS=$?
-REPEAT_SEED_STATUS=0
-wait_build repeat || REPEAT_SEED_STATUS=$?
+# The second build's job goes on to copy it for the writing checks once it has counted its rows: its
+# status and its counts are read here from what it wrote.
+wait_marker repeat repeat_counted
+REPEAT_SEED_STATUS="$(cat "$WORK/repeat_status" 2> /dev/null || echo 1)"
 if [ "$MAIN_SEED_STATUS" -eq 0 ]; then
     pass 'AC7 the 100 000-row seed ran'
 else
@@ -1450,14 +1531,8 @@ check 'E10 the second kept 100 000-row build carries the same digest (decision 1
 timed "$WORK/main_clone_ms.txt" copy_database "$MAIN_SEED_DB" "$MAIN_DB" WAL_LOG ||
     fail 'AC7 the kept 100 000-row seed could not be cloned into the database the checks read'
 printf -- '  the kept seed was cloned into %s in %d ms\n' "$MAIN_DB" "$(cat "$WORK/main_clone_ms.txt")"
-# P-AC22's round trip starts now, in the background, on the copy the main job made for it alone; its
-# verdicts are read in its section. Its plugin loader reads a data directory of its own.
-cp -R "$PLUGIN_DATA" "$WORK/plugin-data-backup"
-backup_job > "$WORK/backup_job.log" 2>&1 &
-BACKUP_PID=$!
 
 table_counts "$MAIN_SEED_DB" > "$WORK/counts_main.txt"
-table_counts "$REPEAT_SEED_DB" > "$WORK/counts_repeat.txt"
 if diff -u "$WORK/counts_main.txt" "$WORK/counts_repeat.txt" > "$WORK/counts.diff"; then
     pass 'AC7 two seed runs produce identical row counts per table'
 else
@@ -1551,10 +1626,11 @@ check 'E21 every foreign key holds once the plugin tables are seeded' '' "$(fk_v
 # plugin tables are seeded: no check commits a change to it after this point. So the six copies are
 # made here, side by side, rather than each where its check runs, which no session may hold the
 # source of -- and from here on MAIN_DB is free to be read in the background: the response budgets
-# (S5B-AC18, budgets_job) start now, and are read in their section. The backup round trip (P-AC22)
-# reads a copy of its own, BACKUP_DB, and started under AC7.
+# (S5B-AC18) read a copy of their own, BACKUP_DB, as the backup round trip (P-AC22) does; both started
+# with the seed jobs. Four of the six copies are the second kept build's (repeat_job, decision 4 of the
+# performance cycle): the two the purge reads are made here.
 COPY_PIDS=()
-for copy in "$MEAS_DB" "$PURGE_DB" "$UNLIMITED_DB" "$REGISTER_DB" "$STATE_DB" "$LEASE_DB"; do
+for copy in "$PURGE_DB" "$UNLIMITED_DB"; do
     copy_database "$MAIN_DB" "$copy" WAL_LOG &
     COPY_PIDS+=("$!")
 done
@@ -1562,9 +1638,8 @@ COPIES_FAILED=0
 for pid in "${COPY_PIDS[@]}"; do
     wait "$pid" || COPIES_FAILED=$((COPIES_FAILED + 1))
 done
+wait_build repeat || COPIES_FAILED=$((COPIES_FAILED + 1))
 check 'E21 the six copies of the 100 000-row seed the writing checks read were made' '0' "$COPIES_FAILED"
-budgets_job > "$WORK/budgets_job.log" 2>&1 &
-BUDGETS_PID=$!
 
 # ===========================================================================
 section 'AC5, AC6 — the entity list, and the absence of a TLS/HTTP entity'
@@ -2279,7 +2354,7 @@ check 'MEAS-AC6 the sampled pair volume is attributed to the measurement provide
 # change, and reads it back. The DDL is compared before and after, because "no
 # schema change" is the half of the claim that a successful insert alone would not
 # prove.
-# MEAS_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
+# MEAS_DB is a copy of the second kept 100 000-row build, which holds MAIN_DB's core rows (repeat_job).
 MEAS_DDL_BEFORE="$(schema_objects "$MEAS_DB")"
 expect_sql_success 'MEAS-AC6 a provider may introduce a subject, a measure and a unit' "$MEAS_DB" \
     "INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
@@ -3637,7 +3712,7 @@ check 'PN-AC13 the two active DHCP servers carry two different probes' '2' \
 section 'PN-AC8, PN-AC18 — registering a second provider of an existing kind'
 # ===========================================================================
 # No DDL: an INSERT into the registry, an INSERT into availability, and events.
-# REGISTER_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
+# REGISTER_DB is a copy of the second kept 100 000-row build, which holds MAIN_DB's core rows (repeat_job).
 expect_sql_success 'PN-AC8 registering a second security-event provider needs no DDL' "$REGISTER_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at)
        VALUES ('security_event', 'second-event-provider', 'Second event provider', true, false, $NOW);
@@ -3661,7 +3736,7 @@ expect_sql_success 'PN-AC8 registering a second security-event provider needs no
               'pn-ac8-category', 'pn-ac8-source', $NOW
        FROM provider WHERE provider_key = 'second-event-provider';"
 check 'PN-AC8 the second provider is registered with no schema change' \
-    "$(schema_objects "$MAIN_DB")" \
+    "$(schema_objects "$REPEAT_SEED_DB")" \
     "$(schema_objects "$REGISTER_DB")"
 ALERT_PROVIDERS="$(run_query "$REGISTER_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
     'SELECT count(DISTINCT provider_key) FROM (' \
@@ -3829,7 +3904,7 @@ check 'ST-AC3 nothing is silently dropped: the departed thing is still readable 
               AND s.captured_at = d.last_present_at AND i.item_key = d.item_key);')"
 
 # ST-AC4: the constraints that make a set a set rather than a bag of rows.
-# STATE_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
+# STATE_DB is a copy of the second kept 100 000-row build, which holds MAIN_DB's core rows (repeat_job).
 expect_sql_failure 'ST-AC4 a member with no identity is rejected' "$STATE_DB" \
     "INSERT INTO state_item (snapshot_id, item_key) SELECT id, '' FROM state_snapshot LIMIT 1;"
 expect_sql_failure 'ST-AC4 one capture cannot report one thing twice' "$STATE_DB" \
@@ -3959,7 +4034,7 @@ section 'DL-AC5 — one machine, two servers, two VLANs: one client, two leases'
 # The seed models the deployment explicitly: one client, a lease from each server, on
 # two different interfaces. The cascade itself is exercised in Go, in
 # internal/collect, where the two backends' reports of one MAC actually meet.
-# LEASE_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
+# LEASE_DB is a copy of the second kept 100 000-row build, which holds MAIN_DB's core rows (repeat_job).
 check_ge 'DL-AC5 a machine holds leases from two different servers' 1 \
     "$(q "$LEASE_DB" "SELECT count(*) FROM (
         SELECT l.client_id FROM dhcp_lease AS l
@@ -4957,8 +5032,7 @@ section 'S5B-AC35 — the wall time of ReclassifyEverything at the 1 000 000-row
 # and its go test runs with the pre-deployment budget, 180 s, as its -timeout.
 if [ "${OPNVIEW_RECLASSIFY_COST:-}" = 1 ]; then
     # The budgets read the seed until they end, and a copy needs the seed free of sessions.
-    wait "$BUDGETS_PID"
-    BUDGETS_WAITED=1
+    wait_build budgets
     copy_database "$SCALE_DB" "$RECLASSIFY_DB"
     if (cd "$REPO_ROOT" && OPNVIEW_RECLASSIFY_SEED_DATABASE="$(dsn "$RECLASSIFY_DB")" OPNVIEW_RECLASSIFY_SEED_NOW="$NOW" \
             go test -count=1 -timeout 180s -tags reclassifycost -v \
@@ -4983,11 +5057,11 @@ section 'P-AC22 — the backup round trip'
 # a logical backup (https://www.tigerdata.com/docs/self-hosted/latest/backup-and-restore/logical-backup):
 # create the database and the extension, timescaledb_pre_restore(), pg_restore without
 # -j, timescaledb_post_restore(). Then every table of every schema holds the same number
-# of rows on both sides. The round trip ran in the background since AC7 (backup_job), on BACKUP_DB, a
+# of rows on both sides. The round trip ran in the background from the start (backup_job), on BACKUP_DB, a
 # copy of the kept seed of its own with its plugin tables created by the loader as MAIN_DB's are, so the
-# dump reads a database no other check reads or writes (decision 4 of the performance cycle, 18 October
+# dump reads a database no check writes (decision 4 of the performance cycle, 18 October
 # 2026); its verdicts, and each step's wall time, are read here.
-wait "$BACKUP_PID"
+wait_build backup
 awk -F'\t' '{ printf "  %10.3f s  %s\n", $2 / 1000, $1 }' "$WORK/backup_steps.txt" 2> /dev/null
 check 'P-AC22 the plugin loader created the plugin tables of the copy the backup reads' '0' \
     "$(cat "$WORK/backup_plugin.status" 2> /dev/null || echo 'not run')"
@@ -5971,12 +6045,12 @@ section 'S5B-AC18 — every served widget type answers within its response budge
 # held to 100 ms.
 #
 # THE TWO SEEDS ARE TIMED ONE AFTER THE OTHER (decision 3 of the performance cycle, 18 October 2026,
-# revisiting Phase E decision 8), in the background, by budgets_job, from the moment MAIN_DB is complete
-# and nothing copies it any more (E21): the 1 000 000-row seed's as soon as the scale job has it ready,
-# its plugin tables included, then the 100 000-row seed's. The section is the run's last but its
+# revisiting Phase E decision 8), in the background, by budgets_job, started with the seed jobs:
+# the 1 000 000-row seed's as soon as the scale job has it ready,
+# its plugin tables included, then the 100 000-row seed's, on BACKUP_DB. The section is the run's last but its
 # summary, so every other check runs while the budgets are timed. The program is built once, with the
 # others under ci/. Each seed's output is printed here, the 100 000-row one first.
-[ -n "${BUDGETS_WAITED:-}" ] || wait "$BUDGETS_PID"
+wait_build budgets
 for label in 100k 1m; do
     if [ "$(cat "$WORK/budget_$label.status" 2> /dev/null)" = 0 ]; then
         cat "$WORK/budget_$label.txt"

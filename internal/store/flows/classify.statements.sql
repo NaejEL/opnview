@@ -88,14 +88,23 @@ ORDER BY n.interface_id, n.network_address, n.prefix_length;
 -- A sighting: a record logged INBOUND on an interface names its source as on that
 -- interface's side, and one logged OUTBOUND names its destination. Only the most
 -- recent sighting of each kind is read.
+--
+-- The address's flows are read newest first through its own index, and each meets its interface as it
+-- is read (the OFFSET 0 keeps the interface a probe of each flow rather than a side of the join). Joined
+-- the other way, the planner read every flow logged on an interface, through idx_flow_join, and kept
+-- those of the address: 88 ms on the 1 000 000-row seed, where this reads the address's few flows
+-- (18 October 2026). The rows are the same.
 -- statement: membership_sighting_source
 SELECT i.id, f.observed_at
 FROM flow AS f
-JOIN interface AS i ON i.device = f.interface_device
+CROSS JOIN LATERAL (SELECT j.id
+                    FROM interface AS j
+                    WHERE j.device = f.interface_device
+                      AND NOT j.is_upstream
+                      AND (:link_local = 0 OR j.link_local_evidence)
+                    OFFSET 0) AS i
 WHERE f.src_address = :address
   AND f.direction = 'in'
-  AND NOT i.is_upstream
-  AND (:link_local = 0 OR i.link_local_evidence)
 ORDER BY f.observed_at DESC, i.id
 LIMIT 1;
 
@@ -103,11 +112,14 @@ LIMIT 1;
 -- statement: membership_sighting_destination
 SELECT i.id, f.observed_at
 FROM flow AS f
-JOIN interface AS i ON i.device = f.interface_device
+CROSS JOIN LATERAL (SELECT j.id
+                    FROM interface AS j
+                    WHERE j.device = f.interface_device
+                      AND NOT j.is_upstream
+                      AND (:link_local = 0 OR j.link_local_evidence)
+                    OFFSET 0) AS i
 WHERE f.dst_address = :address
   AND f.direction = 'out'
-  AND NOT i.is_upstream
-  AND (:link_local = 0 OR i.link_local_evidence)
 ORDER BY f.observed_at DESC, i.id
 LIMIT 1;
 
