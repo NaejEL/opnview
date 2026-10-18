@@ -69,19 +69,28 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 	}
 	// And one loop per derivation of the loaded built-ins, at its declared cadence, an hour when it declares none
 	// (it then runs on its other triggers alone).
-	for _, derivation := range plugin.Builtins().Derivations() {
+	for _, derivation := range harness.Collector.SourceSet.Derivations() {
 		interval := derivation.Cadence()
 		if interval <= 0 {
 			interval = time.Hour
 		}
 		wanted["derivation "+derivation.Name()] = interval
+		// A derivation run after a core kind's passes hears of them by their notifications: the listening loop runs,
+		// restarted every minute should its connection drop.
+		if len(derivation.AfterPasses()) > 0 {
+			wanted["notifications"] = time.Minute
+		}
 	}
 	if pluginLoops == 0 {
 		t.Fatal("no built-in provider states a cadence, so the plugin loops this test derives are none " +
 			"and it no longer checks them")
 	}
 	if len(tasks) != len(wanted) {
-		t.Fatalf("the scheduler has %d loops, want %d", len(tasks), len(wanted))
+		names := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			names = append(names, task.Name)
+		}
+		t.Fatalf("the scheduler has %d loops, want %d: %q", len(tasks), len(wanted), names)
 	}
 	for _, task := range tasks {
 		interval, named := wanted[task.Name]

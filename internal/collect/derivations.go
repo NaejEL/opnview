@@ -48,6 +48,8 @@ func (c *Collector) DerivationTasks() []core.Task {
 			Interval: core.FixedInterval(interval),
 			Run:      func(ctx context.Context) error { return c.RunDerivation(ctx, derivation) },
 			Wake:     derivation.Wake(),
+			// At start-up too: what arrived or was stored while the service was down is derived at once.
+			RunAtStart: true,
 		})
 	}
 	return tasks

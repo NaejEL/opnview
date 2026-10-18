@@ -385,6 +385,12 @@ func netflowManifest(t *testing.T) (map[string]any, string) {
 	delete(manifest, "pages")
 	delete(manifest, "measures")
 	delete(manifest, "derivations")
+	// Without its settings, a table keeps its rows at the installation's retention.
+	for _, table := range manifest["tables"].([]any) {
+		if retention, has := table.(map[string]any)["retention"].(map[string]any); has {
+			delete(retention, "setting")
+		}
+	}
 	manifest["name"] = "example_push"
 	manifest["script"] = "example.js"
 	script, err := os.ReadFile(filepath.Join("..", "..", "plugins", "netflow", "netflow.js"))
