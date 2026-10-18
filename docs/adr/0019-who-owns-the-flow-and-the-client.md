@@ -120,3 +120,28 @@ after the maintainer has looked.
 - Not decided here: discovery, which writes the installation model from the
   firewall and stays core Go until the kind that reads
   `interfaces_info` is a plugin (ADR 0017, MOVE).
+
+## As built, 18 October 2026, and the gap found next
+
+The granted writes are built (`writable_by`, column-level and table-level,
+revoked when withdrawn, refused by name at load). Preparing the move of
+`flow` to pf found the next gap: **a plugin's table declaration cannot express
+what `flow` needs.** The vocabulary of ADR 0001's tables is columns of seven
+types, a primary key, indexes and a retention. `flow` has `CHECK` constraints
+(the pinned expression of `traffic_scope`, the this-firewall rules, the
+pairing invariant), a `UNIQUE` digest, foreign keys to `interface`, `client`
+and `rule`, a partial index on refusals, and a `BIGINT` id from a sequence.
+The same is true of `client` (generated columns, a unique identity) and of the
+four other core-kind tables. Two ways forward, to be decided before the move:
+
+1. **Extend the declaration**: `unique`, `check` (an expression, planned
+   under the plugin's role at load), `references` (a column to another
+   plugin's table, loaded first by `requires`), `where` on an index, `generated`
+   on a column. Everything stays declarative and the catalogue keeps reading it.
+   About one session.
+2. **A DDL file** beside the relations, `CREATE TABLE` allowed in the plugin's
+   schema: smaller to build, but the catalogue, the retention purge, the
+   set-aside on change and the push writers all read the declaration, not the
+   DDL, so a DDL table would be a second kind of table with fewer services.
+
+The orchestrator recommends the first.
