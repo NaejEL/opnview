@@ -834,6 +834,24 @@
     "parameter.value.best_available": "Best available",
     "parameter.value.netflow_bytes": "NetFlow bytes",
     "parameter.value.netflow_packets": "NetFlow packets",
-    "parameter.value.lookups": "Lookups"
+    "parameter.value.lookups": "Lookups",
+    "parameter.severities": "Severities",
+    "parameter.bucket": "Bucket",
+    "parameter.providers": "Providers",
+    "parameter.include_unmatched": "Include addresses not matched to a client",
+    "parameter.value.critical": "Critical",
+    "parameter.value.high": "High",
+    "parameter.value.medium": "Medium",
+    "parameter.value.low": "Low",
+    "parameter.value.informational": "Informational",
+    "parameter.value.unknown": "Unknown",
+    "parameter.value.auto": "Automatic",
+    "parameter.value.1m": "1 minute",
+    "parameter.value.15m": "15 minutes",
+    "parameter.value.1h": "1 hour",
+    "parameter.value.24h": "24 hours",
+    "parameter.value.count": "Count",
+    "parameter.value.severity": "Severity",
+    "parameter.value.worst_severity": "Worst severity"
   }
 }

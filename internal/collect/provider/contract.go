@@ -143,6 +143,9 @@ type Contract struct {
 	Cadences []Cadence `json:"cadences,omitempty"`
 	// PageSize is the setting sizing the kind's paged read, when its page is the operator's to set.
 	PageSize *PageSize `json:"page_size,omitempty"`
+	// Bounds are the limits the core applies to the kind's secondary calls, each with its unit and the
+	// reason for its value (cadences.go): security_event's rule-info call, for one.
+	Bounds []Bound `json:"bounds,omitempty"`
 	// Sizing says how the collection surface measures the kind's read, when it sizes it.
 	Sizing *Sizing `json:"sizing,omitempty"`
 	// Collection places a kind polled and not sized on the collection surface: after the first of

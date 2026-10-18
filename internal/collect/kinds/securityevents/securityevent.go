@@ -40,8 +40,15 @@ func (c *SecurityEventCoordinator) CollectSecurityEvent(ctx context.Context) err
 	}
 	var failures []error
 	for _, active := range sources {
-		if err := c.collectSecurityEventFrom(ctx, active); err != nil {
+		stored, err := c.collectSecurityEventFrom(ctx, active)
+		if err != nil {
 			failures = append(failures, err)
+			continue
+		}
+		// After the pass, and only after one that stored an event: the rules its events name are
+		// resolved. Nothing that call meets fails the pass (resolveRuleInfo).
+		if stored > 0 {
+			c.resolveRuleInfo(ctx, active)
 		}
 	}
 	if len(failures) > 0 {
@@ -59,17 +66,17 @@ func (c *SecurityEventCoordinator) CollectSecurityEvent(ctx context.Context) err
 // surveyed. Today exactly one implementation of this kind exists, so the watermarks belong to
 // it; a second one that also resumed from a file offset would need the cursor keyed by provider
 // first, and surveying its shape is what that cycle would begin with.
-func (c *SecurityEventCoordinator) collectSecurityEventFrom(ctx context.Context, active core.ActiveSource) error {
+func (c *SecurityEventCoordinator) collectSecurityEventFrom(ctx context.Context, active core.ActiveSource) (int, error) {
 	providerKey, providerID := active.ProviderKey, active.ProviderID
 	source, registered := c.SourceSet.Lookup(Kind, providerKey)
 	if !registered {
-		return fmt.Errorf("collect: the active security_event provider %q has no implementation",
+		return 0, fmt.Errorf("collect: the active security_event provider %q has no implementation",
 			providerKey)
 	}
 
 	rotation, rotationResult, err := source.Implementation.Call(ctx, c, "rotation")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	known := provider.Flag(rotation, "known", false)
 	if !known {
@@ -77,36 +84,38 @@ func (c *SecurityEventCoordinator) collectSecurityEventFrom(ctx context.Context,
 		// The state is recorded and nothing is concluded.
 		if writeErr := c.WriteAvailability(ctx, providerID, rotationResult.State,
 			rotationResult.Outcome, rotationResult.Probe, rotationResult.Detail); writeErr != nil {
-			return writeErr
+			return 0, writeErr
 		}
 	}
 
 	now := c.Now()
 	watermarks, err := c.Store.EveWatermarks(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	if known {
 		if err := c.recordLostRotations(ctx, providerID, provider.Texts(rotation, "present"), watermarks, now); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
 	alerts, result, readErr := source.Implementation.Call(ctx, c, "alerts", c.PageSize(Kind))
 	if writeErr := c.WriteAvailability(ctx, providerID, result.State,
 		result.Outcome, result.Probe, result.Detail); writeErr != nil {
-		return writeErr
+		return 0, writeErr
 	}
 	if readErr != nil {
-		return readErr
+		return 0, readErr
 	}
 
 	// No retention purge runs between this pass storing an event and the end of its
 	// derivation (purge.go).
 	defer c.Storing()()
 	highestPerFile := make(map[string]int64)
-	var sources []string
+	// stored are the events this pass wrote, and addresses both ends of each: the destination end
+	// is placed exactly as the source end is (gap G7, closed in step 6).
+	var stored, addresses []string
 	for _, record := range provider.Records(alerts, "alerts") {
 		fileID, offset := provider.Text(record, "file_id"), provider.Integer(record, "byte_offset")
 		if watermark, seen := watermarks[fileID]; seen && offset <= watermark.ByteOffset {
@@ -118,9 +127,10 @@ func (c *SecurityEventCoordinator) collectSecurityEventFrom(ctx context.Context,
 
 		if err := c.Store.InsertSecurityEvent(ctx, providerID, buildSecurityEvent(record, now)); err != nil {
 			// The events stored before this one are placed all the same.
-			return derive.On(c.Collector).DeriveAfter(ctx, derive.Derivation{Addresses: sources}, err)
+			return len(stored), derive.On(c.Collector).DeriveAfter(ctx, derive.Derivation{Addresses: addresses}, err)
 		}
-		sources = append(sources, provider.Text(record, "src_address"))
+		stored = append(stored, fileID)
+		addresses = append(addresses, provider.Text(record, "src_address"), provider.Text(record, "dst_address"))
 	}
 
 	for fileID, offset := range highestPerFile {
@@ -139,15 +149,93 @@ func (c *SecurityEventCoordinator) collectSecurityEventFrom(ctx context.Context,
 			RotationState: state,
 			ObservedAt:    now,
 		}); err != nil {
-			return derive.On(c.Collector).DeriveAfter(ctx, derive.Derivation{Addresses: sources}, err)
+			return len(stored), derive.On(c.Collector).DeriveAfter(ctx, derive.Derivation{Addresses: addresses}, err)
 		}
 	}
-	if len(sources) == 0 {
-		return nil
+	if len(stored) == 0 {
+		return 0, nil
 	}
-	// The sources are placed after the pass, by the classification that places a
-	// flow's ends.
-	return derive.On(c.Collector).Derive(ctx, derive.Derivation{Addresses: sources})
+	// Both ends are placed after the pass, by the classification that places a flow's ends.
+	return len(stored), derive.On(c.Collector).Derive(ctx, derive.Derivation{Addresses: addresses})
+}
+
+// The names of the kind's bounds on its rule-info call (kinds/security_event.json, "bounds").
+const (
+	boundRuleInfoPerPass = "rule_info_per_pass"
+	boundRuleInfoRecheck = "rule_info_recheck_seconds"
+)
+
+// resolveRuleInfo asks one provider about the rules its events name that the cache holds no
+// answer for, or an answer older than the kind's re-check age, at most the kind's per-pass bound
+// of them, and writes its answers into the provider-neutral cache (provider_rule_info).
+//
+// A FAILED RULE-INFO CALL FAILS NOTHING ELSE. It never fails or undoes the alert pass that ran
+// before it, and never writes the provider's availability, which is the alerts read's: the call
+// is logged with the provider and what it answered, and the identities it did not answer stay
+// unfetched -- no row -- and are asked again at the next pass that stores an event.
+func (c *SecurityEventCoordinator) resolveRuleInfo(ctx context.Context, active core.ActiveSource) {
+	providerKey, providerID := active.ProviderKey, active.ProviderID
+	source, registered := c.SourceSet.Lookup(Kind, providerKey)
+	contract, known := provider.ContractOf(Kind)
+	if !registered || !known {
+		return
+	}
+	perPass, hasBound := contract.BoundOf(boundRuleInfoPerPass)
+	recheck, hasRecheck := contract.BoundOf(boundRuleInfoRecheck)
+	if !hasBound || !hasRecheck {
+		c.Note("collect: the security_event contract declares no rule-info bounds; %s was not asked", providerKey)
+		return
+	}
+	now := c.Now()
+	identities, err := c.Store.RuleIdentitiesToFetch(ctx, providerID, now-recheck.Default, perPass.Default)
+	if err != nil {
+		c.Note("collect: rule info of the security_event provider %s: reading what to ask: %v", providerKey, err)
+		return
+	}
+	if len(identities) == 0 {
+		return
+	}
+	asked := make(map[string]bool, len(identities))
+	list := make([]any, 0, len(identities))
+	for _, identity := range identities {
+		asked[identity] = true
+		list = append(list, identity)
+	}
+	answer, result, err := source.Implementation.Call(ctx, c, "rule_info", list)
+	if err != nil {
+		c.Note("collect: rule info of the security_event provider %s: outcome %s: %v; the %d rule identities "+
+			"asked stay not fetched and are asked again", providerKey, result.Outcome, err, len(identities))
+		return
+	}
+	if failure := provider.Text(answer, "error"); failure != "" {
+		c.Note("collect: rule info of the security_event provider %s: outcome %s: %s (%s); the rule identities "+
+			"it did not answer stay not fetched and are asked again", providerKey, result.Outcome, failure, result.Detail)
+	}
+	for _, entry := range provider.Records(answer, "rules") {
+		identity := provider.Text(entry, "rule_identity")
+		if !asked[identity] {
+			// An answer to a question not asked names no event of this pass's question; it is not stored.
+			continue
+		}
+		info := flows.RuleInfo{RuleIdentity: identity, LookupState: provider.Text(entry, "lookup_state"),
+			FetchedAt: now}
+		if info.LookupState == flows.RuleFound {
+			info.NormalisedSeverity = provider.TextPointer(entry, "normalised_severity")
+			info.ProviderSeverity = provider.TextPointer(entry, "provider_severity")
+			info.Category = provider.TextPointer(entry, "category")
+			info.RuleSource = provider.TextPointer(entry, "rule_source")
+		}
+		if err := c.Store.UpsertRuleInfo(ctx, providerID, info); err != nil {
+			c.Note("collect: rule info of the security_event provider %s: %v", providerKey, err)
+			return
+		}
+		delete(asked, identity)
+	}
+	if len(asked) > 0 && provider.Text(answer, "error") == "" {
+		c.Note("collect: rule info of the security_event provider %s: outcome %s: %d of the %d rule identities "+
+			"asked were not answered; they stay not fetched and are asked again", providerKey, result.Outcome,
+			len(asked), len(identities))
+	}
 }
 
 // recordLostRotations marks every watermarked file the feed no longer carries as lost, and

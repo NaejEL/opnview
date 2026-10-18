@@ -1,0 +1,12 @@
+{
+  "__provenance__": {
+    "synthesised_from": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/IDS/Api/SettingsController.php",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM SOURCE AND IS NOT A CAPTURE. It was written by reading the OPNsense 26.7.3 source of the installed-rules grid (controllers/OPNsense/IDS/Api/SettingsController.php, searchInstalledRulesAction, and scripts/suricata/lib/rulecache.py, search), never by recording a response from an OPNsense firewall. If the source was misread, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Rule metadata, read from source for step 6",
+    "field_list_from": "the controller's answer when the configd action returned nothing it could decode: return [], an empty JSON list",
+    "why_these_values": "An empty list instead of a grid is a failure to ask, never a rule found missing: nothing may be cached from it.",
+    "example_values_are_not_a_network": "Nothing below describes anyone's rules."
+  },
+  "body": []
+}

@@ -250,3 +250,12 @@ func setJSON(t *testing.T, page *frontjs.Runtime, name, text string) {
 	t.Helper()
 	page.Run("var " + name + " = " + text + ";")
 }
+
+// rendererURL is a built-in's renderer_url as GET /api/widgets serves it: its own renderer's URL, or
+// null when its shape's renderer draws it.
+func rendererURL(widget builtinWidget) any {
+	if widget.Renderer == nil {
+		return nil
+	}
+	return "/front/widgets/" + widget.Type + "/renderer.js"
+}

@@ -59,7 +59,7 @@ func TestUnknownKeysAreReportedAndInvalidValuesTakeTheirDefault(t *testing.T) {
 			t.Errorf("%q was not refused as malformed: %v", malformed, err)
 		}
 	}
-	for _, unknown := range []string{"client_activity_timeline", "security_alerts_over_time"} {
+	for _, unknown := range []string{"client_activity_timeline", "no_such_widget"} {
 		if _, err := f.service.Respond(context.Background(), unknown, ""); !errors.Is(err, widget.ErrUnknownType) {
 			t.Errorf("%s was not an unknown type: %v", unknown, err)
 		}

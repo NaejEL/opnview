@@ -1,0 +1,85 @@
+{
+  "manifest_version": 1,
+  "type": "alerts_by_client_and_interface",
+  "shape": "table",
+  "providers": [
+    "security_event",
+    "dhcp_lease"
+  ],
+  "primary": "security_event",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "severities",
+      "kind": "enum_set",
+      "values": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "informational",
+        "unknown"
+      ],
+      "default": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "informational",
+        "unknown"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 20,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "sort",
+      "kind": "enum",
+      "values": [
+        "count",
+        "worst_severity"
+      ],
+      "default": "count",
+      "class": "data"
+    },
+    {
+      "key": "include_unmatched",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    }
+  ],
+  "references": [
+    "interface"
+  ],
+  "queries": [
+    "alerts_by_client_and_interface.statements.sql"
+  ],
+  "script": "alerts_by_client_and_interface.js"
+}

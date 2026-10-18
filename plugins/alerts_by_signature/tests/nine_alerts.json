@@ -1,0 +1,355 @@
+{
+  "type": "alerts_by_signature",
+  "parameters": {
+    "clients": null,
+    "interfaces": null,
+    "limit": 20,
+    "period": "1h",
+    "providers": null,
+    "severities": [
+      "critical",
+      "high",
+      "medium",
+      "low",
+      "informational",
+      "unknown"
+    ],
+    "sort": "count"
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789996800,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999200,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "security_event",
+      "provider_key": "ids_a",
+      "display_name": "Example engine A",
+      "active": true,
+      "state": "reachable",
+      "outcome": "healthy",
+      "probe": "alerts",
+      "checked_at": 1790000340,
+      "detail": null,
+      "condition": "reachable"
+    },
+    {
+      "kind": "security_event",
+      "provider_key": "ids_b",
+      "display_name": "Example engine B",
+      "active": true,
+      "state": "reachable",
+      "outcome": "healthy",
+      "probe": "alerts",
+      "checked_at": 1790000340,
+      "detail": null,
+      "condition": "reachable"
+    }
+  ],
+  "condition": "reachable",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "columns": [
+      "provider_kind",
+      "provider_key",
+      "provider_display_name",
+      "rule_identity",
+      "signature",
+      "events",
+      "last_seen_at",
+      "normalised_severity",
+      "provider_severity",
+      "severity_state",
+      "severity_reason",
+      "category",
+      "rule_source",
+      "clients",
+      "interfaces",
+      "this_firewall",
+      "observed_on"
+    ],
+    "rows": [
+      [
+        "security_event",
+        "ids_a",
+        "Example engine A",
+        "9000001",
+        "example signature 9000001",
+        {
+          "measure": "security_events",
+          "lower_bound": true,
+          "value": 3
+        },
+        1789999700,
+        "high",
+        "2",
+        "resolved",
+        null,
+        "example-category",
+        "example.rules",
+        [
+          10
+        ],
+        [
+          1
+        ],
+        false,
+        [
+          {
+            "device": "exdev1",
+            "interface_id": 1,
+            "state": "resolved"
+          }
+        ]
+      ],
+      [
+        "security_event",
+        "ids_a",
+        "Example engine A",
+        "9000002",
+        "example signature 9000002",
+        {
+          "measure": "security_events",
+          "lower_bound": true,
+          "value": 2
+        },
+        1789999900,
+        null,
+        null,
+        "unknown",
+        "not_reported_by_provider",
+        "example-category-two",
+        "example.rules",
+        [
+          20
+        ],
+        [
+          2
+        ],
+        false,
+        [
+          {
+            "device": "exdev2^",
+            "interface_id": null,
+            "state": "not_found"
+          }
+        ]
+      ],
+      [
+        "security_event",
+        "ids_a",
+        "Example engine A",
+        "9000003",
+        "example signature 9000003",
+        {
+          "measure": "security_events",
+          "lower_bound": true,
+          "value": 1
+        },
+        1790000300,
+        null,
+        null,
+        "unknown",
+        "rule_not_found",
+        null,
+        null,
+        [
+          10,
+          20
+        ],
+        [
+          1,
+          2
+        ],
+        false,
+        [
+          {
+            "device": "exdev1",
+            "interface_id": 1,
+            "state": "resolved"
+          }
+        ]
+      ],
+      [
+        "security_event",
+        "ids_a",
+        "Example engine A",
+        "9000004",
+        "example signature 9000004",
+        {
+          "measure": "security_events",
+          "lower_bound": true,
+          "value": 1
+        },
+        1789999200,
+        null,
+        null,
+        "unknown",
+        "not_fetched",
+        null,
+        null,
+        [],
+        [
+          2
+        ],
+        true,
+        [
+          {
+            "device": null,
+            "interface_id": null,
+            "state": "not_reported"
+          }
+        ]
+      ],
+      [
+        "security_event",
+        "ids_b",
+        "Example engine B",
+        "9000001",
+        "example signature 9000001",
+        {
+          "measure": "security_events",
+          "lower_bound": true,
+          "value": 1
+        },
+        1789999400,
+        null,
+        null,
+        "unknown",
+        "not_fetched",
+        null,
+        null,
+        [
+          10
+        ],
+        [
+          1
+        ],
+        false,
+        [
+          {
+            "device": "exdev1",
+            "interface_id": 1,
+            "state": "resolved"
+          }
+        ]
+      ],
+      [
+        "security_event",
+        "ids_b",
+        "Example engine B",
+        "9000005",
+        "example signature 9000005",
+        {
+          "measure": "security_events",
+          "lower_bound": true,
+          "value": 1
+        },
+        1789999300,
+        "critical",
+        null,
+        "resolved",
+        null,
+        null,
+        null,
+        [
+          10
+        ],
+        [
+          1
+        ],
+        false,
+        [
+          {
+            "device": "exdev1",
+            "interface_id": 1,
+            "state": "resolved"
+          }
+        ]
+      ]
+    ],
+    "remainder": {
+      "members": 0,
+      "events": {
+        "measure": "security_events",
+        "lower_bound": true,
+        "value": 0
+      }
+    },
+    "total": {
+      "measure": "security_events",
+      "lower_bound": true,
+      "value": 9
+    },
+    "clients": [
+      {
+        "id": 10,
+        "identity_kind": "mac",
+        "identity_key": "00:00:5e:00:53:0a",
+        "interface_id": 1,
+        "mac": "00:00:5e:00:53:0a",
+        "hostname": null,
+        "last_address": "192.0.2.10",
+        "owner_id": null,
+        "owner_assigned_at": null,
+        "unstable_identity": false,
+        "last_seen_at": 1789997400
+      },
+      {
+        "id": 20,
+        "identity_kind": "mac",
+        "identity_key": "00:00:5e:00:53:14",
+        "interface_id": 2,
+        "mac": "00:00:5e:00:53:14",
+        "hostname": null,
+        "last_address": "198.51.100.20",
+        "owner_id": null,
+        "owner_assigned_at": null,
+        "unstable_identity": false,
+        "last_seen_at": 1789997400
+      }
+    ],
+    "interfaces": [
+      {
+        "id": 1,
+        "identifier": "example_one",
+        "device": "exdev1",
+        "description": "Inside one",
+        "user_label": null,
+        "label": "Inside one",
+        "labelled": false,
+        "link_kind": "vlan",
+        "vlan_tag": null,
+        "upstream": false
+      },
+      {
+        "id": 2,
+        "identifier": "example_two",
+        "device": "exdev2",
+        "description": "Inside two",
+        "user_label": null,
+        "label": "Inside two",
+        "labelled": false,
+        "link_kind": "vlan",
+        "vlan_tag": null,
+        "upstream": false
+      }
+    ]
+  }
+}

@@ -124,18 +124,24 @@ func TestAnUnauthenticatedWidgetRequestGetsA401ConditionAndNoData(t *testing.T) 
 }
 
 // TestUnknownTypesMalformedParametersAndUnknownKeysOverHTTP is AC4 over the wire: an
-// unknown type -- client_activity_timeline, the mockup's deliberately unknown one, and an
-// alert preset of step 6 among them -- is a 404 in JSON naming unknown_widget_type; a
-// parameters payload that is not a JSON object is a 400 naming malformed_parameters; an
-// unknown key is reported and is not an error.
+// unknown type -- client_activity_timeline, the mockup's deliberately unknown one, among them --
+// is a 404 in JSON naming unknown_widget_type; a parameters payload that is not a JSON object is a
+// 400 naming malformed_parameters; an unknown key is reported and is not an error. The three alert
+// presets step 6 served answer 200 (S6-AC10 of specs/SPEC-step-6-alerts.md).
 func TestUnknownTypesMalformedParametersAndUnknownKeysOverHTTP(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
 	harness.CompleteSetup()
-	for _, unknown := range []string{"client_activity_timeline", "alerts_by_signature", "no_such_widget"} {
+	for _, unknown := range []string{"client_activity_timeline", "no_such_widget"} {
 		answer := harness.Get(widget.PathPrefix + unknown)
 		if condition, _ := decodeCondition(t, answer, http.StatusNotFound); condition != envelope.ConditionUnknownWidgetType {
 			t.Errorf("%s answered %q", unknown, condition)
+		}
+	}
+	for _, alerts := range []string{"security_alerts_over_time", "alerts_by_signature", "alerts_by_client_and_interface"} {
+		answer := harness.Get(widget.PathPrefix + alerts)
+		if _, body := decodeCondition(t, answer, http.StatusOK); body["type"] != alerts {
+			t.Errorf("%s answered %v", alerts, body["type"])
 		}
 	}
 	for _, malformed := range []string{"{", "[1,2]", "\"text\"", "{} trailing"} {

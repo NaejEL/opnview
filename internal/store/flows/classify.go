@@ -131,7 +131,7 @@ func (s *FlowStore) Membership(ctx context.Context, address string) (*int64, err
 }
 
 // Reclassify places each address and rewrites every row naming it that needs it:
-// the two ends of a flow, the source of a security event and the querier of a
+// the two ends of a flow, the two ends of a security event and the querier of a
 // lookup. An address whose evidence is unchanged since it was last placed has only
 // its unplaced rows placed.
 //
@@ -175,7 +175,7 @@ func (s *FlowStore) Reclassify(ctx context.Context, addresses []string, now int6
 func (s *FlowStore) ReclassifyAll(ctx context.Context, now int64) (Reclassification, error) {
 	addresses := map[string]struct{}{}
 	for _, name := range []string{"next_source_address", "next_destination_address",
-		"next_lookup_address", "next_event_address"} {
+		"next_lookup_address", "next_event_address", "next_event_destination_address"} {
 		if err := walkDistinct(ctx, s.SQL, name, func(address string) {
 			addresses[address] = struct{}{}
 		}); err != nil {
@@ -425,8 +425,10 @@ func classifyAddress(ctx context.Context, q sqldb.Querier, address string, prefi
 		}
 		result.FlowInstants = append(result.FlowInstants, instants...)
 	}
-	if _, err := sqldb.ExecNamed(ctx, q, "classify_event_source", parameters); err != nil {
-		return result, err
+	for _, name := range []string{"classify_event_source", "classify_event_destination"} {
+		if _, err := sqldb.ExecNamed(ctx, q, name, parameters); err != nil {
+			return result, err
+		}
 	}
 	instants, err := sqldb.QueryInts(ctx, q, "classify_lookup", parameters)
 	if err != nil {

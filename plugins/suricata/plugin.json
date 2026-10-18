@@ -31,6 +31,16 @@
       "survey_section": "Data source 2 — Suricata `eve.json`",
       "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/IDS/Api/ServiceController.php",
       "note": "status of running / stopped / disabled / unknown."
+    },
+    {
+      "name": "installed_rules",
+      "path": "/api/ids/settings/search_installed_rules",
+      "corrections": {"nature": "snapshot", "key": ["sid"], "parameters": {"current": "page", "rowCount": "page_size", "sid": "identifying"}},
+      "method": "POST",
+      "body": "form",
+      "survey_section": "Rule metadata, read from source for step 6",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/IDS/Api/SettingsController.php",
+      "note": "Read-only: the installed-rules grid of Services > Intrusion Detection, one rule per call, filtered by its sid. Each row carries sid, msg, rev, gid, reference, source (the ruleset file), action and enabled, plus classtype and every metadata tag the rule declares (scripts/suricata/lib/rulecache.py); no field holds the rule's priority, which is Suricata's severity."
     }
   ],
   "providers": [

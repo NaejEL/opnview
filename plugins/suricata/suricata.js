@@ -9,6 +9,16 @@
 // overwritten that key with the signature text, so category, severity and rule metadata are gone
 // before opnview sees them. That is why no record below carries a severity: severity is resolved
 // through the per-provider rule-info cache and from nowhere else.
+//
+// The rule-info cache is filled by rule_info, from the installed-rules grid (survey, data source
+// 2, "Rule metadata, read from source for step 6"). That grid serves a rule's classtype, its
+// ruleset file and the metadata tags it declares, and NO FIELD HOLDING SURICATA'S SEVERITY: the
+// rule's `priority` keyword, from which Suricata derives an alert's severity, is parsed by the
+// firewall's rule cache and then dropped (scripts/suricata/lib/rulecache.py stores sid, msg, rev,
+// gid, source, enabled, reference and action, and classtype as a property). So every rule this
+// implementation finds is found with no severity, which opnview serves as unknown with the reason
+// not_reported_by_provider. A severity is never derived from the classtype, the ruleset's name, a
+// ruleset's own metadata convention or the signature's wording.
 
 var d = opnview.decode;
 
@@ -199,10 +209,85 @@ exports.security_event = {
       });
     }
     return { result: result, alerts: alerts };
+  },
+
+  // rule_info answers what the installed-rules grid says of each sid asked: found, with its
+  // classtype and its ruleset file, or not found. One request per sid: the grid filters on one
+  // value per field (SettingsController::searchInstalledRulesAction). A call that fails stops the
+  // answer there; the sids not answered are asked again at a later pass.
+  rule_info: function (host, ruleIdentities) {
+    var result = { probe: "installed_rules", state: "unavailable", outcome: "request_not_made" };
+    var rules = [];
+    for (var i = 0; i < ruleIdentities.length; i++) {
+      var identity = String(ruleIdentities[i]);
+      if (!isSid(identity)) {
+        // A Suricata sid is a number (the eve record's alert.signature_id); an identity that is
+        // not one names no rule of this engine.
+        rules.push({ rule_identity: identity, lookup_state: "not_found" });
+        continue;
+      }
+      var response = host.call("installed_rules", { form: { current: 1, rowCount: 2, sid: identity } });
+      if (response.error) {
+        return { result: result, rules: rules, error: response.error };
+      }
+      if (!response.ok) {
+        result.outcome = response.availability_outcome;
+        result.detail = response.detail;
+        return { result: result, rules: rules, error: "collect: the installed-rules grid answered " + response.outcome };
+      }
+      var body = objectBody(response);
+      if (body === null || !Array.isArray(body.rows)) {
+        // The grid answers an empty list, not a grid, when its backend gave nothing it could
+        // decode: that is a failure to ask, never a rule found missing.
+        result.outcome = "undecodable";
+        result.detail = "the installed-rules grid answered no rows array";
+        return { result: result, rules: rules, error: "collect: reading the installed-rules grid: no rows array" };
+      }
+      rules.push(ruleAnswer(identity, body.rows));
+    }
+    result.state = "reachable";
+    result.outcome = "healthy";
+    result.separable = true;
+    return { result: result, rules: rules };
   }
 };
 
+// isSid reports whether a rule identity can be a Suricata sid: a whole number.
+function isSid(identity) {
+  return /^[0-9]+$/.test(identity);
+}
+
+// noClasstype is what the firewall's rule cache records for a rule that declares no classtype
+// (scripts/suricata/lib/rulecache.py, list_rules: 'classtype': '##none##'): the absence of a
+// category, not a category.
+var noClasstype = "##none##";
+
+// ruleAnswer is the answer about one sid from the grid's rows: the row carrying that sid, or not
+// found. The grid matches the sid with a LIKE and no wildcard, which is equality, and the row's own
+// sid is checked all the same.
+function ruleAnswer(identity, rows) {
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (row === null || typeof row !== "object" || d.rawString(row, "sid") !== identity) {
+      continue;
+    }
+    var answer = { rule_identity: identity, lookup_state: "found" };
+    var classtype = d.string(row, "classtype");
+    if (classtype !== null && classtype !== noClasstype) {
+      answer.category = classtype;
+    }
+    var source = d.string(row, "source");
+    if (source !== null) {
+      answer.rule_source = source;
+    }
+    // No severity: the grid serves none (see the head of this file).
+    return answer;
+  }
+  return { rule_identity: identity, lookup_state: "not_found" };
+}
+
 // The pure functions above, exported for the plugin's own tests.
 exports.helpers = {
-  normalise_event_action: normaliseEventAction
+  normalise_event_action: normaliseEventAction,
+  rule_answer: ruleAnswer
 };

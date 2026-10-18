@@ -1,0 +1,7 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.security_alerts_over_time.widget.security_alerts_over_time.title": "Security alerts over time",
+    "plugin.security_alerts_over_time.widget.security_alerts_over_time.question": "What did the intrusion-detection engine see, and when?"
+  }
+}

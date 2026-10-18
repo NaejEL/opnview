@@ -1,0 +1,7 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.alerts_by_client_and_interface.widget.alerts_by_client_and_interface.title": "Alerts by client and interface",
+    "plugin.alerts_by_client_and_interface.widget.alerts_by_client_and_interface.question": "Which machine, and in which interface, is the detection engine complaining about?"
+  }
+}

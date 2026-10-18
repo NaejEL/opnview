@@ -347,6 +347,52 @@ WHERE security_event.id = n.id
        OR security_event.src_is_this_firewall IS DISTINCT FROM n.this_firewall);
 
 
+-- The event's destination end, by the same evidence and the same rules as its source
+-- end (gap G7, closed in step 6): an outside destination keeps no interface and no
+-- client, and a destination this firewall held at the event's instant carries the
+-- interface the address belonged to and no client.
+-- statement: classify_event_destination
+UPDATE security_event
+SET dst_interface_id = n.interface_id,
+    dst_client_id = n.client_id,
+    dst_is_this_firewall = n.this_firewall
+FROM (SELECT p.id,
+             p.this_firewall,
+             CASE WHEN p.this_firewall THEN p.firewall_interface_id ELSE :interface_id END
+                 AS interface_id,
+             CASE
+                 WHEN p.this_firewall OR CAST(:interface_id AS BIGINT) IS NULL THEN NULL
+                 WHEN p.client_id IS NOT NULL
+                      AND (SELECT k.identity_kind FROM client AS k WHERE k.id = p.client_id)
+                          <> 'address_in_interface' THEN p.client_id
+                 WHEN CAST(:identity_client_id AS BIGINT) IS NOT NULL THEN CAST(:identity_client_id AS BIGINT)
+                 WHEN p.client_id IS NOT NULL THEN p.client_id
+                 ELSE :address_client_id
+             END AS client_id
+      FROM (SELECT e.id,
+                   e.dst_client_id AS client_id,
+                   CASE WHEN :loopback = 1
+                             OR EXISTS (SELECT 1 FROM this_firewall_address AS h
+                                        WHERE h.address = e.dst_address
+                                          AND h.first_seen_at - :held_margin <= e.occurred_at
+                                          AND (h.is_current = 1
+                                               OR h.last_seen_at + :held_margin >= e.occurred_at))
+                        THEN true ELSE false END AS this_firewall,
+                   (SELECT h.interface_id FROM this_firewall_address AS h
+                    WHERE h.address = e.dst_address
+                      AND h.first_seen_at - :held_margin <= e.occurred_at
+                      AND (h.is_current = 1 OR h.last_seen_at + :held_margin >= e.occurred_at)
+                    ORDER BY h.last_seen_at DESC, h.interface_id
+                    LIMIT 1) AS firewall_interface_id
+            FROM security_event AS e
+            WHERE e.dst_address = :address
+              AND (:full = 1 OR e.dst_interface_id IS NULL)) AS p) AS n
+WHERE security_event.id = n.id
+  AND (security_event.dst_interface_id IS DISTINCT FROM n.interface_id
+       OR security_event.dst_client_id IS DISTINCT FROM n.client_id
+       OR security_event.dst_is_this_firewall IS DISTINCT FROM n.this_firewall);
+
+
 -- A lookup is never given a client of its own: an address with no client stays
 -- with none, and the lookup still carries its interface. A lookup whose querier is
 -- this firewall carries the interface the address belonged to and no client.
@@ -430,6 +476,7 @@ WHERE last_address = :address
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM security_event AS e WHERE e.src_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM purged_flow_hour AS p WHERE p.local_client_id = client.id)
@@ -443,6 +490,7 @@ WHERE identity_kind = 'address_in_interface'
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM security_event AS e WHERE e.src_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM purged_flow_hour AS p WHERE p.local_client_id = client.id)
@@ -456,6 +504,7 @@ WHERE interface_id IN (SELECT id FROM interface WHERE is_upstream)
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM security_event AS e WHERE e.src_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM purged_flow_hour AS p WHERE p.local_client_id = client.id)
@@ -492,6 +541,7 @@ WHERE last_address = :address
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM security_event AS e WHERE e.src_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM purged_flow_hour AS p WHERE p.local_client_id = client.id)
@@ -515,6 +565,10 @@ SELECT min(client_address) FROM dns_resolution WHERE client_address > :address;
 
 -- statement: next_event_address
 SELECT min(src_address) FROM security_event WHERE src_address > :address;
+
+
+-- statement: next_event_destination_address
+SELECT min(dst_address) FROM security_event WHERE dst_address > :address;
 
 
 -- The addresses of every unplaced end of a flow the retention purge is about to

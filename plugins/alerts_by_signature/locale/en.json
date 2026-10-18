@@ -1,0 +1,7 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.alerts_by_signature.widget.alerts_by_signature.title": "Alerts by signature",
+    "plugin.alerts_by_signature.widget.alerts_by_signature.question": "Which detections are firing, how often, and how serious are they?"
+  }
+}

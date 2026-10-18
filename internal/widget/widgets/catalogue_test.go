@@ -100,7 +100,6 @@ func parseCatalogue(t *testing.T) (map[string]catalogueEntry, []string) {
 	return entries, index
 }
 
-// stepSixTypes are the alert presets decision 1 leaves to step 6.
 // servedPresets returns the declaration of every served type, from a service built over an
 // empty installation.
 func servedPresets(t *testing.T) []request.Preset {
@@ -114,13 +113,11 @@ func servedPresets(t *testing.T) []request.Preset {
 	return presets
 }
 
-var stepSixTypes = []string{"security_alerts_over_time", "alerts_by_signature", "alerts_by_client_and_interface"}
-
-// TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets is AC1: the served types are
-// exactly the catalogue's preset index minus the three alert presets; every key a type
-// declares is a backticked token of its catalogue Parameters paragraph; and every token
-// there is either one of its keys or a value of one, so no catalogue key is missing.
-func TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets(t *testing.T) {
+// TestTheRegisteredTypesAreThePresetIndex is AC1, and S6-AC10 since step 6 served the three alert
+// presets: the served types are exactly the catalogue's preset index; every key a type declares is
+// a backticked token of its catalogue Parameters paragraph; and every token there is either one of
+// its keys or a value of one, so no catalogue key is missing.
+func TestTheRegisteredTypesAreThePresetIndex(t *testing.T) {
 	t.Parallel()
 	entries, index := parseCatalogue(t)
 	if len(index) != 30 {
@@ -132,16 +129,14 @@ func TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets(t *testing.T) {
 	}
 	expected := map[string]bool{}
 	for _, widgetType := range index {
-		if !params.Contains(stepSixTypes, widgetType) {
-			expected[widgetType] = true
-		}
+		expected[widgetType] = true
 	}
 	served := map[string]bool{}
 	for _, preset := range servedPresets(t) {
 		served[preset.Type] = true
 	}
-	if len(served) != 27 {
-		t.Errorf("%d types are served, not 27", len(served))
+	if len(served) != 30 {
+		t.Errorf("%d types are served, not 30", len(served))
 	}
 	for widgetType := range expected {
 		if !served[widgetType] {
@@ -150,7 +145,7 @@ func TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets(t *testing.T) {
 	}
 	for widgetType := range served {
 		if !expected[widgetType] {
-			t.Errorf("%s is served but is not in the preset index less the alert presets", widgetType)
+			t.Errorf("%s is served but is not in the preset index", widgetType)
 		}
 	}
 	for _, preset := range servedPresets(t) {

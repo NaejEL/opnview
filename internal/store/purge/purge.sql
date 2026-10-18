@@ -224,6 +224,7 @@ AND owner_id IS NULL
 AND NOT EXISTS (SELECT 1 FROM flow f
                 WHERE f.src_client_id = client.id OR f.dst_client_id = client.id)
 AND NOT EXISTS (SELECT 1 FROM security_event e WHERE e.src_client_id = client.id)
+AND NOT EXISTS (SELECT 1 FROM security_event e WHERE e.dst_client_id = client.id)
 AND NOT EXISTS (SELECT 1 FROM dhcp_lease l WHERE l.client_id = client.id)
 AND NOT EXISTS (SELECT 1 FROM dns_resolution r WHERE r.client_id = client.id)
 AND NOT EXISTS (SELECT 1 FROM purged_flow_hour p WHERE p.local_client_id = client.id)

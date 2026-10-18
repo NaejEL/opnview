@@ -1,0 +1,95 @@
+{
+  "manifest_version": 1,
+  "type": "alerts_by_signature",
+  "shape": "table",
+  "providers": [
+    "security_event"
+  ],
+  "primary": "security_event",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "severities",
+      "kind": "enum_set",
+      "values": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "informational",
+        "unknown"
+      ],
+      "default": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "informational",
+        "unknown"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "clients",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "client",
+      "class": "data"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 20,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "providers",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "provider",
+      "class": "data"
+    },
+    {
+      "key": "sort",
+      "kind": "enum",
+      "values": [
+        "count",
+        "severity",
+        "recency"
+      ],
+      "default": "count",
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client",
+    "interface",
+    "provider"
+  ],
+  "queries": [
+    "alerts_by_signature.statements.sql"
+  ],
+  "script": "alerts_by_signature.js"
+}

@@ -163,7 +163,7 @@ func newEditFixture(t *testing.T, documents ...string) *editFixture {
 			prefix := "plugin." + widget.Type + ".widget." + widget.Type + "."
 			rows = append(rows, map[string]any{"type": widget.Type, "shape": widget.Shape, "windowed": widget.Windowed,
 				"backend": true, "parameters": parameters, "title_key": prefix + "title", "question_key": prefix + "question",
-				"renderer_url": "/front/widgets/" + widget.Type + "/renderer.js"})
+				"renderer_url": rendererURL(widget)})
 		}
 		return ok(map[string]any{"widgets": rows, "shapes": []any{}, "refused": []any{}})
 	})
@@ -475,9 +475,10 @@ func TestThePickerListsTheServedTypesAndANewWidgetStartsAtItsDefaults(t *testing
 	if got := page.Count("button.picker-item"); got != len(widgets) {
 		t.Fatalf("the picker lists %d types, /api/widgets serves %d", got, len(widgets))
 	}
+	// The three alert presets step 6 served are offered like every other type (S6-18).
 	for _, step6 := range []string{"security_alerts_over_time", "alerts_by_signature", "alerts_by_client_and_interface"} {
-		if page.Count(fmt.Sprintf(`button[data-pick="%s"]`, step6)) != 0 {
-			t.Errorf("the picker offers %s, which this build does not serve", step6)
+		if page.Count(fmt.Sprintf(`button[data-pick="%s"]`, step6)) != 1 {
+			t.Errorf("the picker does not offer %s, which this build serves", step6)
 		}
 	}
 	for _, widget := range widgets {

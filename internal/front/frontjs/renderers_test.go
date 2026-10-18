@@ -19,18 +19,17 @@ import (
 // drew; every volume figure states its measure; the attribution method is shown per record.
 
 // TestEveryServedTypeHasARendererAndARecordedAnswerAndDrawsEveryOne: a served type with no recorded
-// answer fails here; so does a type whose renderer throws on one of its answers. A spread of five
-// recorded variants of each type is drawn, within the front's test budget.
+// answer fails here; so does a type whose renderer throws on one of its answers. A type with no
+// renderer of its own is drawn by its shape's, as the registry serves it (renderer_url null), so its
+// payload must be its shape's contract and is drawn here to prove it: the three alert presets until
+// their renderers exist (S6-14 of specs/SPEC-step-6-alerts.md). A spread of five recorded variants of
+// each type is drawn, within the front's test budget.
 func TestEveryServedTypeHasARendererAndARecordedAnswerAndDrawsEveryOne(t *testing.T) {
 	t.Parallel()
 	page := drawingPage(t)
 	answers := recordedAnswers(t)
 	drawn := 0
 	for _, widget := range builtinWidgets(t) {
-		if widget.Renderer == nil {
-			t.Errorf("%s has no renderer of its own: its payload is not its shape's contract", widget.Type)
-			continue
-		}
 		found := spread(drawable(answers[widget.Type]), 5)
 		if len(found) == 0 {
 			t.Errorf("%s has no recorded answer carrying data", widget.Type)

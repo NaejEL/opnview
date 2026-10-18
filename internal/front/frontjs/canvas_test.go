@@ -93,7 +93,7 @@ func newCanvasFixture(t *testing.T, documents ...string) *canvasFixture {
 			var row map[string]any
 			_ = json.Unmarshal([]byte(rowOf(t, widget)), &row)
 			row["title_key"] = "plugin." + widget.Type + ".widget." + widget.Type + ".title"
-			row["renderer_url"] = "/front/widgets/" + widget.Type + "/renderer.js"
+			row["renderer_url"] = rendererURL(widget)
 			rows = append(rows, row)
 		}
 		for _, row := range fixture.extraRows {

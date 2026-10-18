@@ -1,0 +1,10 @@
+{
+  "api_version": 2,
+  "name": "alerts_by_signature",
+  "version": "1.0.0",
+  "display_name": "Alerts by signature",
+  "description": "One row per rule each security-event provider fired: its signature, its count, when it last fired, its severity normalised beside the raw value the provider reported, the category and ruleset of the rule, and the clients and interfaces at either end.",
+  "widgets": [
+    "alerts_by_signature"
+  ]
+}

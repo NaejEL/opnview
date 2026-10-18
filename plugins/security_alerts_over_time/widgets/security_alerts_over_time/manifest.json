@@ -1,0 +1,90 @@
+{
+  "manifest_version": 1,
+  "type": "security_alerts_over_time",
+  "shape": "time_series",
+  "providers": [
+    "security_event"
+  ],
+  "primary": "security_event",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "severities",
+      "kind": "enum_set",
+      "values": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "informational",
+        "unknown"
+      ],
+      "default": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "informational",
+        "unknown"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "clients",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "client",
+      "class": "data"
+    },
+    {
+      "key": "bucket",
+      "kind": "enum",
+      "values": [
+        "auto",
+        "1m",
+        "15m",
+        "1h",
+        "24h"
+      ],
+      "default": "auto",
+      "class": "data"
+    },
+    {
+      "key": "providers",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "provider",
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client",
+    "interface",
+    "provider"
+  ],
+  "queries": [
+    "security_alerts_over_time.statements.sql"
+  ],
+  "script": "security_alerts_over_time.js"
+}

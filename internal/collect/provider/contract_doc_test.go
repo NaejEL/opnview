@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -50,6 +51,13 @@ func renderContract(contract Contract) string {
 	for _, function := range contract.Functions {
 		out.WriteString("| `" + function.Name + "` | `" + function.Arguments + "` | `" + function.Returns + "` | " +
 			function.Description + " |\n")
+	}
+	if len(contract.Bounds) > 0 {
+		out.WriteString("\nBounds the core applies to these calls:\n\n| Bound | Value | Unit | Basis |\n|---|---|---|---|\n")
+		for _, bound := range contract.Bounds {
+			out.WriteString("| `" + bound.Name + "` | " + strconv.FormatInt(bound.Default, 10) + " | " + bound.Unit +
+				" | " + strings.ReplaceAll(bound.Basis, "|", "\\|") + " |\n")
+		}
 	}
 	if len(contract.Values) > 0 {
 		out.WriteString("\nValues the script exports beside the functions:\n\n")

@@ -1,0 +1,35 @@
+{
+  "__provenance__": {
+    "synthesised_from": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/suricata/lib/rulecache.py",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM SOURCE AND IS NOT A CAPTURE. It was written by reading the OPNsense 26.7.3 source of the installed-rules grid (controllers/OPNsense/IDS/Api/SettingsController.php, searchInstalledRulesAction, and scripts/suricata/lib/rulecache.py, search), never by recording a response from an OPNsense firewall. If the source was misread, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Rule metadata, read from source for step 6",
+    "field_list_from": "rows, rowCount, total, current; per row the rules table's sid, rev, gid, msg, reference, source, enabled, action, status, enabled_default, action_default and matched_policy, then classtype and each metadata tag the rule declares, as rule_properties adds them",
+    "why_these_values": "One rule found by its sid, with a classtype and a ruleset file, and a metadata tag named like a severity, which is a ruleset's own convention and not Suricata's severity: the answer must carry the classtype verbatim as the category, the file as the rule source, and no severity at all.",
+    "example_values_are_not_a_network": "Every identifier and text below is synthesised for this fixture. None of them describes anyone's rules, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "rows": [
+      {
+        "sid": 9000001,
+        "rev": 3,
+        "gid": 1,
+        "msg": "EXAMPLE synthesised signature text",
+        "reference": "url,example.invalid/rule",
+        "source": "example-ruleset.rules",
+        "enabled": "1",
+        "action": "alert",
+        "status": "enabled",
+        "enabled_default": 1,
+        "action_default": "alert",
+        "matched_policy": null,
+        "classtype": "example-classtype",
+        "signature_severity": "Major",
+        "created_at": "2026_01_01"
+      }
+    ],
+    "rowCount": 1,
+    "total": 1,
+    "current": 1
+  }
+}

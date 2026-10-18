@@ -187,6 +187,14 @@ func (c *Collector) FirewallOffsetSeconds() int {
 // Now is the current instant as the UTC epoch every column stores.
 func (c *Collector) Now() int64 { return c.Clock.Now().UTC().Unix() }
 
+// Note hands a notice to the collector's Notice hook, when one is set: what a pass met that does not
+// fail it and that the operator should still be able to read.
+func (c *Collector) Note(format string, arguments ...any) {
+	if c.Notice != nil {
+		c.Notice(fmt.Sprintf(format, arguments...))
+	}
+}
+
 // WriteAvailability records a state determined by one probe endpoint, with the outcome
 // code that names why. An empty outcome is refused rather than defaulted: a code nobody
 // chose is a code that would have to be guessed back from the detail.

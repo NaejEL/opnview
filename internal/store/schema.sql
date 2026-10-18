@@ -1743,13 +1743,20 @@ CREATE INDEX IF NOT EXISTS idx_geo_asn_asn ON geo_asn (asn);
 
 -- ---------------------------------------------------------------------------
 -- Rule-info cache — the normalised severity and category of one rule identity,
--- per provider.
--- Source: /api/ids/settings/get_rule_info/<sid> for the Suricata provider.
+-- per provider, and the lookups that found nothing.
+-- Source: the rule_info function of the security_event contract; for the
+-- Suricata provider, POST /api/ids/settings/search_installed_rules filtered on
+-- the sid (survey, data source 2, "Rule metadata, read from source for step 6").
 -- Survey: data source 2, response shape, and gap 3: query_alerts overwrites
 -- the nested alert object with the signature string, so severity and category
--- are not in the event record and must be resolved separately and cached. A
--- rule identity with no row here is a cache miss, and the Alerts screen
--- renders it as an explicit unknown severity rather than dropping the event.
+-- are not in the event record and must be resolved separately and cached.
+--
+-- THE CACHE STATES ITS MISSES. lookup_state is 'found' when the provider knew
+-- the rule, and 'not_found' when it was asked and knew no such rule; a rule
+-- identity with no row here has never been fetched. A found rule may carry no
+-- severity: normalised_severity is then NULL, which the served rows report as
+-- unknown with the reason not_reported_by_provider, never as a guess. A
+-- not_found row carries nothing but its instant.
 --
 -- Keyed per provider: two providers may name a rule identically and mean
 -- different rules, so the identity alone is not a key. The identity is TEXT,
@@ -1764,14 +1771,19 @@ CREATE INDEX IF NOT EXISTS idx_geo_asn_asn ON geo_asn (asn);
 CREATE TABLE IF NOT EXISTS provider_rule_info (
     provider_id         BIGINT NOT NULL REFERENCES provider (id),
     rule_identity       TEXT NOT NULL,
-    normalised_severity TEXT NOT NULL
-                        CHECK (normalised_severity IN ('critical', 'high', 'medium',
-                                                       'low', 'informational')),
+    lookup_state        TEXT NOT NULL CHECK (lookup_state IN ('found', 'not_found')),
+    normalised_severity TEXT
+                        CHECK (normalised_severity IS NULL
+                               OR normalised_severity IN ('critical', 'high', 'medium',
+                                                          'low', 'informational')),
     provider_severity   TEXT,
     category            TEXT,
     rule_source         TEXT,
     fetched_at          BIGINT NOT NULL CHECK (fetched_at >= 0 AND fetched_at < 4102444800),
-    PRIMARY KEY (provider_id, rule_identity)
+    PRIMARY KEY (provider_id, rule_identity),
+    CHECK (lookup_state = 'found'
+           OR (normalised_severity IS NULL AND provider_severity IS NULL
+               AND category IS NULL AND rule_source IS NULL))
 );
 
 -- ---------------------------------------------------------------------------
@@ -1818,9 +1830,19 @@ CREATE TABLE IF NOT EXISTS security_event (
     -- 1 when the event's source is this firewall, as flow.src_is_this_firewall
     -- decides it for a record's end; such a source has no client.
     src_is_this_firewall BOOLEAN NOT NULL DEFAULT false,
+    -- The destination end, placed by the same classification as the source end
+    -- (gap G7, closed in step 6): many detections fire on the server-to-client
+    -- packet, where the client is the destination. An outside destination has
+    -- no interface and no client.
+    dst_client_id       BIGINT REFERENCES client (id),
+    dst_interface_id    BIGINT REFERENCES interface (id),
+    -- 1 when the event's destination is this firewall; such a destination has
+    -- no client.
+    dst_is_this_firewall BOOLEAN NOT NULL DEFAULT false,
     flow_ref            BIGINT,
     UNIQUE (provider_id, provider_event_key),
-    CHECK (NOT src_is_this_firewall OR src_client_id IS NULL)
+    CHECK (NOT src_is_this_firewall OR src_client_id IS NULL),
+    CHECK (NOT dst_is_this_firewall OR dst_client_id IS NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_security_event_occurred_at ON security_event (occurred_at);
@@ -1830,6 +1852,14 @@ CREATE INDEX IF NOT EXISTS idx_security_event_rule_occurred_at
 -- Classification rewrites an event's source end with the flows of that address.
 CREATE INDEX IF NOT EXISTS idx_security_event_src_address
     ON security_event (src_address, occurred_at);
+-- The destination end: a client's events as the destination, an interface's
+-- events as the target, and the rows classification rewrites per address.
+CREATE INDEX IF NOT EXISTS idx_security_event_dst_client_occurred_at
+    ON security_event (dst_client_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_security_event_dst_interface_occurred_at
+    ON security_event (dst_interface_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_security_event_dst_address
+    ON security_event (dst_address, occurred_at);
 
 -- ---------------------------------------------------------------------------
 -- blocked_decision — every refusal, whichever engine decided it, under one

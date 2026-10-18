@@ -85,6 +85,31 @@ func (c Contract) CadenceOf(role string) (Cadence, bool) {
 	return Cadence{}, false
 }
 
+// Bound is a limit the core applies to one of a kind's secondary calls: how many items one call
+// carries, how old an answer may grow before it is asked again. It is declared beside the kind's
+// cadences, with its unit and the reason for its value, so the justification cannot drift from the
+// number; unlike a cadence it is not an installation's setting.
+type Bound struct {
+	// Name is the bound's snake_case name, which the kind's coordinator reads it by.
+	Name string `json:"name"`
+	// Default is its value.
+	Default int64 `json:"default"`
+	// Unit is what it counts: "seconds", "rule identities".
+	Unit string `json:"unit"`
+	// Basis is why the value is what it is.
+	Basis string `json:"basis"`
+}
+
+// BoundOf returns one of a kind's bounds by name.
+func (c Contract) BoundOf(name string) (Bound, bool) {
+	for _, bound := range c.Bounds {
+		if bound.Name == name {
+			return bound, true
+		}
+	}
+	return Bound{}, false
+}
+
 // settingKeyPattern is what a setting key a kind file names matches: a snake_case word.
 var settingKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 
@@ -110,6 +135,18 @@ func checkSettings(contract Contract) string {
 	}
 	if contract.OwnCadence && len(contract.Cadences) > 0 {
 		return "a kind whose providers state their own cadence declares none"
+	}
+	bounds := map[string]bool{}
+	for _, bound := range contract.Bounds {
+		if !settingKeyPattern.MatchString(bound.Name) || bound.Default <= 0 || strings.TrimSpace(bound.Unit) == "" ||
+			strings.TrimSpace(bound.Basis) == "" {
+			return fmt.Sprintf("the bound %q needs a snake_case name, a positive default, its unit and its basis",
+				bound.Name)
+		}
+		if bounds[bound.Name] {
+			return fmt.Sprintf("the bound %s is declared twice", bound.Name)
+		}
+		bounds[bound.Name] = true
 	}
 	if page := contract.PageSize; page != nil {
 		if !settingKeyPattern.MatchString(page.Setting) || page.Default <= 0 || strings.TrimSpace(page.Basis) == "" {

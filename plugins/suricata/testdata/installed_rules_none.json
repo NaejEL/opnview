@@ -1,0 +1,17 @@
+{
+  "__provenance__": {
+    "synthesised_from": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/suricata/lib/rulecache.py",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM SOURCE AND IS NOT A CAPTURE. It was written by reading the OPNsense 26.7.3 source of the installed-rules grid (controllers/OPNsense/IDS/Api/SettingsController.php, searchInstalledRulesAction, and scripts/suricata/lib/rulecache.py, search), never by recording a response from an OPNsense firewall. If the source was misread, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Rule metadata, read from source for step 6",
+    "field_list_from": "rows, rowCount, total, current",
+    "why_these_values": "The grid's answer to a sid no installed rule carries: an empty rows array and a total of zero, which is a rule not found.",
+    "example_values_are_not_a_network": "Nothing below describes anyone's rules."
+  },
+  "body": {
+    "rows": [],
+    "rowCount": 0,
+    "total": 0,
+    "current": 1
+  }
+}

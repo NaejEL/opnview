@@ -552,6 +552,14 @@ Intrusion-detection events: data source 2. Several providers may be active at on
 | `probe` | `host` | `probe_answer` | Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients. |
 | `rotation` | `host` | `rotation_answer` | Called before every read: which of the feed's files still exist, so a lost file is recorded as a permanent gap. |
 | `alerts` | `host, page_size` | `alerts_answer` | Called at every security-event pass: the newest page_size events, newest first. |
+| `rule_info` | `host, rule_identities` | `rule_info_answer` | Called after an alerts pass that stored at least one event, with the rule identities the provider's events carry that the rule-info cache holds no answer for, or an answer older than rule_info_recheck_seconds -- at most rule_info_per_pass of them. Its answers fill the cache; a call that fails fails nothing else, and the identities it did not answer are asked again. |
+
+Bounds the core applies to these calls:
+
+| Bound | Value | Unit | Basis |
+|---|---|---|---|
+| `rule_info_per_pass` | 25 | rule identities | opnview's own, not a survey figure. Suricata's rule metadata is read one sid per request (survey, data source 2, "Rule metadata, read from source for step 6"), and each request runs a configd script on the firewall that opens the rule cache, so the bound caps the extra requests one 60-second alert pass makes. 25 a pass resolves 1 500 distinct rules an hour, beyond what any of the rulesets the survey met fires in a day; what is not asked carries over to the next pass that stores an event. |
+| `rule_info_recheck_seconds` | 86400 | seconds | opnview's own, not a survey figure. A rule's metadata changes only when its ruleset is downloaded again, which OPNsense does on the schedule the user sets on Services > Intrusion Detection > Administration, commonly once a day; asking again after a day follows such a change within one update while costing at most one request per rule per day. It applies to found and not-found answers alike, so a rule installed after it was first asked about is found the next day. |
 
 #### `probe_answer`
 
@@ -604,4 +612,27 @@ One event, decoded and normalised.
 | `dst_port` | integer | no |  | The destination port, 0 to 65535. |
 | `protocol` | text | no |  | The protocol. |
 | `in_interface_device` | text | no |  | The device the event was seen on. |
+
+#### `rule_info_answer`
+
+What `rule_info` returns.
+
+| Field | Type | Required | Unit or values | Description |
+|---|---|---|---|---|
+| `result` | record of `result` | yes |  | The `result` record: what the rule-metadata read answered. It is logged, and never changes the provider's availability, which is the alerts read's. |
+| `rules` | records of `rule_info_entry` | no |  | One `rule_info_entry` record per rule identity answered, absent when the read failed. An identity asked about and left out is not answered, and is asked again. |
+| `error` | text | no |  | Why the read failed, when it did. |
+
+#### `rule_info_entry`
+
+What the provider says of one rule: found, with what it reports of it, or not found.
+
+| Field | Type | Required | Unit or values | Description |
+|---|---|---|---|---|
+| `rule_identity` | text | yes |  | The rule identity asked about, exactly as the events carry it. |
+| `lookup_state` | text | yes | `found`, `not_found` | Whether the provider knew the rule. |
+| `normalised_severity` | text | no | `critical`, `high`, `medium`, `low`, `informational` | The rule's severity in opnview's vocabulary, mapped only from a field the provider documents as the rule's severity; absent when it reports none, which is served as unknown and never guessed. |
+| `provider_severity` | text | no |  | The raw severity the provider reported, verbatim, so the normalisation stays auditable. |
+| `category` | text | no |  | The rule's category, verbatim as the provider names it. |
+| `rule_source` | text | no |  | Where the rule comes from: the ruleset, verbatim as the provider names it. |
 <!-- /contract:security_event -->
