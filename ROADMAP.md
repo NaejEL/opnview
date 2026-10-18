@@ -244,10 +244,11 @@ maintainer's test budget of 7 October 2026,
   - **`sql/schema-checks.sh`** -- the schema, the seeds at 100 000 and 1 000 000
     flow rows, the screen queries and every statement's plan at both seeds, the
     widget and data catalogue budgets at both seeds (100 000 rows at 250 ms for
-    24 h and 500 ms for 30 days, 1 000 000 at 1 s and 2 s), timed one seed after the
-    other so that neither is the other's load (decision 3 of the performance cycle,
-    18 October 2026), the live budget and the backup round trip, on a copy of the
-    100 000-row seed of its own. The wall time of `ReclassifyEverything` on a copy of the
+    24 h and 500 ms for 30 days, 1 000 000 at 1 s and 2 s) and the live budget,
+    timed on a quiet machine -- under this command once both `go test` runs have
+    ended, run alone one seed after the other (decision 3 of the performance cycle,
+    18 October 2026) -- and the backup round trip, on a copy of the 100 000-row seed
+    of its own. The wall time of `ReclassifyEverything` on a copy of the
     large seed is out of this command since 16 October 2026: it places one address
     at a time and took 1.5 to 2 minutes alone, which the budget cannot hold; it runs
     on request, `docker compose run --rm -e OPNVIEW_RECLASSIFY_COST=1 schema-checks`.

@@ -29,7 +29,8 @@
 #                    checks.sh with its go test restricted to the probe package;
 #   schema checks    sql/schema-checks.sh: the schema, the seeds at 100 000 and
 #                    1 000 000 flow rows, the screen queries and every statement's
-#                    plan, the widget and data catalogue budgets, the backup round
+#                    plan, the widget, data catalogue and live budgets -- timed once
+#                    both go test runs have ended, on a quiet machine -- the backup round
 #                    trip (ReclassifyEverything's wall time only on request:
 #                    OPNVIEW_RECLASSIFY_COST=1, see sql/schema-checks.sh);
 #   answer drift     ci/answerdrift, once the schema checks have ended: every served widget
@@ -108,6 +109,8 @@ STEPS_DIR=/tmp/opnview-pre-deployment-steps
 # The copy of the working tree the limited run makes (see below), named here so the wrapper can
 # remove it by its exact path when the limit stopped the run before its own clean-up.
 TREE_COPY=/tmp/opnview-checks-tree
+# The file written once both go test runs have ended, which the schema checks' budgets wait for.
+GO_TESTS_ENDED="$STEPS_DIR/go-tests-ended"
 
 # report_unfinished — every step the hard limit stopped, with its elapsed time and partial output.
 report_unfinished() {
@@ -302,9 +305,12 @@ if [ -z "$schema_test_database" ]; then
   printf -- 'OPNVIEW_SCHEMA_CHECKS_DATABASE is not set: docker-compose.yml names the schema checks their instance.\n' >&2
   record 'OPNVIEW_SCHEMA_CHECKS_DATABASE' 1 0
 else
+  # The schema checks time the widget, data catalogue and live budgets once the two go test runs have
+  # ended, on a quiet machine (decision 3 of the performance cycle, 18 October 2026): they wait for
+  # GO_TESTS_ENDED, which this command writes then.
   start_step schema 'sql/schema-checks.sh (on the schema checks'"'"' instance)' \
     env OPNVIEW_TEST_DATABASE="$schema_test_database" OPNVIEW_SCHEMA_CHECKS_PROGRAMS="$STEPS_DIR" \
-    bash "$REPO_ROOT/sql/schema-checks.sh"
+    OPNVIEW_SCHEMA_CHECKS_QUIET_MARKER="$GO_TESTS_ENDED" bash "$REPO_ROOT/sql/schema-checks.sh"
 fi
 start_step selftest 'ci/budget-self-test.sh' bash "$REPO_ROOT/ci/budget-self-test.sh"
 fuzz_ids=()
@@ -351,6 +357,8 @@ fi
 if [ "${#plain_packages[@]}" -gt 0 ]; then
   wait_step plain
 fi
+# Both go test runs have ended: the schema checks' budgets may start.
+: > "$GO_TESTS_ENDED"
 
 for id in vet "${fuzz_ids[@]}" selftest schema; do
   [ -n "${step_pid[$id]:-}" ] || continue

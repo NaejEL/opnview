@@ -1071,7 +1071,13 @@ budget_seed() {
 # written to a file the section reads, and each output says when it ran. The 100 000-row seed's, whose
 # budgets are the tighter, run first, and the backup's restore, which writes the most of any step of the
 # run, waits for them to end (backup_job).
-budgets_job() {
+#
+# UNDER THE PRE-DEPLOYMENT COMMAND THE BUDGETS RUN AFTER ITS GO TEST RUNS (decision 3): the command names
+# a file in OPNVIEW_SCHEMA_CHECKS_QUIET_MARKER and writes it once its two go test runs have ended, and the
+# budgets wait for it -- at most 300 s, which only a run stopped from outside reaches -- and then time
+# both seeds, each its own process and its own database, on a machine the other steps no longer load.
+# Measured beside the race detector's run on 18 October 2026, responses of 450 ms alone took 1.1 to 1.7 s.
+budget_100k() {
     if wait_marker backup backup_tables_ready; then
         budget_seed "$BACKUP_DB" 100k 250ms 500ms
         printf -- '%d\n' "$?" > "$WORK/budget_100k.status"
@@ -1081,6 +1087,8 @@ budgets_job() {
         printf -- '1\n' > "$WORK/budget_100k.status"
     fi
     : > "$WORK/budget_100k_done"
+}
+budget_1m() {
     if wait_marker scale scale_ready; then
         budget_seed "$SCALE_DB" 1m 1s 2s 100ms
         printf -- '%d\n' "$?" > "$WORK/budget_1m.status"
@@ -1089,6 +1097,23 @@ budgets_job() {
         printf -- '1\n' > "$WORK/budget_1m.status"
     fi
 }
+budgets_job() {
+    local waited=0
+    if [ -z "${OPNVIEW_SCHEMA_CHECKS_QUIET_MARKER:-}" ]; then
+        budget_100k
+        budget_1m
+        return
+    fi
+    # Under the pre-deployment command: on a quiet machine, once its go test runs have ended.
+    while [ ! -e "$OPNVIEW_SCHEMA_CHECKS_QUIET_MARKER" ] && [ "$waited" -lt 1500 ]; do
+        sleep 0.2
+        waited=$(( waited + 1 ))
+    done
+    printf -- '  the budgets waited %d s for the go test runs to end\n' $(( waited / 5 )) > "$WORK/budget_wait.txt"
+    budget_100k &
+    budget_1m
+    wait
+}
 
 # backup_job — P-AC22's round trip on BACKUP_DB, the copy of the kept 100 000-row seed the main job made
 # for it and the 100 000-row budgets, which only read it, every verdict written to a file its section
@@ -1096,8 +1121,8 @@ budgets_job() {
 # the restored row counts. Each step's wall time is written to $WORK/backup_steps.txt.
 backup_job() {
     local status=0 begun
-    if ! wait_marker main backup_copy_ready; then
-        printf -- 'the main job ended without the copy\n' > "$WORK/pg_dump.err"
+    if ! wait_marker repeat backup_copy_ready; then
+        printf -- 'the second build'"'"'s job ended without the copy\n' > "$WORK/pg_dump.err"
         return 1
     fi
     begun="$(date +%s%N)"
@@ -1120,12 +1145,14 @@ backup_job() {
     begun="$(date +%s%N)"
     every_schema_counts "$BACKUP_DB" > "$WORK/backup_source_counts.txt"
     printf -- 'the source'"'"'s row counts\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) >> "$WORK/backup_steps.txt"
-    # The restore writes the most of any step of the run: it waits for the 100 000-row budgets, which
-    # read this copy, to end, so they are not timed beside it.
+    # The restore writes the most of any step of the run: run alone, it waits for the 100 000-row budgets,
+    # which read this copy, to end, so they are not timed beside it. Under the pre-deployment command the
+    # budgets wait for its go test runs to end, and the restore runs before them, beside the go test runs.
     # budgets_job writes the marker whatever its budgets found; the bound only stops a wait for a job
     # stopped from outside.
     local waited=0
-    while [ ! -f "$WORK/budget_100k_done" ] && [ "$waited" -lt 3000 ]; do
+    while [ -z "${OPNVIEW_SCHEMA_CHECKS_QUIET_MARKER:-}" ] && [ ! -f "$WORK/budget_100k_done" ] &&
+        [ "$waited" -lt 3000 ]; do
         sleep 0.2
         waited=$(( waited + 1 ))
     done
@@ -1238,12 +1265,9 @@ for kept in "$SCALE_SEED_DB:$SCALE_SEED_DIGEST" "$SCALE_PURGED_DB:$SCALE_PURGED_
     fi
 done
 start_build scale scale_job
-# main_job — the kept main seed, then the backup round trip's own copy of it (P-AC22), made WAL_LOG while
-# no session holds the seed, before AC7 clones it; the marker backup_copy_ready says the copy is whole.
+# main_job — the kept main seed, which AC7 clones into MAIN_DB.
 main_job() {
-    prepare_kept_seed "$MAIN_SEED_DB" "$MAIN_SEED_DIGEST" "${MAIN_SEED_PARAMS[@]}" || return
-    copy_database "$MAIN_SEED_DB" "$BACKUP_DB" WAL_LOG || return 20
-    : > "$WORK/backup_copy_ready"
+    prepare_kept_seed "$MAIN_SEED_DB" "$MAIN_SEED_DIGEST" "${MAIN_SEED_PARAMS[@]}"
 }
 # THE COPIES THE WRITING CHECKS READ THAT NEED NO PLUGIN TABLE ARE COPIES OF THE SECOND KEPT BUILD
 # (decision 4 of the performance cycle, 18 October 2026). MEAS-AC6, PN-AC8, ST-AC4 and DL-AC5 each write
@@ -1254,8 +1278,10 @@ main_job() {
 # section's 75 s beside the pre-deployment command's go test runs. The purge's two copies still read
 # the plugin tables, and are still copies of MAIN_DB.
 #
-# repeat_job — the second kept build, its row counts for AC7 (the marker repeat_counted), then the four
-# copies.
+# repeat_job — the second kept build, its row counts for AC7 (the marker repeat_counted), then BACKUP_DB,
+# the copy the backup round trip and the 100 000-row budgets read (the marker backup_copy_ready), then the
+# four copies of the writing checks. Copied from the second build, BACKUP_DB delays neither AC7's clone
+# of the first nor its counts.
 repeat_job() {
     local copy status=0
     prepare_kept_seed "$REPEAT_SEED_DB" "$MAIN_SEED_DIGEST" "${MAIN_SEED_PARAMS[@]}" || status=$?
@@ -1263,6 +1289,8 @@ repeat_job() {
     [ "$status" -eq 0 ] && table_counts "$REPEAT_SEED_DB" > "$WORK/counts_repeat.txt"
     : > "$WORK/repeat_counted"
     [ "$status" -eq 0 ] || return "$status"
+    copy_database "$REPEAT_SEED_DB" "$BACKUP_DB" WAL_LOG || return 20
+    : > "$WORK/backup_copy_ready"
     for copy in "$MEAS_DB" "$REGISTER_DB" "$STATE_DB" "$LEASE_DB"; do
         copy_database "$REPEAT_SEED_DB" "$copy" WAL_LOG &
     done
@@ -6051,6 +6079,7 @@ section 'S5B-AC18 — every served widget type answers within its response budge
 # summary, so every other check runs while the budgets are timed. The program is built once, with the
 # others under ci/. Each seed's output is printed here, the 100 000-row one first.
 wait_build budgets
+cat "$WORK/budget_wait.txt" 2> /dev/null
 for label in 100k 1m; do
     if [ "$(cat "$WORK/budget_$label.status" 2> /dev/null)" = 0 ]; then
         cat "$WORK/budget_$label.txt"
