@@ -728,6 +728,9 @@ func TestAFailureOfAPreviousProcessIsNotServedAsFresh(t *testing.T) {
 		opnsense.OutcomeServerError {
 		t.Fatalf("the first call was answered %s", served.Response.Outcome)
 	}
+	// The previous process is gone: its broker stops before the clock moves, so no retry it scheduled
+	// for the failure reaches the firewall in the restarted one's place.
+	w.broker.Close()
 	mutex.Lock()
 	failed = false
 	mutex.Unlock()

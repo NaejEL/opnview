@@ -914,8 +914,10 @@ reads one.
 
 A kind is a contract: what an implementation's script exports, and the fields of every record it
 answers. **A core kind is a file**, `internal/collect/provider/kinds/<kind>.json`, found by walking
-that directory: its description, its attributes (`concurrent`, `push`, `bindable`), its cadences and
-page sizes, what sizing measures, its functions, its exported values and its records. Adding a core
+that directory: its description, its attributes (`concurrent`, `push`, `bindable`), the reasons of the
+collection gaps its coordinator records (`gap_reasons`, written to the database's `gap_reason` registry,
+which `collection_gap.reason` references), its cadences and page sizes, what sizing measures, its
+functions, its exported values and its records. Adding a core
 kind's contract is adding a file. Its records are stored in the core's own tables, so a core kind with
 a poll cadence is collected only once a coordinator -- a directory under `internal/collect/kinds/`
 that registers its pass with `core.RegisterPass` -- stores them; a file alone gets no loop. A kind a

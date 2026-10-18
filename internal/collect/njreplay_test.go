@@ -424,3 +424,10 @@ func readFilterlog(t *testing.T, path string) []LegRow {
 	}
 	return legs
 }
+
+// loadRecordingFile reads a recording kept outside the repository -- the capture's, which is never committed
+// (PA-AC16) -- as its relations.
+func loadRecordingFile(t *testing.T, path string) map[string][]map[string]any {
+	t.Helper()
+	return readRecording(t, path)
+}

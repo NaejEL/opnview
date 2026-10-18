@@ -48,9 +48,6 @@ import (
 // The keys the core chooses are internal/web/messages'.
 type MessageKey = messages.Key
 
-// messageKey is the spelling the core's own files use.
-type messageKey = MessageKey
-
 // Surface is everything the server needs to know about one directory of the interface.
 type Surface struct {
 	// Name is the surface's name, unique across the product. It is the directory's name.

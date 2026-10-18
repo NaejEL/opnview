@@ -531,13 +531,6 @@ func TestTheJoinInJavaScriptReproducesTheGoRecordingOfF16(t *testing.T) {
 		recordingExpectations(t, h))
 }
 
-// loadRecordingFile reads a recording kept outside the repository -- the capture's, which is never committed
-// (PA-AC16) -- as its relations.
-func loadRecordingFile(t *testing.T, path string) map[string][]map[string]any {
-	t.Helper()
-	return readRecording(t, path)
-}
-
 // recordingExpectations are the outcomes of the recording the orchestrator's decisions of the live validation of
 // 17 October 2026 change on purpose, each class found in the world by a reading of its own -- the legs and the
 // records as stored, never the plugin's code:

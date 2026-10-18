@@ -13,9 +13,6 @@ const (
 	joinCopy      = "copy"
 	joinUnmatched = "unmatched"
 
-	copyTranslated = "translated_copy"
-	copyParent     = "parent_copy"
-
 	unmatchedNoLoggedLeg        = "no_logged_leg"
 	unmatchedAmbiguous          = "ambiguous"
 	unmatchedBeyondFlowHorizon  = "beyond_flow_horizon"
@@ -40,9 +37,6 @@ const (
 	volumeCaptureUnknown         = "capture_configuration_unknown"
 	volumeAmbiguousRecords       = "ambiguous_records"
 	volumeNotExpectedWhenRefused = "not_expected_when_refused"
-
-	exportedYes     = "yes"
-	exportedUnknown = "unknown"
 )
 
 // coveredState reports whether a direction in a state is covered, as the netflow measure declares it.

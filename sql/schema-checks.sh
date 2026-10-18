@@ -3374,7 +3374,7 @@ KIND_COUNT="$(wc -l < "$WORK/db_core_kinds.txt" | tr -d ' ')"
 # Restated by PA2 of the plugin-API amendment: the attribute is data -- each kind file's `concurrent`,
 # which provider_kind holds and every provider row carries -- so the predicate reads it from the row.
 EXCLUSIVE_PREDICATE="NOT p.concurrent"
-check 'PN-AC12 the registry holds a provider of every one of the eleven core kinds' '11' "$KIND_COUNT"
+check 'PN-AC12 the registry holds a provider of every one of the twelve core kinds' '12' "$KIND_COUNT"
 # The active set is asserted as a SET rather than as a count derived from the kind
 # count, and that is the restatement: the seed used to activate exactly one provider
 # per kind, and it now models a two-DHCP-server estate, so a count alone would no
@@ -5739,7 +5739,7 @@ else
             ') WHERE peak_bucket_records > record_count;')")"
     check 'RR-AC4 the lease table, which records no ingested instant, has no ingested span' '' \
         "$(run_query "$MAIN_DB" "$(wrap_query "$RATE_FILE" \
-            'SELECT string_agg(CAST(ingested_from_at AS text), ',' ORDER BY ingested_from_at) FROM (' \
+            "SELECT string_agg(CAST(ingested_from_at AS text), ',' ORDER BY ingested_from_at) FROM (" \
             ") WHERE kind = 'dhcp_lease';")")"
 
     table_row_counts "$MAIN_DB" > "$WORK/rows_after_rate.txt"
