@@ -5489,3 +5489,13 @@ These were decided by the orchestrator under the maintainer's instruction to del
    - `/api/netflow/settings` now answers like any unknown path.
 3. **The test-suite budget is the next lot's first task.** `collect` and `store` take about 25 s each alone and more than 60 s together, so the shared test database's CPU is the limit. Before Lot 3 adds tests, each heavy package gets its own test instance, or fewer databases per test, so that `checks` holds 60 s.
 4. **Before Lot 3, `live-next` and `fix-live-n1-n4-n5` are merged into this branch.** They hold the step-7 frontend, the SSE events, and the live fixes D0–D6 and N1/N4/N5. Lot 3 builds on everything that is deployed.
+
+## Verification of the plugin-API amendment, iteration 1: the orchestrator's decisions (18 October 2026)
+
+These were decided by the orchestrator under the maintainer's instruction to deliver end to end. They are not the maintainer's decisions.
+
+1. **The `blocked_traffic_world_map` golden change is accepted.** Security events become their own measure, `security_events`, and `security_unplaced[].volume` becomes `.events`. Lot 4 made this change so that the netflow-measured answer is no longer refused.
+2. **PA-AC13 is superseded by step 7.** The Go-rendered pages it guarded were removed (F7-15). The X3 snapshot no longer exists.
+3. **PA-AC31's line ceilings were set by the planner, not by the maintainer.** They were missed, and this is reported to the maintainer as it stands. Go is reduced separately, from the deployed binary's runtime coverage on the maintainer's traffic, as the clean-up amendment's section B2 requires. A ceiling is never met by padding or by moving code into test files that the product still needs.
+4. **Gap reasons can be declared by a kind or by a plugin.** `collection_gap.reason` stops being a closed list of product and protocol names.
+5. **The test budget target is 60 s with three green runs in a row.** PA-AC26's 45 s target is withdrawn: on this 8-core machine the suite is bound by database CPU. Margin is pursued through shared helpers, as the measurements suggested: the broker mirror's table checks cached per store, and a discovered-firewall state in the derived template.
