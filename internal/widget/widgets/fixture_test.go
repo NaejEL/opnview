@@ -426,8 +426,8 @@ func prefixes(t *testing.T, texts ...string) []netip.Prefix {
 func (f *fixture) sampleAt(t *testing.T, at int64, kind vocab.SubjectKind, key string, measure vocab.Measure,
 	unit vocab.Unit, value float64) {
 	t.Helper()
-	err := f.db.InsertMeasurementSample(context.Background(), vocab.MeasurementSample{SubjectKind: kind,
-		SubjectKey: key, Measure: measure, Unit: unit, Value: value, SampledAt: at})
+	err := f.db.InsertMeasurementSample(context.Background(), withParts(vocab.MeasurementSample{SubjectKind: kind,
+		SubjectKey: key, Measure: measure, Unit: unit, Value: value, SampledAt: at}))
 	if err != nil {
 		// A second reading at one instant of one subject is a collision the store refuses
 		// by design; the fixture writes each once.

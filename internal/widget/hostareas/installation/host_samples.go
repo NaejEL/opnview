@@ -3,6 +3,7 @@ package installation
 import (
 	"github.com/dop251/goja"
 
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/figures"
 	"github.com/NaejEL/opnview/internal/widget/script"
 )
@@ -13,7 +14,8 @@ import (
 // sample is a gap, never a 0.
 //
 //	host.samples.metrics                     per health metric, the subject kind and the measures the
-//	                                         sampler stores it under: {kind, measures}
+//	                                         sampler stores it under, as the providers' plugins declare
+//	                                         them (sample_metrics): {kind, measures}
 //	host.samples.subjects(metric)            the subjects that reported one of a metric's measures in the
 //	                                         window: [{kind, key, measure, unit}], by measure then key
 //	host.samples.points(subject)             one subject's samples over the window, oldest first:
@@ -54,17 +56,13 @@ func init() {
 	script.RegisterHostArea("samples", func(call *script.ScriptCall, area *goja.Object) {
 		r := call.Request
 		metrics := map[string]sampledMetric{}
-		for name, mapping := range figures.MetricMeasures {
-			measures := make([]string, 0, len(mapping.Measures))
-			for _, measure := range mapping.Measures {
-				measures = append(measures, string(measure))
-			}
-			metrics[name] = sampledMetric{Kind: string(mapping.Kind), Measures: measures}
+		for _, metric := range vocab.SampleMetrics() {
+			metrics[metric.Name] = sampledMetric{Kind: metric.SubjectKind, Measures: append([]string(nil), metric.Measures...)}
 		}
 		_ = area.Set("metrics", call.Value(metrics))
 		call.Function(area, "subjects", func(arguments goja.FunctionCall) goja.Value {
 			metric := call.TextOf(arguments.Argument(0), "the metric")
-			if _, known := figures.MetricMeasures[metric]; !known {
+			if _, known := vocab.SampleMetricNamed(metric); !known {
 				call.Throw("%q is not a health metric", metric)
 			}
 			subjects, err := figures.MeasuredSubjects(r, metric)

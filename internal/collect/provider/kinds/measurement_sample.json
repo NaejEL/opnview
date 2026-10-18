@@ -87,10 +87,25 @@
           "term" : true
         },
         {
-          "description" : "Which one; may be empty.",
+          "description" : "Which one, in the provider's own words: an identity the host never composes or parses; may be empty.",
           "name" : "subject_key",
           "type" : "text",
           "required" : true
+        },
+        {
+          "description" : "The network device the reading was taken on, when the subject is read on one interface (interface_endpoint, interface_endpoint_pair).",
+          "name" : "interface_device",
+          "type" : "text"
+        },
+        {
+          "description" : "The local address the reading is of, when the subject is an address read on one interface.",
+          "name" : "local_address",
+          "type" : "text"
+        },
+        {
+          "description" : "The peer address the local address was read with, when the subject is a pair; the reading's inbound figures are what the peer sent.",
+          "name" : "peer_address",
+          "type" : "text"
         },
         {
           "description" : "What figure: a lower-case word with no space.",

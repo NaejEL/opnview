@@ -1016,15 +1016,15 @@ func (s *FlowStore) MarkEveFileLost(ctx context.Context, fileID string, now int6
 // fine-sample retention; a fine reading arriving after a baseline one changes nothing.
 func (s *FlowStore) InsertMeasurementSample(ctx context.Context, sample vocab.MeasurementSample) error {
 	_, err := s.SQL.ExecContext(ctx,
-		`INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
-		                                 unit, value, sampled_at, live_cadence_seconds)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, interface_device, local_address,
+		                                 peer_address, measure, unit, value, sampled_at, live_cadence_seconds)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 ON CONFLICT (subject_kind, subject_key, measure, sampled_at, coalesce(provider_id, -1))
 		 DO UPDATE SET live_cadence_seconds = NULL
 		 WHERE measurement_sample.live_cadence_seconds IS NOT NULL
 		   AND excluded.live_cadence_seconds IS NULL`,
-		sample.ProviderID, string(sample.SubjectKind), sample.SubjectKey,
-		string(sample.Measure), string(sample.Unit), sample.Value, sample.SampledAt,
+		sample.ProviderID, string(sample.SubjectKind), sample.SubjectKey, sample.InterfaceDevice, sample.LocalAddress,
+		sample.PeerAddress, string(sample.Measure), string(sample.Unit), sample.Value, sample.SampledAt,
 		sample.LiveCadenceSeconds)
 	if err != nil {
 		return fmt.Errorf("store: writing a %s measurement: %w", sample.Measure, err)

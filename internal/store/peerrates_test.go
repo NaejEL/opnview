@@ -25,15 +25,15 @@ func TestThePerPeerCurrentRateIsEachInsidePairReadingAndTheUpstreamReadingIsNotS
 	}
 	at := network.Now - 100
 	pairIn := func(device, local, peer string, in float64) {
-		insertReading(t, network.DB, vocab.SubjectInterfaceEndpointPair, vocab.InterfaceEndpointPairKey(device, local, peer),
+		insertReading(t, network.DB, vocab.SubjectInterfaceEndpointPair, pairKey(device, local, peer),
 			vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
 	}
 	pairOut := func(device, local, peer string, out float64) {
-		insertReading(t, network.DB, vocab.SubjectInterfaceEndpointPair, vocab.InterfaceEndpointPairKey(device, local, peer),
+		insertReading(t, network.DB, vocab.SubjectInterfaceEndpointPair, pairKey(device, local, peer),
 			vocab.MeasureRateBitsOut, vocab.UnitBitPerSecond, out, at)
 	}
 	endpoint := func(device, local string, in, out float64) {
-		key := vocab.InterfaceEndpointKey(device, local)
+		key := endpointKey(device, local)
 		insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
 		insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsOut, vocab.UnitBitPerSecond, out, at)
 	}

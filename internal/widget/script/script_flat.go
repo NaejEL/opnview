@@ -44,6 +44,8 @@ const (
 	flatFloatPointer
 	// flatRows is a slice of structs, crossed as an array of flat values.
 	flatRows
+	// flatIntegers is a slice of whole numbers, crossed as an array of numbers.
+	flatIntegers
 	// flatOther is any other member: crossed through JSON on its own, and read only through JSON.
 	flatOther
 )
@@ -105,6 +107,8 @@ func layoutOf(structType reflect.Type) *flatLayout {
 			member.kind = flatFloatPointer
 		case field.Type.Kind() == reflect.Slice && field.Type.Elem().Kind() == reflect.Struct:
 			member.kind = flatRows
+		case field.Type == integersType:
+			member.kind = flatIntegers
 		default:
 			member.kind = flatOther
 		}
@@ -134,6 +138,8 @@ var (
 	integerType = reflect.TypeFor[int64]()
 	textType    = reflect.TypeFor[string]()
 	floatType   = reflect.TypeFor[float64]()
+	// integersType is exactly []int64: a measure's parts (traffic.MeasureMembers.MeasureParts).
+	integersType = reflect.TypeFor[[]int64]()
 )
 
 // The interfaces through which a type writes or reads its own JSON.
@@ -222,6 +228,19 @@ func (c *ScriptCall) flatValue(value reflect.Value) (goja.Value, bool) {
 				continue
 			}
 			_ = object.Set(field.name, c.VM.ToValue(number.Float()))
+		case flatIntegers:
+			switch {
+			case field.omitEmpty && member.Len() == 0:
+				continue
+			case member.IsNil():
+				_ = object.Set(field.name, goja.Null())
+			default:
+				numbers := make([]any, member.Len())
+				for index := range numbers {
+					numbers[index] = member.Index(index).Int()
+				}
+				_ = object.Set(field.name, c.VM.NewArray(numbers...))
+			}
 		case flatRows, flatOther:
 			if field.omitEmpty && emptyForJSON(member) {
 				continue
@@ -230,6 +249,34 @@ func (c *ScriptCall) flatValue(value reflect.Value) (goja.Value, bool) {
 		}
 	}
 	return object, true
+}
+
+// decodeIntegers reads an array of whole numbers into a []int64 member, and reports whether it read it
+// as JSON would. A hole, a member that is not a whole number, or anything that is not a plain array is
+// the JSON path's to judge.
+func decodeIntegers(member goja.Value, destination reflect.Value) bool {
+	array, isObject := member.(*goja.Object)
+	if !isObject || array.ClassName() != "Array" {
+		return false
+	}
+	length := array.Get("length").ToInteger()
+	numbers := make([]int64, length)
+	for index := range numbers {
+		element := array.Get(strconv.Itoa(index))
+		if element == nil || goja.IsUndefined(element) || goja.IsNull(element) {
+			return false
+		}
+		if _, isObject := element.(*goja.Object); isObject {
+			return false
+		}
+		number, whole := WholeNumber(element.Export())
+		if !whole {
+			return false
+		}
+		numbers[index] = number
+	}
+	destination.Set(reflect.ValueOf(numbers))
+	return true
 }
 
 // memberValue is one member handed to the script: member by member when it can be, through JSON
@@ -356,6 +403,10 @@ func (c *ScriptCall) decodeFlat(value goja.Value, target reflect.Value) bool {
 		switch field.kind {
 		case flatRows, flatOther:
 			return false
+		case flatIntegers:
+			if !decodeIntegers(member, destination) {
+				return false
+			}
 		case flatInteger, flatIntegerPointer:
 			if _, isObject := member.(*goja.Object); isObject {
 				return false

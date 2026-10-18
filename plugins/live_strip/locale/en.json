@@ -1,0 +1,18 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.live_strip.widget.live_strip.title": "Rolling strip",
+    "plugin.live_strip.widget.live_strip.question": "What is crossing the firewall in the last minutes, and what is it refusing?",
+    "plugin.live_strip.widget.live_strip.throughput": "Throughput, sampled",
+    "plugin.live_strip.widget.live_strip.decisions": "Decisions, logged",
+    "plugin.live_strip.widget.live_strip.series.outbound": "Outbound",
+    "plugin.live_strip.widget.live_strip.series.inbound": "Inbound",
+    "plugin.live_strip.widget.live_strip.series.inter_interface": "Between interfaces",
+    "plugin.live_strip.widget.live_strip.series.outbound_unsplit": "Outbound, not split",
+    "plugin.live_strip.widget.live_strip.series.allowed": "Allowed",
+    "plugin.live_strip.widget.live_strip.series.firewall_rule": "Refused by a rule",
+    "plugin.live_strip.widget.live_strip.series.firewall_no_rule": "Refused, no rule matched",
+    "plugin.live_strip.widget.live_strip.series.firewall_reason_not_recorded": "Refused, reason not recorded",
+    "plugin.live_strip.widget.live_strip.series.dns_refusal": "Refused by a resolver list"
+  }
+}

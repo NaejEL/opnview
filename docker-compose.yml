@@ -197,7 +197,7 @@ services:
     # budgets of both seeds, the foreign keys, the plan sweep -- and PostgreSQL's parallel workers
     # share their hash tables in /dev/shm, which Docker sizes at 64 MB. On 17 October 2026 the
     # foreign-key check of the 1 000 000-row seed failed beside the widget budgets with "could not
-    # resize shared memory segment ... No space left on device". It is a size limit, not memory
+    # resize shared memory [...] No space left on device". It is a size limit, not memory
     # reserved: a page of it is held only while a query uses it.
     shm_size: 1gb
 

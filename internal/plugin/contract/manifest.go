@@ -67,6 +67,9 @@ type Manifest struct {
 	// Measures are the measures its derivations fill (PA5 of the plugin-API amendment): each a value of the
 	// widget API's volume_measure, its direction states, markers and window states (vocab.DeclaredMeasure).
 	Measures []vocab.DeclaredMeasure `json:"measures,omitempty"`
+	// SampleMetrics are the health metrics its measurement_sample readings serve, each the subject kind and the
+	// measures it is stored under (PA11 of the plugin-API amendment; vocab.SampleMetric).
+	SampleMetrics []vocab.SampleMetric `json:"sample_metrics,omitempty"`
 	// Destinations are the hosts beyond the firewall the plugin contacts, each a scheme and a host
 	// (such as https://publicsuffix.org). The fetch facility refuses any other.
 	Destinations []string `json:"destinations,omitempty"`

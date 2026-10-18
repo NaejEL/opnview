@@ -50,6 +50,17 @@ test("the query report family is read as the querying family", function (t) {
   });
 });
 
+// The verdict is mapped onto the dns_lookup contract's closed vocabulary here, in the plugin that
+// reads the query report, and anything the report says that the vocabulary does not name is
+// `unknown`: a lookup whose verdict cannot be named is never counted as allowed.
+test("the query report action is mapped onto the closed action vocabulary", function (t) {
+  var actions = { "pass": "pass", "Passed": "pass", "allowed": "pass", "BLOCK": "block", "blocked": "block",
+    "drop": "drop", "dropped": "drop", "": "unknown", "refused": "unknown", "redirect": "unknown" };
+  Object.keys(actions).forEach(function (raw) {
+    t.equal(t.helper("normalise_action", raw), actions[raw], "the action " + JSON.stringify(raw));
+  });
+});
+
 test("the Unbound lookup implementation declares itself and states its window", function (t) {
   t.assert(t.registered("dns_lookup"), "the unbound implementation is not registered in the dns_lookup kind");
   t.equal(t.value("dns_lookup", "page_bound"), dnsMaxPages, "the page bound");

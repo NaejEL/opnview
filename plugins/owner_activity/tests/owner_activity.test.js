@@ -91,11 +91,16 @@ test("an installation where nobody created a person answers no_owner_exists", fu
   t.equal(answer.condition, "no_owner_exists", "the condition");
 });
 
-// sample stores one baseline reading of the measurement_sample kind, as the insight plugin does.
+// sample stores one baseline reading of the measurement_sample kind, as the insight plugin does: its
+// subject key is the device and the addresses joined by spaces, local end first, and the parts the
+// core reads -- the device, the local address and the peer -- are reported beside it.
 function sample(t, id, kind, key, measure, value, at) {
-  t.sql("INSERT INTO measurement_sample (id, subject_kind, subject_key, measure, unit, value, sampled_at) " +
-    "VALUES (:id, :kind, :key, :measure, 'bit_per_second', :value, :at)",
-    { id: id, kind: kind, key: key, measure: measure, value: value, at: at });
+  var parts = key.split(" ");
+  t.sql("INSERT INTO measurement_sample (id, subject_kind, subject_key, interface_device, local_address, " +
+    "peer_address, measure, unit, value, sampled_at) " +
+    "VALUES (:id, :kind, :key, :device, :local, :peer, :measure, 'bit_per_second', :value, :at)",
+    { id: id, kind: kind, key: key, device: parts[0], local: parts[1], peer: parts.length > 2 ? parts[2] : null,
+      measure: measure, value: value, at: at });
 }
 
 // sampled adds, to the seed, the inside network of the interface and a current reading of the

@@ -76,11 +76,16 @@ test("action and limit filter the records, and the remainder carries what limit 
   t.equal([limited.remainder.members, limited.remainder.count.value], [2, 1400], "the two older records");
 });
 
-// sample stores one baseline reading of the measurement_sample kind, as the insight plugin does.
+// sample stores one baseline reading of the measurement_sample kind, as the insight plugin does: its
+// subject key is the device and the addresses joined by spaces, local end first, and the parts the
+// core reads -- the device, the local address and the peer -- are reported beside it.
 function sample(t, id, kind, key, measure, value, at) {
-  t.sql("INSERT INTO measurement_sample (id, subject_kind, subject_key, measure, unit, value, sampled_at) " +
-    "VALUES (:id, :kind, :key, :measure, 'bit_per_second', :value, :at)",
-    { id: id, kind: kind, key: key, measure: measure, value: value, at: at });
+  var parts = key.split(" ");
+  t.sql("INSERT INTO measurement_sample (id, subject_kind, subject_key, interface_device, local_address, " +
+    "peer_address, measure, unit, value, sampled_at) " +
+    "VALUES (:id, :kind, :key, :device, :local, :peer, :measure, 'bit_per_second', :value, :at)",
+    { id: id, kind: kind, key: key, device: parts[0], local: parts[1], peer: parts.length > 2 ? parts[2] : null,
+      measure: measure, value: value, at: at });
 }
 
 test("the client's current rate per peer, keyed by the address its records name", function (t) {

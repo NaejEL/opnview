@@ -44,7 +44,7 @@ func TestALoggedHostNameWithAnAAndAnAAAAIsResolvedByTheReportedFamily(t *testing
 			// The local data is read after the lookup, so the lookup waits for it, across a
 			// restart where the case says so.
 			collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(-5*time.Minute))
-			answerRecords(harness.Fake, collecttest.UnboundListLocalData,
+			answerRecords(harness.Fake, collecttest.Declared("unbound", "list_local_data"),
 				localDataRows("other-host.example.test", "192.0.2.61"))
 			if err := harness.Collector.CollectResolverLocalData(ctx); err != nil {
 				t.Fatalf("the first local-data pass: %v", err)
@@ -66,7 +66,7 @@ func TestALoggedHostNameWithAnAAndAnAAAAIsResolvedByTheReportedFamily(t *testing
 			} else {
 				collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(5*time.Minute))
 			}
-			answerRecords(harness.Fake, collecttest.UnboundListLocalData, []map[string]any{
+			answerRecords(harness.Fake, collecttest.Declared("unbound", "list_local_data"), []map[string]any{
 				localDataRows(hostname, v4)[0], localDataRows(hostname, v6)[0]})
 			if err := collector.CollectResolverLocalData(ctx); err != nil {
 				t.Fatalf("the local-data pass: %v", err)

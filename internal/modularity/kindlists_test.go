@@ -30,6 +30,7 @@ var kindNameAllowed = map[string]struct {
 	"internal/collect/kinds/filterlog/firewalllog.go":        {1, "the firewall_log coordinator's own kind constant"},
 	"internal/collect/kinds/leases/dhcplease.go":             {1, "the dhcp_lease coordinator's own kind constant"},
 	"internal/collect/kinds/lookups/dnslookup.go":            {1, "the dns_lookup coordinator's own kind constant"},
+	"internal/collect/kinds/neighbours/neighbour.go": {1, "the neighbour coordinator's own kind constant"},
 	"internal/collect/kinds/measurements/flowvolume.go":      {1, "the measurement_sample coordinator's own kind constant"},
 	"internal/collect/kinds/securityevents/securityevent.go": {1, "the security_event coordinator's own kind constant"},
 	"internal/collect/kinds/resolverrecords/handle.go": {2, "the resolver-record coordinator's two kinds, the cache and " +
@@ -39,8 +40,6 @@ var kindNameAllowed = map[string]struct {
 	"internal/collect/provider/pushed_firewall_log.go": {1, "the firewall_log kind's own push rule, in its own file"},
 	"internal/widget/params/series.go": {1, "SourceSecurityEvent names the core dataset security_event, a catalogue " +
 		"name, not a kind"},
-	"internal/plugin/scripthost/script.go": {3, "the host.dhcp_lease, host.dns_lookup and host.measurement_sample " +
-		"namespaces, which PA11 (Lot 4) removes"},
 }
 
 // TestNoGoListNamesTheKinds is the grep of PA-AC2: across the non-test Go files of the scope, no string

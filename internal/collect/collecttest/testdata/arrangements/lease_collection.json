@@ -1,0 +1,15 @@
+{
+  "description": "What the surveyed firewall reported for its DHCP servers: Kea disabled, Dnsmasq running and serving ranges, so Dnsmasq alone is the active lease backend. Its leases name hosts the arranged lookups, logged by Unbound, wait for. The neighbour tables answer too.",
+  "answers": [
+    {"plugin": "kea", "endpoint": "status", "fixture": "kea_status_disabled.json"},
+    {"plugin": "dnsmasq", "endpoint": "status", "fixture": "dnsmasq_status_running.json"},
+    {"plugin": "dnsmasq", "endpoint": "settings", "fixture": "dnsmasq_settings.json"},
+    {"plugin": "dnsmasq", "endpoint": "leases", "fixture": "dnsmasq_leases.json"},
+    {"plugin": "neighbours", "endpoint": "arp", "fixture": "get_arp.json"},
+    {"plugin": "neighbours", "endpoint": "ndp", "fixture": "get_ndp.json"}
+  ],
+  "probe": ["dhcp_lease"],
+  "active": {"dhcp_lease": ["dnsmasq"]},
+  "resolver": "unbound",
+  "backend": "dnsmasq"
+}

@@ -111,3 +111,19 @@ func DropFixtures() {
 		delete(fixtures, key)
 	}
 }
+
+// DatabasePrepared creates a database for the test, cloned from the derived template of a preparation
+// (store.NewTestDatabasePrepared), and drops it when the test ends.
+func DatabasePrepared(t testing.TB, revision string, prepare func(ctx context.Context, dsn string) error) string {
+	t.Helper()
+	database, err := store.NewTestDatabasePrepared(context.Background(), revision, prepare)
+	if err != nil {
+		t.Fatalf("creating the test database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Drop(context.Background()); err != nil {
+			t.Errorf("dropping the test database: %v", err)
+		}
+	})
+	return database.DSN
+}

@@ -1,0 +1,30 @@
+{
+  "api_version": 2,
+  "name": "example_logins",
+  "version": "1.0.0",
+  "display_name": "Example logins",
+  "description": "Keeps the SSH logins the firewall's syslog target sends.",
+  "tables": [
+    {
+      "name": "logins",
+      "columns": [
+        { "name": "logged_at", "type": "instant" },
+        { "name": "method", "type": "text" },
+        { "name": "user", "type": "text" },
+        { "name": "client", "type": "ip" }
+      ],
+      "retention": { "column": "logged_at" }
+    }
+  ],
+  "kinds": [ { "kind": "example_logins", "push": true } ],
+  "providers": [ { "kind": "example_logins", "display_name": "Example logins", "source": "push" } ],
+  "push": [
+    {
+      "name": "logins",
+      "protocol": "syslog",
+      "filter": { "program": ["sshd"] },
+      "pattern": "^Accepted (?P<method>\\S+) for (?P<user>\\S+) from (?P<client>\\S+)",
+      "output_table": "logins"
+    }
+  ]
+}

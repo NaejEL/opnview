@@ -3,7 +3,6 @@ package collect_test
 import (
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/plugin"
 )
@@ -12,7 +11,7 @@ import (
 // registry rather than from the implementation's plugin.
 func unboundPageBound(t *testing.T) int {
 	t.Helper()
-	return int(provider.Integer(mustSource(t, "dns_lookup", collecttest.ProviderUnbound).Values, "page_bound"))
+	return int(provider.Integer(mustSource(t, "dns_lookup", "unbound").Values, "page_bound"))
 }
 
 // mustSource returns a registered implementation of a kind.

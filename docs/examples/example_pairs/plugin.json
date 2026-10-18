@@ -1,0 +1,30 @@
+{
+  "api_version": 2,
+  "name": "example_pairs",
+  "version": "1.0.0",
+  "display_name": "Example pairs",
+  "description": "Keeps the key=value messages of an example program.",
+  "script": "example_pairs.js",
+  "tables": [
+    {
+      "name": "events",
+      "columns": [
+        { "name": "logged_at", "type": "instant" },
+        { "name": "event", "type": "text" },
+        { "name": "bytes", "type": "integer", "nullable": true, "role": "measure", "unit": "byte" }
+      ],
+      "retention": { "column": "logged_at" }
+    }
+  ],
+  "kinds": [ { "kind": "example_pairs", "push": true } ],
+  "providers": [ { "kind": "example_pairs", "display_name": "Example pairs", "source": "push" } ],
+  "push": [
+    {
+      "name": "events",
+      "protocol": "syslog",
+      "filter": { "program": ["example-daemon"] },
+      "parse": "events",
+      "output_table": "events"
+    }
+  ]
+}

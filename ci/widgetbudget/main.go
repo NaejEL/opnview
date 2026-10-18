@@ -34,8 +34,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/pprof"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/dop251/goja"
 
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/store"
@@ -55,15 +59,76 @@ func main() {
 	budgetDay := flag.Duration("budget-24h", 0, "the budget of a 24h response")
 	budgetMonth := flag.Duration("budget-30d", 0, "the budget of a 30d response")
 	budgetLive := flag.Duration("budget-live", 0, "the budget of the live part of a response; zero times none")
+	only := flag.String("cases", "", "a comma-separated list of the cases to time, as the report names them "+
+		"(connection_tree, connection_tree+netflow), and no dataset; empty times every case and every core dataset")
+	cpuProfile := flag.String("cpuprofile", "", "a file to write a CPU profile of the run to, for a developer looking "+
+		"for where a response spends its time")
+	jsProfile := flag.String("jsprofile", "", "a file to write an execution-time profile of the widget scripts to, by "+
+		"JavaScript function (goja.StartProfile), read with go tool pprof")
 	flag.Parse()
 	if *database == "" || *now == 0 || *budgetDay == 0 || *budgetMonth == 0 {
 		fmt.Fprintln(os.Stderr, "widgetbudget: -database, -now, -budget-24h and -budget-30d are required")
 		os.Exit(2)
 	}
-	if err := run(*database, *now, *label, map[string]time.Duration{"24h": *budgetDay, "30d": *budgetMonth, "live": *budgetLive}); err != nil {
+	stop := func() {}
+	if *cpuProfile != "" {
+		started, err := startProfile(*cpuProfile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "widgetbudget:", err)
+			os.Exit(2)
+		}
+		stop = started
+	}
+	if *jsProfile != "" {
+		file, err := os.Create(*jsProfile)
+		if err == nil {
+			err = goja.StartProfile(file)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "widgetbudget:", err)
+			os.Exit(2)
+		}
+		previously := stop
+		stop = func() {
+			goja.StopProfile()
+			_ = file.Close()
+			previously()
+		}
+	}
+	err := run(*database, *now, *label, selection(*only),
+		map[string]time.Duration{"24h": *budgetDay, "30d": *budgetMonth, "live": *budgetLive})
+	stop()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "widgetbudget:", err)
 		os.Exit(1)
 	}
+}
+
+// selection is the set of cases -cases names; empty when it names none.
+func selection(list string) map[string]bool {
+	selected := map[string]bool{}
+	for _, name := range strings.Split(list, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			selected[name] = true
+		}
+	}
+	return selected
+}
+
+// startProfile starts a CPU profile into a file and returns what stops it.
+func startProfile(path string) (func(), error) {
+	file, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := pprof.StartCPUProfile(file); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return func() {
+		pprof.StopCPUProfile()
+		_ = file.Close()
+	}, nil
 }
 
 // timedCase is one request the run times.
@@ -92,7 +157,7 @@ type tally struct{ over, empty int }
 
 // run times every type and every core dataset and reports; it fails when any median is over its
 // budget or any timed response but custom_chart's default is empty.
-func run(dsn string, now int64, label string, budgets map[string]time.Duration) error {
+func run(dsn string, now int64, label string, only map[string]bool, budgets map[string]time.Duration) error {
 	ctx := context.Background()
 	database, err := store.Open(ctx, dsn)
 	if err != nil {
@@ -104,13 +169,16 @@ func run(dsn string, now int64, label string, budgets map[string]time.Duration) 
 		return err
 	}
 	var counts tally
-	if err := timeWidgets(ctx, database, service, label, budgets, &counts); err != nil {
+	if err := timeWidgets(ctx, database, service, label, only, budgets, &counts); err != nil {
 		return err
 	}
-	if err := timeDatasets(ctx, service, label, budgets, &counts); err != nil {
-		return err
+	// A run limited to some types times no dataset and no live figure.
+	if len(only) == 0 {
+		if err := timeDatasets(ctx, service, label, budgets, &counts); err != nil {
+			return err
+		}
 	}
-	if budgets["live"] > 0 {
+	if budgets["live"] > 0 && len(only) == 0 {
 		if err := timeLive(ctx, database, now, label, budgets["live"], &counts); err != nil {
 			return err
 		}
@@ -129,7 +197,7 @@ func run(dsn string, now int64, label string, budgets map[string]time.Duration) 
 
 // timeWidgets times every served widget type at its defaults, for 24h and 30d.
 func timeWidgets(ctx context.Context, database *store.Store, service *widget.Service, label string,
-	budgets map[string]time.Duration, counts *tally) error {
+	only map[string]bool, budgets map[string]time.Duration, counts *tally) error {
 	client, err := anyClient(ctx, database)
 	if err != nil {
 		return err
@@ -160,6 +228,9 @@ func timeWidgets(ctx context.Context, database *store.Store, service *widget.Ser
 		}
 	}
 	for _, timed := range cases {
+		if len(only) > 0 && !only[timed.name] {
+			continue
+		}
 		preset, _ := service.Preset(timed.widgetType)
 		for _, period := range []string{"24h", "30d"} {
 			parameters := map[string]any{}

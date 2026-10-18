@@ -570,7 +570,7 @@ func TestNoPushSocketWithoutAListener(t *testing.T) {
 }
 
 // examplePacket is a NetFlow v9 packet of ng_netflow's IPv4 template and one record: input index 3,
-// output index 1, documentation addresses (the example of docs/plugins.md, *A NetFlow subscriber*).
+// output index 1, documentation addresses (the example docs/examples/example_flows, which docs/plugins.md cites).
 const examplePacket = "00090002000186a06ab85c800000000100000000000000580101001400080004000c0004000f0004000a0002000e00020002" +
 	"0004000100040018000400170004001600040015000400070002000b0002000600010004000100050001001000040011000400090001000d" +
 	"000101010040c633640acb00711400000000000300010000000a00003778000000000000000000009c4000017318ad2101bb1b06000000" +

@@ -51,15 +51,6 @@ func TestNoTwoEntriesCarryTheSameWordsUndecided(t *testing.T) {
 		// The resolver's lookups are one thing, whether named as the kind collected or as the
 		// dataset of the data catalogue that serves them: one thing, one wording.
 		{"collection.kind.dns_lookup", "dataset.dns"},
-		// The front's Sources view names an OPNsense page by opnsense_page.<page> (front/views/sources.js),
-		// and since Lot 2 each built-in plugin names its own pages in its catalogue: one page, one wording,
-		// until the front draws the label the plugin declares (factory-ui-builder).
-		{"opnsense_page.ids_administration", "plugin.suricata.opnsense_page.ids_administration"},
-		{"opnsense_page.kea_dhcpv4", "plugin.kea.opnsense_page.kea_dhcpv4"},
-		{"opnsense_page.dnsmasq_dhcp_ranges", "plugin.dnsmasq.opnsense_page.dnsmasq_dhcp_ranges"},
-		{"opnsense_page.unbound_general", "plugin.unbound.opnsense_page.unbound_general"},
-		{"opnsense_page.unbound_reporting", "plugin.unbound.opnsense_page.unbound_reporting"},
-		{"opnsense_page.netflow", "plugin.insight.opnsense_page.netflow"},
 	}
 	declared := map[string]bool{}
 	for _, group := range declaredSameWording {

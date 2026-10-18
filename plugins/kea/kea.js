@@ -39,6 +39,50 @@ function readLeaseRows(host, endpoint, path, pageSize) {
   return { result: result, rows: rows };
 }
 
+// leaseState maps Kea's `state` onto the closed vocabulary of the dhcp_lease contract. The control
+// agent reports the state as a word or as its number; anything else is `unknown`, never a guess.
+function leaseState(row) {
+  var state = d.string(row, "state");
+  if (state === null) {
+    return "unknown";
+  }
+  switch (d.lower(state)) {
+    case "active": case "assigned": case "1":
+      return "active";
+    case "expired": case "released": case "free": case "backup": case "0":
+      return "expired";
+    case "reserved": case "static":
+      return "reserved";
+  }
+  return "unknown";
+}
+
+// decodeLease decodes one row of /api/kea/leases4/search (survey, data source 4, "Response shape":
+// hostname, hwaddr, address, prefix_len, state, expire, valid_lifetime, if_name, if_descr, client_id,
+// duid, iaid, mac_info) into a dhcp_lease_record, or null for a row with no address, which names no
+// machine and keys nothing. The MAC is handed over as Kea spells it: the core normalises it, because
+// the identity cascade that keys on it is the core's.
+function decodeLease(row) {
+  var address = d.string(row, "address");
+  if (address === null) {
+    return null;
+  }
+  return {
+    address: address,
+    mac: d.rawString(row, "hwaddr"),
+    hostname: d.string(row, "hostname"),
+    dhcp_client_id: d.string(row, "client_id"),
+    duid: d.string(row, "duid"),
+    iaid: d.string(row, "iaid"),
+    vendor_hint: d.string(row, "mac_info"),
+    lease_state: leaseState(row),
+    interface_identifier: d.rawString(row, "if_name"),
+    interface_device: "",
+    starts_at: null,
+    expires_at: d.epochPointer(row, "expire")
+  };
+}
+
 exports.dhcp_lease = {
   // probe reads the service state and then the configured state behind it. Both are needed and
   // neither is enough: a running daemon with DHCPv4 switched off serves no client, and a
@@ -79,7 +123,7 @@ exports.dhcp_lease = {
     var leases = [];
     for (var i = 0; i < read.rows.length; i++) {
       var row = read.rows[i];
-      var lease = opnview.dhcp_lease.decodeLease(row);
+      var lease = decodeLease(row);
       if (lease === null) {
         continue;
       }

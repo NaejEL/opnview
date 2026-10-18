@@ -1,0 +1,12 @@
+{
+  "description": "A firewall whose Unbound runs with its query report on, beside a running Dnsmasq that reads no record: Unbound alone is active for the resolver cache and the local data.",
+  "answers": [
+    {"plugin": "unbound", "endpoint": "status", "fixture": "unbound_status_running.json"},
+    {"plugin": "unbound", "endpoint": "settings", "fixture": "unbound_settings.json"},
+    {"plugin": "unbound", "endpoint": "is_enabled", "fixture": "unbound_is_enabled_on.json"},
+    {"plugin": "dnsmasq", "endpoint": "status", "fixture": "dnsmasq_status_running.json"},
+    {"plugin": "dnsmasq", "endpoint": "settings", "fixture": "dnsmasq_settings.json"}
+  ],
+  "probe": ["resolver_cache", "resolver_local_data"],
+  "active": {"resolver_cache": ["unbound"], "resolver_local_data": ["unbound"]}
+}

@@ -201,9 +201,15 @@ type pairReading struct {
 	cadence   int64
 }
 
+// endpointKey names one local address read on one device, and pairKey one pair: the parts the
+// provider reported, compared as they are and never joined into a text.
+type endpointKey struct{ device, local string }
+
+type pairKey struct{ device, local, peer string }
+
 // rateRow is one row of read_pair_rates.
 type rateRow struct {
-	kind, key, measure string
+	kind, device, local, peer, measure string
 	value              float64
 	sampledAt          int64
 	// cadence is the live cadence of a fine sample, or the measurement interval.
@@ -229,7 +235,8 @@ func (s *SampleStore) readRateRows(ctx context.Context, from, to, interval int64
 			row  rateRow
 			live reads.NullInt64
 		)
-		if err := rows.Scan(&row.kind, &row.key, &row.measure, &row.value, &row.sampledAt, &live); err != nil {
+		if err := rows.Scan(&row.kind, &row.device, &row.local, &row.peer, &row.measure, &row.value, &row.sampledAt,
+			&live); err != nil {
 			return nil, fmt.Errorf("store: read_pair_rates: %w", err)
 		}
 		row.cadence = interval
@@ -245,19 +252,19 @@ func (s *SampleStore) readRateRows(ctx context.Context, from, to, interval int64
 }
 
 // latestReadings keeps each subject's latest reading among the rows.
-func latestReadings(rows []rateRow) (map[string]*endpointReading, map[string]*pairReading) {
-	endpoints := map[string]*endpointReading{}
-	pairs := map[string]*pairReading{}
+func latestReadings(rows []rateRow) (map[endpointKey]*endpointReading, map[pairKey]*pairReading) {
+	endpoints := map[endpointKey]*endpointReading{}
+	pairs := map[pairKey]*pairReading{}
 	for _, row := range rows {
-		parts := strings.Split(row.key, " ")
 		figure := row.value
-		switch {
-		case vocab.SubjectKind(row.kind) == vocab.SubjectInterfaceEndpoint && len(parts) == 2:
-			reading, present := endpoints[row.key]
+		switch vocab.SubjectKind(row.kind) {
+		case vocab.SubjectInterfaceEndpoint:
+			key := endpointKey{device: row.device, local: row.local}
+			reading, present := endpoints[key]
 			if !present || row.sampledAt > reading.sampledAt {
-				reading = &endpointReading{device: parts[0], local: parts[1], sampledAt: row.sampledAt,
+				reading = &endpointReading{device: row.device, local: row.local, sampledAt: row.sampledAt,
 					cadence: row.cadence}
-				endpoints[row.key] = reading
+				endpoints[key] = reading
 			} else if row.sampledAt < reading.sampledAt {
 				continue
 			}
@@ -267,12 +274,13 @@ func latestReadings(rows []rateRow) (map[string]*endpointReading, map[string]*pa
 			case vocab.MeasureRateBitsOut:
 				reading.out = &figure
 			}
-		case vocab.SubjectKind(row.kind) == vocab.SubjectInterfaceEndpointPair && len(parts) == 3:
-			reading, present := pairs[row.key]
+		case vocab.SubjectInterfaceEndpointPair:
+			key := pairKey{device: row.device, local: row.local, peer: row.peer}
+			reading, present := pairs[key]
 			if !present || row.sampledAt > reading.sampledAt {
-				reading = &pairReading{device: parts[0], local: parts[1], peer: parts[2], sampledAt: row.sampledAt,
+				reading = &pairReading{device: row.device, local: row.local, peer: row.peer, sampledAt: row.sampledAt,
 					cadence: row.cadence}
-				pairs[row.key] = reading
+				pairs[key] = reading
 			} else if row.sampledAt < reading.sampledAt {
 				continue
 			}
@@ -329,22 +337,29 @@ func (r *rateSplitter) isInside(ctx context.Context, address string) (bool, erro
 // outbound total of a local address goes to outbound when every peer it was read
 // with is outside, to inter_interface when every one is inside, and to
 // OutboundUnsplit otherwise.
-func (r *rateSplitter) split(ctx context.Context, endpoints map[string]*endpointReading,
-	pairs map[string]*pairReading, withClients bool) (CurrentRates, error) {
+func (r *rateSplitter) split(ctx context.Context, endpoints map[endpointKey]*endpointReading,
+	pairs map[pairKey]*pairReading, withClients bool) (CurrentRates, error) {
 	result := newCurrentRates()
 	// The peers each local address was read with in its latest sample.
-	peersOf := map[string][]*pairReading{}
+	peersOf := map[endpointKey][]*pairReading{}
 	for _, pair := range pairs {
-		key := vocab.InterfaceEndpointKey(pair.device, pair.local)
+		key := endpointKey{device: pair.device, local: pair.local}
 		if endpoint, present := endpoints[key]; present && endpoint.sampledAt == pair.sampledAt {
 			peersOf[key] = append(peersOf[key], pair)
 		}
 	}
-	keys := make([]string, 0, len(endpoints))
+	// In order of device, then local address: the order the sums are made in, so a figure is the
+	// same sum every time.
+	keys := make([]endpointKey, 0, len(endpoints))
 	for key := range endpoints {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].device != keys[j].device {
+			return keys[i].device < keys[j].device
+		}
+		return keys[i].local < keys[j].local
+	})
 	for _, key := range keys {
 		endpoint := endpoints[key]
 		in := 0.0

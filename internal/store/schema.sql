@@ -3560,18 +3560,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_source_period_open
 --                   interface_map keys by, so the reading joins to an interface
 --                   without a foreign key that a discovery refresh could break
 --   'interface_endpoint_pair'
---                   subject_key is the device the reading was taken on, the
---                   local address and the peer address, joined by spaces, in
---                   that order. traffic/top reports each local address with its
---                   peers on one interface, the peer's figures being INBOUND to
---                   the local address (survey, "What `traffic/top` measures,
---                   read from source for step 5"), so the order carries the
---                   direction and is never canonicalised away
+--                   interface_device is the device the reading was taken on,
+--                   local_address and peer_address its two ends. The peer's
+--                   figures are INBOUND to the local address (survey, "What
+--                   `traffic/top` measures, read from source for step 5"), so
+--                   which end is local carries the direction and is never
+--                   canonicalised away
 --   'interface_endpoint'
---                   subject_key is the device and the local address, joined
---                   by a space: the record's own totals over all its peers.
---                   The local address's sending is reported ONLY as that
---                   total, so it is what a client's outbound figure comes from
+--                   interface_device and local_address: the record's own
+--                   totals over all its peers. The local address's sending is
+--                   reported ONLY as that total, so it is what a client's
+--                   outbound figure comes from
+--
+-- subject_key is the PROVIDER'S OWN NAME for the subject, unique with the kind,
+-- and nothing in the core composes or parses it (PA11 of the open-plugin-API
+-- amendment). What the core reads of a subject's parts is the three columns
+-- interface_device, local_address and peer_address, each a field of the
+-- measurement_reading contract record (internal/collect/provider/kinds/
+-- measurement_sample.json), NULL where the subject has no such part.
 --   'gateway'       subject_key is the gateway's name as System > Gateways
 --                   reports it; the delay and loss dpinger measures
 --
@@ -3611,6 +3617,9 @@ CREATE TABLE IF NOT EXISTS measurement_sample (
                                       AND subject_kind = lower(subject_kind)
                                       AND strpos(subject_kind, ' ') = 0),
     subject_key  TEXT NOT NULL,
+    interface_device TEXT CHECK (interface_device IS NULL OR length(interface_device) > 0),
+    local_address    TEXT CHECK (local_address IS NULL OR length(local_address) > 0),
+    peer_address     TEXT CHECK (peer_address IS NULL OR length(peer_address) > 0),
     measure      TEXT NOT NULL CHECK (length(measure) > 0
                                       AND measure = lower(measure)
                                       AND strpos(measure, ' ') = 0),
@@ -3900,6 +3909,18 @@ CREATE TABLE IF NOT EXISTS measure_interval (
 -- PostgreSQL inlines them into the statement calling them: the plan is the one
 -- the statement would have written out by hand (E18), and a connection's rows
 -- are read through connection_measure's primary key.
+--
+-- A CONNECTION WITH NO OUTPUT ROW IN ANY MEASURE -- most connections, where a
+-- measure covers part of the traffic or none -- is answered from the
+-- declarations alone: in every measure its part is the not_known part, in the
+-- slot of its action, which is what connection_measure_parts composes for it.
+-- That object depends on the action only, so it is computed once per statement
+-- (four uncorrelated subqueries, one per action branch, which PostgreSQL plans
+-- as InitPlans) rather than composed again for every flow. A connection with a
+-- row in some measure is composed in full, every measure through
+-- connection_measure_parts. On the 100 000-row seed this took the 30-day
+-- connection_tree read in the measure from about 1.0 s to about 0.6 s
+-- (PA18.2 of the open-plugin-API amendment); the answers are the same.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION connection_measure_parts(measure_name TEXT, leg_id BIGINT, leg_pair_outcome TEXT,
                                                     leg_paired_flow_id BIGINT, leg_action TEXT)
@@ -3962,10 +3983,35 @@ CREATE OR REPLACE FUNCTION flow_measures(leg_id BIGINT, leg_pair_outcome TEXT, l
 RETURNS TABLE (parts JSONB)
 LANGUAGE sql STABLE PARALLEL SAFE
 AS $flow_measures$
-    SELECT coalesce(jsonb_object_agg(d.name, to_jsonb(c.figures)), CAST('{}' AS JSONB))
-    FROM declared_measure AS d
-    CROSS JOIN LATERAL connection_measure_parts(d.name, leg_id, leg_pair_outcome, leg_paired_flow_id,
-                                                leg_action) AS c
+    SELECT CASE
+           WHEN NOT EXISTS (SELECT 1
+                            FROM declared_measure AS m
+                            JOIN connection_measure AS x
+                              ON x.measure = m.name
+                             AND x.connection_flow_id = CASE WHEN leg_pair_outcome = 'second_leg'
+                                                             THEN leg_paired_flow_id ELSE leg_id END) THEN
+               CASE WHEN leg_action = 'pass' THEN
+                        (SELECT coalesce(jsonb_object_agg(z.name, to_jsonb(z.not_known_part || z.zero_part
+                                                                           || z.zero_part)), CAST('{}' AS JSONB))
+                         FROM declared_measure AS z)
+                    WHEN leg_action IN ('block', 'reject') THEN
+                        (SELECT coalesce(jsonb_object_agg(z.name, to_jsonb(z.zero_part || z.not_known_part
+                                                                           || z.zero_part)), CAST('{}' AS JSONB))
+                         FROM declared_measure AS z)
+                    WHEN leg_action = 'unknown' THEN
+                        (SELECT coalesce(jsonb_object_agg(z.name, to_jsonb(z.zero_part || z.zero_part
+                                                                           || z.not_known_part)), CAST('{}' AS JSONB))
+                         FROM declared_measure AS z)
+                    ELSE
+                        (SELECT coalesce(jsonb_object_agg(z.name, to_jsonb(z.zero_part || z.zero_part
+                                                                           || z.zero_part)), CAST('{}' AS JSONB))
+                         FROM declared_measure AS z)
+               END
+           ELSE (SELECT coalesce(jsonb_object_agg(d.name, to_jsonb(c.figures)), CAST('{}' AS JSONB))
+                 FROM declared_measure AS d
+                 CROSS JOIN LATERAL connection_measure_parts(d.name, leg_id, leg_pair_outcome, leg_paired_flow_id,
+                                                             leg_action) AS c)
+           END
 $flow_measures$;
 
 -- measure_markers is the markers a direction carries -- its bits in connection_measure.markers -- as an

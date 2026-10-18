@@ -1,0 +1,2 @@
+{ "language": "en", "strings": { "provider.example_pairs.example_pairs": "Example pairs",
+  "collection.kind.example_pairs": "Pairs", "plugin.example_pairs.dataset.events": "Events" } }

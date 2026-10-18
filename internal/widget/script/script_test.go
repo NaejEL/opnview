@@ -153,6 +153,8 @@ type flatEmbedded struct {
 	Kept    *int64 `json:"kept"`
 	// Coverage is nested, as the figures' coverage is: crossed member by member only while nil.
 	Coverage *flatCoverage `json:"coverage,omitempty"`
+	// Parts is a list of whole numbers, as a measure's parts are: crossed member by member.
+	Parts []int64 `json:"parts,omitempty"`
 }
 
 // flatCoverage is a nested member.
@@ -171,6 +173,7 @@ type flatWindow struct {
 	Spread    float64       `json:"spread,omitempty"`
 	Label     *string       `json:"label"`
 	When      json.Number   `json:"when,omitempty"`
+	Counts    []int64       `json:"counts"`
 }
 
 // TestAFlatValueCrossesMemberByMemberAsItCrossesThroughJSON is the figures' fast crossing (E.3 of
@@ -187,6 +190,8 @@ func TestAFlatValueCrossesMemberByMemberAsItCrossesThroughJSON(t *testing.T) {
 		{Bytes: 1500, Allowed: 3},
 		{Bytes: 1 << 60, flatEmbedded: flatEmbedded{Measure: "netflow", Packets: &seven, Kept: &seven}},
 		{Bytes: 3, flatEmbedded: flatEmbedded{Coverage: &flatCoverage{Measured: 2}}},
+		{Bytes: 4, flatEmbedded: flatEmbedded{Measure: "netflow", Parts: []int64{1, 0, 1 << 60}}},
+		{flatEmbedded: flatEmbedded{Parts: []int64{}}},
 	} {
 		flat, err := call.Encode(call.Value(value))
 		if err != nil {
@@ -209,6 +214,8 @@ func TestAFlatValueCrossesMemberByMemberAsItCrossesThroughJSON(t *testing.T) {
 		{Covered: &flatCoverage{Measured: 3}, Rows: []flatExample{}, Share: 2},
 		{Share: -0.5, Latitude: &negativeZero, Spread: 1e21},
 		{Share: 1.0 / 3, Latitude: &third, Spread: 48},
+		{Counts: []int64{}},
+		{Counts: []int64{-3, 9}},
 	} {
 		flat, err := call.Encode(call.Value(window))
 		if err != nil {
@@ -235,6 +242,15 @@ func TestAFlatValueCrossesMemberByMemberAsItCrossesThroughJSON(t *testing.T) {
 		`({measure: 4})`,
 		`({bytes: 1, coverage: {measured: 2}})`,
 		`({bytes: 1, coverage: null})`,
+		`({bytes: 1, parts: [1, 2, 3]})`,
+		`({bytes: 1, parts: []})`,
+		`({bytes: 1, parts: null})`,
+		`({bytes: 1, parts: [1, null]})`,
+		`({bytes: 1, parts: [1.5]})`,
+		`({bytes: 1, parts: [1, , 3]})`,
+		`({bytes: 1, parts: ["1"]})`,
+		`({bytes: 1, parts: 4})`,
+		`({bytes: 1, parts: {length: 1, 0: 2}})`,
 	} {
 		argument, err := vm.RunString(source)
 		if err != nil {
@@ -280,6 +296,7 @@ func TestAFlatValueCrossesMemberByMemberAsItCrossesThroughJSON(t *testing.T) {
 	for _, source := range []string{
 		`({src_interface_id: 1, dst_interface_id: null, peer_address: null, traffic_scope: "north_south",
 		   exit_leg_device: null, bytes: 10, allowed: 2})`,
+		`({bytes: 10, measure: "netflow", packets: 4, kept: null, parts: [4, 0, 2]})`,
 		`({bytes: 10, measure: "netflow", packets: 4, kept: null})`,
 	} {
 		argument, err := vm.RunString(source)

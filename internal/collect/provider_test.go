@@ -114,14 +114,14 @@ func TestAnImplementationTheFirewallDoesNotSeparateIsNeverActivatedWhateverItsPo
 	ctx := context.Background()
 
 	// Kea is the first key in sort order and is disabled; Dnsmasq is second and is serving.
-	harness.Fake.AnswerFixture(collecttest.KeaStatus, "kea_status_disabled.json")
-	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("kea", "status"), "kea_status_disabled.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("dnsmasq", "status"), "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("dnsmasq", "settings"), "dnsmasq_settings.json")
 
 	if err := harness.Collector.ProbeKind(ctx, "dhcp_lease"); err != nil {
 		t.Logf("the lease probe reported: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, "dhcp_lease"); key != collecttest.ProviderDnsmasq {
+	if key := harness.ActiveKeyOf(t, "dhcp_lease"); key != "dnsmasq" {
 		t.Fatalf("the active backend is %q; activation followed something other than the "+
 			"firewall's own configuration", key)
 	}
@@ -146,12 +146,12 @@ func TestTheUnreadableImplementationsReturnTheUnsupportedSentinel(t *testing.T) 
 	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
 
-	if _, _, err := mustSource(t, "dhcp_lease", collecttest.ProviderISC).Implementation.Call(ctx, harness.Collector,
+	if _, _, err := mustSource(t, "dhcp_lease", "isc").Implementation.Call(ctx, harness.Collector,
 		"leases", 1); !errors.Is(
 		err, provider.ErrUnsupportedRead) {
 		t.Errorf("the ISC lease read returned %v, not the unsupported sentinel", err)
 	}
-	if _, _, err := mustSource(t, "dns_lookup", collecttest.ProviderDnsmasq).Implementation.Call(ctx,
+	if _, _, err := mustSource(t, "dns_lookup", "dnsmasq").Implementation.Call(ctx,
 		harness.Collector, "lookups", 1); !errors.Is(
 		err, provider.ErrUnsupportedRead) {
 		t.Errorf("the Dnsmasq lookup read returned %v, not the unsupported sentinel", err)

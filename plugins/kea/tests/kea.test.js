@@ -34,3 +34,26 @@ test("Kea leases are read from the fixture and never start after they expire", f
     }
   });
 });
+
+// Kea's own fields are decoded here, in the plugin, rather than by a helper of the host that decoded
+// every backend's union (PA11 of the plugin-API amendment): each field of the fixture's first row lands
+// in its contract field, the start is the expiry less the valid lifetime, and the states map onto the
+// closed vocabulary.
+test("Kea's lease fields are decoded into the dhcp_lease contract", function (t) {
+  t.answer("leases", { fixture: "kea_leases.json" });
+  var read = t.call("dhcp_lease", "leases", 100);
+  t.equal(read.leases.length, 2, "the leases read");
+  var first = read.leases[0];
+  t.equal(first.address, "198.51.100.13", "the address");
+  t.equal(first.mac, "0a:11:22:33:44:88", "the hardware address, as Kea spells it");
+  t.equal(first.hostname, "example-host-four", "the host name");
+  t.equal(first.dhcp_client_id, "example-client-identifier-four", "the client identifier");
+  t.equal(first.duid, "example-duid", "the DUID");
+  t.equal(first.iaid, "1", "the IAID");
+  t.equal(first.vendor_hint, "example vendor string", "the vendor string");
+  t.equal(first.interface_identifier, "example_if_a", "the interface's configuration key");
+  t.equal(first.expires_at, 1750003600, "the expiry");
+  t.equal(first.starts_at, 1750000000, "the start, the expiry less the valid lifetime");
+  t.equal(first.lease_state, "active", "the state of an active lease");
+  t.equal(read.leases[1].lease_state, "expired", "the state of an expired lease");
+});

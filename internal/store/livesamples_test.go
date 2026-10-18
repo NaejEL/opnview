@@ -16,9 +16,9 @@ import (
 
 // liveSample is one rate reading of one local address, fine when cadence is not nil.
 func liveSample(providerID int64, at int64, cadence *int64) vocab.MeasurementSample {
-	return vocab.MeasurementSample{ProviderID: &providerID, SubjectKind: vocab.SubjectInterfaceEndpoint,
-		SubjectKey: vocab.InterfaceEndpointKey("exdev0", "192.0.2.10"), Measure: vocab.MeasureRateBitsIn,
-		Unit: "bit_per_second", Value: 1000, SampledAt: at, LiveCadenceSeconds: cadence}
+	return withParts(vocab.MeasurementSample{ProviderID: &providerID, SubjectKind: vocab.SubjectInterfaceEndpoint,
+		SubjectKey: endpointKey("exdev0", "192.0.2.10"), Measure: vocab.MeasureRateBitsIn,
+		Unit: "bit_per_second", Value: 1000, SampledAt: at, LiveCadenceSeconds: cadence})
 }
 
 // fineCadences reads the live cadence of every reading of the subject, by instant; -1 is a
@@ -27,7 +27,7 @@ func fineCadences(t *testing.T, database *store.Store) map[int64]int64 {
 	t.Helper()
 	rows, err := database.DB().QueryContext(context.Background(),
 		`SELECT sampled_at, coalesce(live_cadence_seconds, -1) FROM measurement_sample WHERE subject_key = $1`,
-		vocab.InterfaceEndpointKey("exdev0", "192.0.2.10"))
+		endpointKey("exdev0", "192.0.2.10"))
 	if err != nil {
 		t.Fatalf("reading the samples: %v", err)
 	}

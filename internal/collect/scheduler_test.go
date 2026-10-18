@@ -45,6 +45,7 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 		"measurement_sample": 300 * time.Second,
 		"dhcp_lease":         300 * time.Second,
 		"dns_lookup":         60 * time.Second,
+		"neighbour":          300 * time.Second,
 		"retention purge":    settings.PurgeInterval,
 		// The two reads of the resolver-cache cycle, at decision 4's 60 s and 300 s.
 		"resolver_cache":      60 * time.Second,

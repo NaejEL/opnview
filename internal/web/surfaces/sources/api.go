@@ -64,10 +64,13 @@ type ProviderState struct {
 	OPNsensePages []OPNsensePage `json:"opnsense_pages"`
 }
 
-// OPNsensePage is one page of the OPNsense web interface, named by its menu entry.
+// OPNsensePage is one page of the OPNsense web interface, named by its menu entry: Page is its closed
+// code, and Label the catalogue key the providing plugin declares for its name (PA2), which the front
+// draws as it is given.
 type OPNsensePage struct {
-	URL  string `json:"url"`
-	Page string `json:"page"`
+	URL   string `json:"url"`
+	Page  string `json:"page"`
+	Label string `json:"label"`
 }
 
 // OutageState is one current outage: a kind's, or one provider's (ProviderKey not null).
@@ -136,7 +139,7 @@ func (s *surface) sourcesAnswer(ctx context.Context) (SourcesAnswer, error) {
 		if availability == msgAvailabilityNotCollecting {
 			for _, link := range s.opnsenseLinks(baseURL, row.Kind, row.ProviderKey) {
 				drawn.OPNsensePages = append(drawn.OPNsensePages,
-					OPNsensePage{URL: link.URL, Page: web.ConditionOf(link.LabelKey)})
+					OPNsensePage{URL: link.URL, Page: web.ConditionOf(link.LabelKey), Label: string(link.LabelKey)})
 			}
 		}
 		answer.Providers = append(answer.Providers, drawn)

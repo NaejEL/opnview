@@ -11,6 +11,7 @@ import (
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/params"
 	"github.com/NaejEL/opnview/internal/widget/request"
@@ -40,6 +41,8 @@ type Service struct {
 	datasets *dataset.Catalogue
 	// liveInterest is the live-interest lease a request for a live figure renews (live.go).
 	liveInterest *live.Interest
+	// liveCadence is the finest live cadence the loaded plugins declare (Options.LiveCadence).
+	liveCadence func(ctx context.Context) int64
 }
 
 // Options are what a service needs beside the store.
@@ -62,6 +65,10 @@ type Options struct {
 	// LiveInterest is the live-interest lease an answer carrying a live figure renews; nil
 	// renews none (live.go).
 	LiveInterest *live.Interest
+	// LiveCadence is the finest live cadence in force of the live passes the loaded plugins declare, in
+	// seconds, 0 when none declares one. Nil takes the built-in plugins', as the plugin loader registered
+	// it (RegisterBuiltinLiveCadence).
+	LiveCadence func(ctx context.Context) int64
 }
 
 // New returns the service over a store.
@@ -74,7 +81,10 @@ func New(database *store.Store, options Options) (*Service, error) {
 		now = time.Now
 	}
 	service := &Service{store: database, Now: now, lists: options.SuffixLists, presets: map[string]request.Preset{},
-		liveInterest: options.LiveInterest}
+		liveInterest: options.LiveInterest, liveCadence: options.LiveCadence}
+	if service.liveCadence == nil {
+		service.liveCadence = defaultLiveCadence(database)
+	}
 	service.datasets = options.Datasets
 	if service.datasets == nil {
 		catalogue, err := dataset.NewCatalogue(nil)
@@ -84,6 +94,9 @@ func New(database *store.Store, options Options) (*Service, error) {
 		service.datasets = catalogue
 	}
 	if err := script.HostAreaFailures(); err != nil {
+		return nil, err
+	}
+	if err := vocab.BuiltinSampleMetricsError(); err != nil {
 		return nil, err
 	}
 	sources := options.Plugins
@@ -271,6 +284,7 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 		WithheldSeries: map[int]bool{},
 		Datasets:       s.datasets,
 		LiveInterest:   s.liveInterest,
+		LiveCadence:    s.liveCadence,
 		Response: &envelope.Response{
 			Type: widgetType, Parameters: parsed.Effective, UnknownParameters: parsed.Unknown,
 			InvalidParameters: parsed.Invalid, MissingParameters: parsed.Missing,

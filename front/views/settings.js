@@ -1,8 +1,8 @@
 /*
  * opnview front -- the Settings view (F7-9): where the firewall's credentials enter the product, the
- * Public Suffix List's refresh, the appearance, every declared setting of every loaded plugin and of
- * the live and NetFlow figures through ONE generic form, and the listing of the plugins and the
- * front's parts, loaded and refused, with their reasons.
+ * appearance, every declared setting of every loaded plugin -- the Public Suffix List's and NetFlow's
+ * among them -- and of the live figures through ONE generic form, and the listing of the plugins and
+ * the front's parts, loaded and refused, with their reasons.
  *
  * NO CONTROL HERE CAN CHANGE A FIREWALL SETTING. The firewall card stores opnview's own credentials
  * and verifies them by one read; the certificate fetch reads the certificate the firewall presents
@@ -14,7 +14,7 @@
 (function (root) {
   "use strict";
   var opnview = root.opnview || (root.opnview = {});
-  var h = opnview.h, forms = opnview.forms, format = opnview.format;
+  var h = opnview.h, forms = opnview.forms;
   var t = opnview.strings.t, tk = opnview.strings.tk;
 
   function load(context) {
@@ -23,14 +23,12 @@
       context.api.get("/api/settings"),
       context.api.get("/api/plugins"),
       context.api.get("/api/live/settings"),
-      context.api.get("/api/netflow/settings"),
       context.api.get("/api/widgets")
     ]).then(function (answers) {
       model.settings = answers[0].status === 200 ? answers[0].body : null;
       model.plugins = answers[1].status === 200 ? answers[1].body.plugins : [];
       model.live = answers[2].status === 200 ? answers[2].body : null;
-      model.netflow = answers[3].status === 200 ? answers[3].body : null;
-      model.registry = answers[4].status === 200 ? answers[4].body : null;
+      model.registry = answers[3].status === 200 ? answers[3].body : null;
       model.failed = answers.some(function (answer) { return answer.status !== 200; });
       prepare(context);
     });
@@ -45,11 +43,6 @@
       model.firewall.draft = { url: firewall.url || "", api_key: firewall.api_key || "", api_secret: "",
         certificate_fingerprint: firewall.certificate_fingerprint || "" };
     }
-    var suffix = model.settings ? model.settings.public_suffix : null;
-    model.suffix = model.suffix || { draft: {}, refusal: null, saved: false };
-    if (suffix && !model.suffix.dirty) {
-      model.suffix.draft = { refresh_interval_seconds: String(suffix.refresh_interval_seconds) };
-    }
     model.forms = [];
     (model.plugins || []).forEach(function (plugin) {
       if (plugin.state !== "loaded" || !plugin.settings || plugin.settings.length === 0) { return; }
@@ -63,26 +56,23 @@
       var form = forms.settingsModel("plugin-" + plugin.name, plugin.settings, forms.declaredLabel, save);
       model.forms.push({ key: "plugin-" + plugin.name, heading: plugin.display_name || plugin.name, form: form });
     });
-    [["live", "/api/live/settings", model.live], ["netflow", "/api/netflow/settings", model.netflow]]
-      .forEach(function (source) {
-        if (!source[2]) { return; }
-        var declarations = function (settings) {
-          return settings.map(function (setting) {
-            return { key: setting.key, type: "integer", min: setting.minimum, max: setting.maximum,
-              "default": setting["default"], value: setting.value, set: setting.set };
-          });
-        };
-        var form = forms.settingsModel(source[0], declarations(source[2].settings), function (declaration) {
-          return source[0] === "live" ? tk("settings.live.", declaration.key) : tk("settings.netflow.", declaration.key);
-        }, function (body) {
-          return context.api.post(source[1], body).then(function (result) {
-            if (result.status === 200) { form.reset(declarations(result.body.settings)); }
-            return result;
-          });
+    if (model.live) {
+      var declarations = function (settings) {
+        return settings.map(function (setting) {
+          return { key: setting.key, type: "integer", min: setting.minimum, max: setting.maximum,
+            "default": setting["default"], value: setting.value, set: setting.set };
         });
-        model.forms.push({ key: source[0], heading: source[0] === "live" ? t("settings.heading.live")
-          : t("settings.heading.netflow"), form: form });
+      };
+      var live = forms.settingsModel("live", declarations(model.live.settings), function (declaration) {
+        return tk("settings.live.", declaration.key);
+      }, function (body) {
+        return context.api.post("/api/live/settings", body).then(function (result) {
+          if (result.status === 200) { live.reset(declarations(result.body.settings)); }
+          return result;
+        });
       });
+      model.forms.push({ key: "live", heading: t("settings.heading.live"), form: live });
+    }
   }
 
   /* ---------------------------------------------------------------------------------------------
@@ -163,53 +153,6 @@
       ]),
       h("div", { "class": "form-actions" }, [
         forms.button("save", t("action.save"), null, { submit: true, primary: true, disabled: card.sending }),
-        card.saved ? h("span", { "class": "form-notice", role: "status" }, t("notice.settings_saved")) : null
-      ])
-    ]));
-  }
-
-  /* ---------------------------------------------------------------------------------------------
-   * The Public Suffix List card, when the server answers it.
-   * ------------------------------------------------------------------------------------------- */
-
-  function suffixCard(context) {
-    var model = context.state, card = model.suffix, suffix = model.settings.public_suffix;
-    if (!suffix) { return null; }
-    var changed = function () { card.dirty = true; card.refusal = null; card.saved = false; context.rerender(); };
-    var save = function (event) {
-      event.preventDefault();
-      context.api.post("/api/settings/public-suffix",
-        { refresh_interval_seconds: Number(card.draft.refresh_interval_seconds) }).then(function (result) {
-        if (result.status === 200) {
-          model.settings = result.body;
-          card.dirty = false;
-          card.saved = true;
-          prepare(context);
-        } else {
-          card.refusal = result.body || { condition: "internal_error" };
-        }
-        context.rerender();
-      });
-    };
-    var error = card.refusal ? forms.refusal(card.refusal.condition) : null;
-    return forms.card("public-suffix", t("settings.heading.public_suffix"), h("form", {
-      "class": "settings-form", novalidate: true, "data-dirty": card.dirty ? "true" : "false", on: { submit: save }
-    }, [
-      h("dl", { "class": "facts" }, [
-        forms.fact("state", t("settings.label.public_suffix_state"), tk("state.public_suffix.", suffix.state)),
-        forms.fact("in-use", t("settings.label.public_suffix_in_use"), suffix.in_use ? t("state.yes") : t("state.no")),
-        suffix.in_use ? forms.fact("version", t("settings.label.public_suffix_version"),
-          suffix.version_stated ? suffix.version : t("state.public_suffix.version_not_stated")) : null,
-        suffix.rules !== null ? forms.fact("rules", t("settings.label.public_suffix_rules"), format.number(suffix.rules)) : null,
-        forms.fact("confirmed", t("settings.label.public_suffix_confirmed"), suffix.confirmed_at === null
-          ? t("state.public_suffix.never_confirmed") : format.instant(suffix.confirmed_at))
-      ]),
-      forms.field("suffix-interval", t("field.public_suffix_interval"),
-        forms.text("suffix-interval", card.draft, "refresh_interval_seconds", changed,
-          { type: "number", min: 1, step: 1, error: error }), error,
-        format.duration(Number(card.draft.refresh_interval_seconds) || 0)),
-      h("div", { "class": "form-actions" }, [
-        forms.button("save", t("action.save"), null, { submit: true, primary: true }),
         card.saved ? h("span", { "class": "form-notice", role: "status" }, t("notice.settings_saved")) : null
       ])
     ]));
@@ -325,7 +268,6 @@
       }
       return h("div", { "class": "cards" }, [
         firewallCard(context),
-        suffixCard(context),
         appearanceCard(context),
         (model.forms || []).map(function (entry) {
           return forms.card(entry.key, entry.heading, forms.settingsForm(entry.form, context.rerender));

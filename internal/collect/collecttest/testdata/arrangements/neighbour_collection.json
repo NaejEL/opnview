@@ -1,0 +1,9 @@
+{
+  "description": "The firewall's neighbour tables, both readable: the neighbours implementation is the active neighbour source.",
+  "answers": [
+    {"plugin": "neighbours", "endpoint": "arp", "fixture": "get_arp.json"},
+    {"plugin": "neighbours", "endpoint": "ndp", "fixture": "get_ndp.json"}
+  ],
+  "probe": ["neighbour"],
+  "active": {"neighbour": ["neighbours"]}
+}

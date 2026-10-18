@@ -8,16 +8,18 @@ stops there. It is a seam document, not a plugin specification.
 The authority on the schema is `internal/store/schema.sql`; on the sources,
 `docs/opnsense-api-survey.md`; on the entities, `docs/data-model.md`.
 
-## Eleven kinds
+## Twelve kinds
 
 A **kind** is a contract `opnview` implements: a shape of material, with a
-normalised destination in the schema. Exactly eleven core kinds exist; a plugin may
+normalised destination in the schema. Exactly twelve core kinds exist, one kind file each; a plugin may
 bring kinds of its own, and the `provider` table refuses a `kind` that is not a
 snake_case name. The resolver-cache cycle added `resolver_cache` and
 `resolver_local_data` (`specs/SPEC-resolver-cache-attribution.md`, decision 1). The
 NetFlow addendum's `flow_record` (`specs/SPEC-backend-completion-plugins.md`, PS17) is
 no longer a core kind: the plugin-API amendment of 17 October 2026 (PA9) made it the
-`netflow` plugin's own, with its tables, its join and its measure.
+`netflow` plugin's own, with its tables, its join and its measure; and its PA12 made the ARP and
+NDP tables, once read beside the leases, the core kind `neighbour`, implemented by the built-in
+`neighbours` plugin.
 
 <!-- provider-kinds:begin -->
 ```
@@ -27,6 +29,7 @@ firewall_log
 flow_volume
 ip_geolocation
 measurement_sample
+neighbour
 reconciled_state
 registrable_domain
 resolver_cache
@@ -44,12 +47,13 @@ security_event
 | `dns_lookup` | one record per resolver lookup | `dns_resolution`, feeding `domain_attribution` |
 | `ip_geolocation` | country, coordinates, ASN and operator per address | `geo_asn` |
 | `measurement_sample` | one numeric reading of one subject at one instant | `measurement_sample` |
+| `neighbour` | one entry of the firewall's ARP or NDP table: a MAC, an address and the interface it was learned on | **no row of its own**: a MAC-level `client` through the identity cascade, never this firewall and never a neighbour of an upstream interface |
 | `reconciled_state` | the complete set of things of one type, as of one instant | `state_snapshot` and `state_item`, with `state_item_departure` over them |
 | `registrable_domain` | the registrable domain of a site name, computed from the Public Suffix List | **no row**: one list file in the plugin's data directory, read by the built-in `publicsuffix` plugin to group site names at read time |
 | `resolver_cache` | the records a resolver holds in its cache — the answer addresses of the names it resolved, which the query report of `dns_lookup` does not carry | `resource_record_observation` (held in `cache`), feeding `domain_attribution`'s `resolver_cache_answer` method |
 | `resolver_local_data` | the records a resolver serves from its own local data, host overrides among them | `resource_record_observation` (held in `local_data`), feeding host-name resolution (`dns_resolution.client_resolution = 'local_data_hostname'`) and the exact evidence of a lookup answered from Local-data |
 
-The twelve above are the core kinds, one kind file each. A built-in plugin may also declare a kind of its own, writing into its own tables: `pf_state_rate` (the `pf_states` plugin's pf state table rates) and `unbound_query_log` (the `unbound` plugin's query log received over syslog). Their contracts are their manifests' tables (`docs/plugins.md`, *Kinds of the plugin's own*).
+The twelve above are the core kinds. A built-in plugin may also declare a kind of its own, writing into its own tables: `pf_state_rate` (the `pf_states` plugin's pf state table rates) and `unbound_query_log` (the `unbound` plugin's query log received over syslog). Their contracts are their manifests' tables (`docs/plugins.md`, *Kinds of the plugin's own*).
 
 **`measurement_sample` and `reconciled_state` are the survey's finding rather than a design instinct.** Of the
 ~34 data-producing sources the plugin ecosystem exposes, **eight of the ten that
@@ -287,7 +291,7 @@ fourth seam, and the one a third party extends without a Go toolchain at all.
 - **Strings, appearance, dashboards.** The front asks for every word by key
   (`GET /api/strings/{language}`), keeps the palette, the mode and the language as installation
   settings (`/api/appearance`), and stores its canvases as dashboard documents
-  (`docs/dashboard-format.md`) through the `dashboards` surface. `docs/widget-api.md`, *Front API*,
+  (`docs/dashboard-format.md`) through the `dashboards` surface. `docs/front-api.md`
   is the reference.
 - **Tested without a browser.** `internal/front/frontjs` runs the front's own files -- the bytes a
   browser is served -- in the interpreter the server already embeds, over a minimal document, so the
@@ -407,6 +411,56 @@ slots together (PA17).
 **The schema** is one file, `internal/store/schema.sql`, applied in place in one transaction on
 every start. The core's objects live in the schema `opnview`; each plugin's tables in its own
 schema `plugin_<plugin>`; tables set aside by a changed plugin declaration in `opnview_aside`.
+
+## Decisions in force
+
+The open plugin API (the amendment of 17 October 2026 to `specs/SPEC-backend-completion-plugins.md`,
+PA1 to PA21) holds the following, decided by the orchestrator under the maintainer's instruction to
+deliver end to end; the spec carries each decision and its reason.
+
+- **A third party adds a feature in JSON, JavaScript and SQL alone.** A plugin declares its kinds,
+  datasets, derivations, measures, push entries, settings pages and widgets (`docs/plugins.md`), and
+  `internal/plugin/testdata/plugins/example_reporter` proves it with no Go file and no shipped file
+  edited. The plugin API version is 2, and a version-1 plugin is refused.
+- **Kinds are data.** A core kind is a file of `internal/collect/provider/kinds/`; its `concurrent`,
+  `push` and `bindable` attributes, cadences and page sizes are read from it, and the DDL seeds no
+  product row: the built-ins' declarations write the registry at load.
+- **NetFlow is the `netflow` plugin's.** Its records, index map, capture configuration, join and
+  measure are the plugin's tables and JavaScript (`plugins/netflow`); the core keeps only the v9 / IPFIX
+  decoder, for speed, naming no OPNsense concept. A second exporter is a plugin of its own.
+- **Measures are declared.** `volume_measure` takes `logged`, `best_available` and every declared
+  measure; `best_available` answers the first, in name order, whose strict rule covers the window. No
+  core table, column, statement name or enum value names a measure, and the observation-point limit
+  holds for every one.
+- **A backend's fields are its plugin's.** Lease states, resolver actions and Insight subjects are
+  decoded in each plugin's script; the identity cascade, the "this firewall is never a client" rule and
+  the upstream exclusion stay core. The ARP and NDP tables are the `neighbours` plugin, kind
+  `neighbour`; the rolling strip is a widget plugin.
+- **Booleans are `BOOLEAN`**, and the APIs keep serving a field documented as 0/1 as 0/1, by its
+  declared column type. A plugin's and a widget's statements keep `:name` and the whole-number reading
+  of a `numeric`, translated and converted by the plugin host, never by the connection.
+
+**No Go file names a product** (PA20). `internal/modularity/producttokens_test.go` cuts every
+identifier and string literal of every non-test Go file under `cmd/` and `internal/` into words and
+fails on a product's name, an OPNsense convention, or a literal beginning `/api/`. Its allow-list,
+each entry with its reason:
+
+| Where | May hold | Why |
+|---|---|---|
+| `internal/opnsense/` | `/api/`, `interfaces_info` | the firewall client: discovery and the clock read OPNsense's own endpoints, which every installation has whatever its plugins |
+| `internal/collect/discovery/` | `/api/`, `interfaces_info` | discovery reads the interfaces and the firewall's own addresses, the core's view of the firewall that no plugin owns |
+| `internal/broker/` | `/api/` | the firewall data broker: it serves plugins' calls by path, checks a path is an OPNsense API path, and names the core's own reads |
+| `internal/push/protocols/netflow/` | `netflow`, `ipfix` | the NetFlow v9 / IPFIX decoder: the protocol's own name, decoded in Go for speed (PA7), naming no OPNsense concept |
+| `internal/push/ipfixregistry/` | `netflow`, `ipfix` | the IANA IPFIX information-element registry the decoder reads: the protocol's own name |
+| `internal/push/protocols/protocols_gen.go` | `netflow` | the generated discovery of the push protocols imports each protocol's directory, the NetFlow decoder's among them, by its path |
+| `internal/web/surfaces/settings/verify.go` | `interfaces_info` | the credential check calls discovery's first endpoint once, the one every installation answers whatever its plugins |
+| `cmd/opnview/measurecmd.go` | `interfaces_info` | the cost-measuring command lists the interface names through discovery's endpoint, as discovery reads them |
+| `internal/web/surfaces/` | `/api/` | opnview's own HTTP API routes, which share the `/api/` prefix with OPNsense's: none is a firewall path |
+| `internal/web/webtest/` | `/api/` | the web test support calls opnview's own HTTP API routes |
+| `internal/widget/service.go` | `/api/` | the route prefix of opnview's own widget API |
+| `cmd/opnview/review.go` | `/api/` | the review command reads opnview's own widget API |
+
+The token list may only grow; an entry is added to the allow-list, and here, with its reason.
 
 ## Map of the tree
 

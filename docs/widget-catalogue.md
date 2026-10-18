@@ -473,7 +473,7 @@ question worth answering. Everything it needs beyond that is data.
 ## How to read a preset
 
 - **Type** — the `snake_case` identifier a dashboard file puts in `widget.type`,
-  an API path segment names it by, and an export writes back. **This document is
+  an API path component names it by, and an export writes back. **This document is
   the vocabulary.** Stable, unique, and unchanged by this restructure.
 - **Shape** — which of the twelve draws it. A preset names exactly one.
 - **Question** — the question a reader is asking when they place it.

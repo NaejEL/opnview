@@ -938,36 +938,6 @@ func Helpers(vm *goja.Runtime) *goja.Object {
 		number, found := ianaprotocol.Number(call.Argument(0).String())
 		return optional(number, found)
 	})
-
-	leases := vm.NewObject()
-	set(leases, "decodeLease", func(call goja.FunctionCall) goja.Value {
-		record, ok := decodeLease(objectArgument(call, 0))
-		if !ok {
-			return goja.Null()
-		}
-		return vm.ToValue(record)
-	})
-	set(leases, "normaliseMAC", func(call goja.FunctionCall) goja.Value {
-		return pointer(decode.MACPointer(call.Argument(0).String()))
-	})
-	_ = root.Set("dhcp_lease", leases)
-
-	lookups := vm.NewObject()
-	set(lookups, "normaliseAction", func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(normaliseAction(call.Argument(0).String()))
-	})
-	_ = root.Set("dns_lookup", lookups)
-
-	samples := vm.NewObject()
-	set(samples, "interfaceEndpointKey", func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(vocab.InterfaceEndpointKey(call.Argument(0).String(), call.Argument(1).String()))
-	})
-	set(samples, "interfaceEndpointPairKey", func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(vocab.InterfaceEndpointPairKey(call.Argument(0).String(), call.Argument(1).String(),
-			call.Argument(2).String()))
-	})
-	_ = samples.Set("sampleSeconds", vocab.SampleSeconds)
-	_ = root.Set("measurement_sample", samples)
 	return root
 }
 

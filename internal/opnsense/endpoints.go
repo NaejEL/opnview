@@ -80,38 +80,14 @@ type Endpoint struct {
 // The upstream citations. Each is a URL the survey's own tables or References
 // section carries; they are grouped so one correction changes one place.
 const (
-	docsDiagnostics = "https://docs.opnsense.org/development/api/core/diagnostics.html"
-	docsFirewall    = "https://docs.opnsense.org/development/api/core/firewall.html"
-	docsInterfaces  = "https://docs.opnsense.org/development/api/core/interfaces.html"
-	docsKea         = "https://docs.opnsense.org/manual/kea.html"
-	docsDnsmasq     = "https://docs.opnsense.org/manual/dnsmasq.html"
+	docsFirewall   = "https://docs.opnsense.org/development/api/core/firewall.html"
+	docsInterfaces = "https://docs.opnsense.org/development/api/core/interfaces.html"
 
-	srcFirewallLog  = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/FirewallController.php"
-	srcFilterRules  = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Firewall/Api/FilterController.php"
-	srcInterfaces   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/OverviewController.php"
-	srcIfaceNames   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/InterfaceController.php"
-	srcIDSService   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/IDS/Api/ServiceController.php"
-	srcIDSSettings  = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/IDS/Api/SettingsController.php"
-	srcAlertLogs    = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/suricata/listAlertLogs.py"
-	srcNetflow      = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/NetflowController.php"
-	srcKeaLeases    = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Kea/Api/Leases4Controller.php"
-	srcKeaService   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Kea/Api/ServiceController.php"
-	srcKeaDHCPv4    = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Kea/Api/Dhcpv4Controller.php"
-	srcDnsmasqLease = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Dnsmasq/Api/LeasesController.php"
-	srcDnsmasqSvc   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Dnsmasq/Api/ServiceController.php"
-	srcDnsmasqModel = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Dnsmasq/Dnsmasq.xml"
-	srcUnboundOver  = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/OverviewController.php"
-	srcUnboundSvc   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/ServiceController.php"
-	srcUnboundModel = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/Unbound.xml"
-	srcGateways     = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Routes/Api/GatewayController.php"
-	docsRoutes      = "https://docs.opnsense.org/development/api/core/routes.html"
-	srcSystem       = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php"
-	srcTraffic      = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/TrafficController.php"
-	// srcISCService is the end-of-life ISC DHCP plugin's service controller, in the plugins
-	// repository at the tag matching the core: its status action is ApiMutableServiceControllerBase's.
-
-	// The resolver's cache and local data: the controller, the configd actions it runs,
-	// the script those actions run, and the ACL page that admits the paths.
+	srcFirewallLog = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/FirewallController.php"
+	srcFilterRules = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Firewall/Api/FilterController.php"
+	srcInterfaces  = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/OverviewController.php"
+	srcIfaceNames  = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/InterfaceController.php"
+	srcSystem      = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php"
 	// The processor stream: the controller, the configd action, its script and the ACL
 	// page that admits the path.
 	srcCPUUsage      = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/CpuUsageController.php"
@@ -125,16 +101,9 @@ const (
 // wherever the two disagree — it says so itself.
 const (
 	sectionSource1   = "Data source 1 — Filter logs"
-	sectionSource2   = "Data source 2 — Suricata `eve.json`"
-	sectionSource3   = "Data source 3 — NetFlow / Insight"
-	sectionSource4   = "Data source 4 — DHCP leases"
-	sectionSource5   = "Data source 5 — Resolver DNS lookups"
 	sectionDiscovery = "Runtime discovery"
 	sectionVerified  = "Verified against a live firewall, 2026-09-27"
-	sectionGateway   = "Gateway status, read from source for step 5"
-	sectionSwap      = "Swap, read from source for step 5"
 	sectionVersions  = "Firewall versions, read from source for A19 (broker amendment)"
-	sectionCache     = "Resolver cache and local data, read from source for the resolver-cache cycle"
 	sectionCPU       = "Processor stream, read from source for the resolver-cache cycle"
 )
 
@@ -175,21 +144,6 @@ var (
 		Note: "limit defaults to 1000; limit=0 is coerced back to 1000. An empty array does not distinguish disabled logging from no matching traffic.",
 	}
 
-	// ARPTable is a client-identity source the survey's inferred text did not
-	// name. On a firewall whose DHCP is unreadable it is the only identity there
-	// is.
-	ARPTable = Endpoint{
-		Path: "/api/diagnostics/interface/get_arp", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: srcIfaceNames,
-		Note: "One row per neighbour with mac, ip, intf, intf_description, manufacturer, expired, permanent.",
-	}
-	// NDPTable is the IPv6 equivalent of ARPTable.
-	NDPTable = Endpoint{
-		Path: "/api/diagnostics/interface/get_ndp", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: srcIfaceNames,
-		Note: "The IPv6 neighbour table, same shape as get_arp.",
-	}
-
 	// SystemTime carries the uptime and the load averages.
 	SystemTime = Endpoint{
 		Path: "/api/diagnostics/system/systemTime", Method: http.MethodGet,
@@ -227,7 +181,7 @@ var (
 // reach the transport.
 func Registry() []Endpoint {
 	return []Endpoint{
-		InterfacesInfo, InterfaceNames, SearchRule, FirewallLog, ARPTable, NDPTable, SystemTime,
+		InterfacesInfo, InterfaceNames, SearchRule, FirewallLog, SystemTime,
 		SystemInformation, CPUUsageStream,
 	}
 }

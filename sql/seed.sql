@@ -2496,17 +2496,21 @@ WITH RECURSIVE counter (s) AS (
     SELECT s + 1 FROM counter WHERE s < 200
 )
 INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
-                                unit, value, sampled_at)
+                                unit, value, sampled_at, interface_device,
+                                local_address, peer_address)
 SELECT CAST(NULL AS BIGINT), 'firewall', '', 'uptime_seconds', 'second', 3600.0 * s,
-       :now - (s * 300) - ((s % 6) * 8640000)
+       :now - (s * 300) - ((s % 6) * 8640000),
+       NULL, NULL, NULL
 FROM counter
 UNION ALL
 SELECT NULL, 'firewall', '', 'memory_use_ratio', 'ratio', ((s % 90) + 5) / 100.0,
-       :now - (s * 300) - ((s % 6) * 8640000)
+       :now - (s * 300) - ((s % 6) * 8640000),
+       NULL, NULL, NULL
 FROM counter
 UNION ALL
 SELECT NULL, 'firewall', format('sensor-%s', s % 3), 'temperature_celsius', 'celsius',
-       30.0 + (s % 20), :now - (s * 300) - ((s % 6) * 8640000)
+       30.0 + (s % 20), :now - (s * 300) - ((s % 6) * 8640000),
+       NULL, NULL, NULL
 FROM counter
 UNION ALL
 -- An interface's byte counters are cumulative, so each value grows with its
@@ -2516,13 +2520,15 @@ UNION ALL
 -- empty answer rather than a query.
 SELECT NULL, 'interface', i.device, 'bytes_in', 'byte',
        1000.0 * (100000000 - (s * 300) - ((s % 6) * 8640000)),
-       :now - (s * 300) - ((s % 6) * 8640000)
+       :now - (s * 300) - ((s % 6) * 8640000),
+       NULL, NULL, NULL
 FROM counter
 JOIN interface AS i ON i.id = ((s - 1) % :interfaces) + 1
 UNION ALL
 SELECT NULL, 'interface', i.device, 'bytes_out', 'byte',
        400.0 * (100000000 - (s * 300) - ((s % 6) * 8640000)),
-       :now - (s * 300) - ((s % 6) * 8640000)
+       :now - (s * 300) - ((s % 6) * 8640000),
+       NULL, NULL, NULL
 FROM counter
 JOIN interface AS i ON i.id = ((s - 1) % :interfaces) + 1
 UNION ALL
@@ -2535,22 +2541,28 @@ SELECT
     || ' ' ||
     CASE WHEN s % :ipv6_every = 0 THEN peer.address_v6 ELSE peer.address_v4 END,
     'cumulative_bytes_in', 'byte', 100.0 * s,
-    :now - (s * 300) - ((s % 6) * 8640000)
+    :now - (s * 300) - ((s % 6) * 8640000),
+    format('device-%s', ((s - 1) % :interfaces) + 1),
+    CASE WHEN s % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END,
+    CASE WHEN s % :ipv6_every = 0 THEN peer.address_v6 ELSE peer.address_v4 END
 FROM counter
 JOIN synth_address AS local ON local.slot = ((s - 1) % :clients) + 1
 JOIN synth_address AS peer ON peer.slot = 1000000 + s
 UNION ALL
 SELECT NULL, 'interface', i.device, 'errors_in', 'packet', 1.0 * (s % 4),
-       :now - (s * 300) - ((s % 6) * 8640000)
+       :now - (s * 300) - ((s % 6) * 8640000),
+       NULL, NULL, NULL
 FROM counter
 JOIN interface AS i ON i.id = ((s - 1) % :interfaces) + 1
 UNION ALL
 SELECT NULL, 'gateway', format('example-gateway-%s', s % 2), 'delay_milliseconds',
-       'millisecond', 1.0 + (s % 40) / 10.0, :now - (s * 300) - ((s % 6) * 8640000)
+       'millisecond', 1.0 + (s % 40) / 10.0, :now - (s * 300) - ((s % 6) * 8640000),
+       NULL, NULL, NULL
 FROM counter
 UNION ALL
 SELECT NULL, 'gateway', format('example-gateway-%s', s % 2), 'loss_ratio',
-       'ratio', (s % 5) / 100.0, :now - (s * 300) - ((s % 6) * 8640000)
+       'ratio', (s % 5) / 100.0, :now - (s * 300) - ((s % 6) * 8640000),
+       NULL, NULL, NULL
 FROM counter
 UNION ALL
 -- The totals of one local address over all its peers, the only place traffic/top
@@ -2562,13 +2574,17 @@ SELECT
     || ' ' ||
     CASE WHEN s % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END,
     'rate_bits_out', 'bit_per_second', 800.0 * s,
-    :now - (s * 300) - ((s % 6) * 8640000)
+    :now - (s * 300) - ((s % 6) * 8640000),
+    format('device-%s', ((s - 1) % :interfaces) + 1),
+    CASE WHEN s % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END,
+    NULL
 FROM counter
 JOIN synth_address AS local ON local.slot = ((s - 1) % :clients) + 1
 UNION ALL
 -- One swap device, its size and its use, in bytes.
 SELECT NULL, 'firewall', 'example-swap-device', 'swap_used_bytes', 'byte',
-       1048576.0 * (s % 64), :now - (s * 300) - ((s % 6) * 8640000)
+       1048576.0 * (s % 64), :now - (s * 300) - ((s % 6) * 8640000),
+       NULL, NULL, NULL
 FROM counter;
 
 -- ---------------------------------------------------------------------------

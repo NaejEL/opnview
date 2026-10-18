@@ -26,21 +26,21 @@ func arrangeMeasurementCollection(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
 	harness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	harness.Fake.AnswerFixture(collecttest.NetflowIsEnabled, "netflow_is_enabled_local.json")
-	harness.Fake.AnswerFixture(collecttest.TrafficTop, "traffic_top.json")
-	harness.Fake.AnswerFixture(collecttest.TrafficInterface, "traffic_interface.json")
-	harness.Fake.AnswerFixture(collecttest.SystemResources, "system_resources.json")
-	harness.Fake.AnswerFixture(collecttest.SystemTemperature, "system_temperature.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("insight", "netflow_is_enabled"), "netflow_is_enabled_local.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("insight", "traffic_top"), "traffic_top.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("insight", "traffic_interface"), "traffic_interface.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("insight", "system_resources"), "system_resources.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("insight", "system_temperature"), "system_temperature.json")
 	harness.Fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
-	harness.Fake.AnswerFixture(collecttest.SystemDisk, "system_disk.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("insight", "system_disk"), "system_disk.json")
 	// The processor figure's source since the resolver-cache cycle: a stream that never ends.
 	harness.Fake.AnswerStreamFixture(opnsense.CPUUsageStream, "cpu_usage_stream.json")
-	harness.Fake.AnswerFixture(collecttest.GatewayStatus, "gateway_status.json")
-	harness.Fake.AnswerFixture(collecttest.SystemSwap, "system_swap.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("insight", "gateway_status"), "gateway_status.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("insight", "system_swap"), "system_swap.json")
 	if err := harness.Collector.ProbeKind(context.Background(), "measurement_sample"); err != nil {
 		t.Fatalf("probing the volume source: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, "measurement_sample"); key != collecttest.ProviderInsight {
+	if key := harness.ActiveKeyOf(t, "measurement_sample"); key != "insight" {
 		t.Fatalf("the volume kind activated %q", key)
 	}
 	return harness
@@ -73,7 +73,7 @@ func TestThePerPairSamplerSendsInterfaceNamesAndNeverADeviceName(t *testing.T) {
 		}
 	}
 
-	requests := harness.Fake.RequestsTo(collecttest.TrafficTop)
+	requests := harness.Fake.RequestsTo(collecttest.Declared("insight", "traffic_top"))
 	if len(requests) == 0 {
 		t.Fatal("the per-pair endpoint was never requested")
 	}
@@ -120,11 +120,11 @@ func TestASamplerRefusalIsRecordedRatherThanLookingLikeSilence(t *testing.T) {
 	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	state, _, _ := harness.AvailabilityOf(t, "measurement_sample", collecttest.ProviderInsight)
+	state, _, _ := harness.AvailabilityOf(t, "measurement_sample", "insight")
 	if state != vocab.StateUnavailable {
 		t.Errorf("a refused sample left the volume source reading %q", state)
 	}
-	detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight)
+	detail := harness.DetailOf(t, "measurement_sample", "insight")
 	if !strings.Contains(detail, "device name") {
 		t.Errorf("the detail is %q, which does not say why the sample was refused", detail)
 	}
@@ -247,9 +247,9 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 	// An empty array: the endpoint answered and reported no sensor, which is a fact about
 	// the hardware. Written here rather than as a fixture because the empty value is the
 	// whole of what it says.
-	harness.Fake.AnswerJSON(collecttest.SystemTemperature, []any{})
+	harness.Fake.AnswerJSON(collecttest.Declared("insight", "system_temperature"), []any{})
 
-	before := harness.AvailabilityInstant(t, "measurement_sample", collecttest.ProviderInsight)
+	before := harness.AvailabilityInstant(t, "measurement_sample", "insight")
 	// The clock is advanced so "the row moved" is an observable fact rather than an
 	// identical rewrite: a state recorded at the same instant is indistinguishable from one
 	// that was never re-examined.
@@ -264,11 +264,11 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 		t.Errorf("%d temperature readings were written for a firewall that reports no sensor",
 			temperatures)
 	}
-	after := harness.AvailabilityInstant(t, "measurement_sample", collecttest.ProviderInsight)
+	after := harness.AvailabilityInstant(t, "measurement_sample", "insight")
 	if after == before {
 		t.Error("the availability row did not move, so the absent sensor was recorded nowhere")
 	}
-	detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight)
+	detail := harness.DetailOf(t, "measurement_sample", "insight")
 	if !strings.Contains(detail, "temperature") ||
 		!strings.Contains(detail, "not written as zeroes") {
 		t.Errorf("the detail is %q, which does not record that the temperature reading did not "+
@@ -300,7 +300,7 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 	// Every telemetry endpoint answers with a well-formed body whose keys are none of the
 	// ones the collector tries.
 	for _, endpoint := range []opnsense.Endpoint{
-		collecttest.SystemResources, opnsense.SystemTime,
+		collecttest.Declared("insight", "system_resources"), opnsense.SystemTime,
 	} {
 		harness.Fake.AnswerJSON(endpoint, map[string]any{
 			"a_key_no_candidate_list_names": 1, "another": "two",
@@ -311,9 +311,9 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 	harness.Fake.AnswerStream(opnsense.CPUUsageStream, [][]byte{
 		[]byte(`{"a_key_no_candidate_list_names":1}`), []byte(`{"another":"two"}`),
 	}, true)
-	harness.Fake.AnswerJSON(collecttest.SystemDisk,
+	harness.Fake.AnswerJSON(collecttest.Declared("insight", "system_disk"),
 		map[string]any{"devices": []any{map[string]any{"a_key_no_candidate_list_names": 1}}})
-	harness.Fake.AnswerJSON(collecttest.TrafficInterface, map[string]any{
+	harness.Fake.AnswerJSON(collecttest.Declared("insight", "traffic_interface"), map[string]any{
 		"example_if_a": map[string]any{"a_key_no_candidate_list_names": 1},
 	})
 
@@ -331,7 +331,7 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 				"can read", stored, measure)
 		}
 	}
-	detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight)
+	detail := harness.DetailOf(t, "measurement_sample", "insight")
 	for _, phrase := range []string{"memory", "processor", "uptime", "disk", "interface counters"} {
 		if !strings.Contains(detail, phrase) {
 			t.Errorf("the detail is %q, which does not name the %s reading as absent", detail, phrase)
@@ -345,12 +345,12 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 func TestAnEmptyTrafficSnapshotIsNotReportedAsAnAbsenceOfTraffic(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.Fake.AnswerJSON(collecttest.TrafficTop, map[string]any{})
+	harness.Fake.AnswerJSON(collecttest.Declared("insight", "traffic_top"), map[string]any{})
 
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight)
+	detail := harness.DetailOf(t, "measurement_sample", "insight")
 	if !strings.Contains(detail, "not an absence of traffic") ||
 		!strings.Contains(detail, "wrong interface argument") {
 		t.Errorf("the detail is %q, which does not say that an empty snapshot is not an "+

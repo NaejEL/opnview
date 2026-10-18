@@ -43,7 +43,7 @@
   var DIRECTIONS = ["in", "out", "inbound", "outbound"];
   var DIRECTION_STATES = ["measured", "in_progress", "awaiting_export", "missing", "export_gap", "not_exported_when_refused",
     "forwarding_export_unsettled", "ingress_not_captured", "parent_copies_only", "interface_not_exported",
-    "interface_not_captured", "capture_configuration_unknown"];
+    "interface_not_captured", "capture_configuration_unknown", "ambiguous_records", "not_expected_when_refused"];
 
   /* How many series classes the stylesheet carries. */
   var SERIES_CLASSES = 6;

@@ -539,10 +539,10 @@ func insertReading(t *testing.T, database *store.Store, kind vocab.SubjectKind, 
 	if kind == vocab.SubjectInterfaceEndpointPair || kind == vocab.SubjectInterfaceEndpoint {
 		provider = &providerID
 	}
-	if err := database.InsertMeasurementSample(context.Background(), vocab.MeasurementSample{
+	if err := database.InsertMeasurementSample(context.Background(), withParts(vocab.MeasurementSample{
 		ProviderID: provider, SubjectKind: kind, SubjectKey: key, Measure: measure, Unit: unit,
 		Value: value, SampledAt: at,
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("writing a reading: %v", err)
 	}
 }
@@ -570,14 +570,14 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 	peers := []string{storetest.Outside(1, leased.V6), storetest.Outside(2, leased.V6)}
 
 	endpoint := func(device, local string, at int64, in float64, out *float64) {
-		key := vocab.InterfaceEndpointKey(device, local)
+		key := endpointKey(device, local)
 		insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
 		if out != nil {
 			insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsOut, vocab.UnitBitPerSecond, *out, at)
 		}
 	}
 	pair := func(device, local, peer string, at int64, in float64) {
-		insertReading(t, network.DB, vocab.SubjectInterfaceEndpointPair, vocab.InterfaceEndpointPairKey(device, local, peer),
+		insertReading(t, network.DB, vocab.SubjectInterfaceEndpointPair, pairKey(device, local, peer),
 			vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
 	}
 	figure := func(value float64) *float64 { return &value }
@@ -694,14 +694,14 @@ func TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero(t *testi
 	network := storetest.NewNetwork(t, 1, 2)
 	ctx := context.Background()
 	client := network.Clients[0]
-	key := vocab.InterfaceEndpointKey(client.Device, client.Address)
+	key := endpointKey(client.Device, client.Address)
 	for _, at := range []int64{100, 400} {
 		insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureCumulativeBytesIn, vocab.UnitByte, 300, network.Now+at)
 		insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureCumulativeBytesOut, vocab.UnitByte, 200, network.Now+at)
 	}
 	// A per-peer reading is not counted again: the totals already hold it.
 	insertReading(t, network.DB, vocab.SubjectInterfaceEndpointPair,
-		vocab.InterfaceEndpointPairKey(client.Device, client.Address, storetest.Outside(1, client.V6)),
+		pairKey(client.Device, client.Address, storetest.Outside(1, client.V6)),
 		vocab.MeasureCumulativeBytesIn, vocab.UnitByte, 300, network.Now+100)
 	sampled, state, err := network.DB.ReadSampledBytes(ctx, network.Now, network.Now+1000)
 	if err != nil {

@@ -724,10 +724,11 @@ func TestARendererRegistersOnlyWhatItsURLOwns(t *testing.T) {
 	}
 }
 
-// TestAFrontOnlyWidgetReadsOnlyTheFourReadRoutes (A2): the reads a front-only widget may have the
-// core perform are the four read routes as written, and a dot component or an escape that a browser
-// would resolve to another route is refused.
-func TestAFrontOnlyWidgetReadsOnlyTheFourReadRoutes(t *testing.T) {
+// TestAFrontOnlyWidgetReadsOnlyTheThreeReadRoutes (A2): the reads a front-only widget may have the
+// core perform are the three read routes as written -- the rolling strip is the live_strip widget, read
+// through the first, and its old route is no read route -- and a dot component or an escape that a
+// browser would resolve to another route is refused.
+func TestAFrontOnlyWidgetReadsOnlyTheThreeReadRoutes(t *testing.T) {
 	t.Parallel()
 	page := frontjs.New(t, frontjs.Options{})
 	for path, want := range map[string]bool{
@@ -735,7 +736,8 @@ func TestAFrontOnlyWidgetReadsOnlyTheFourReadRoutes(t *testing.T) {
 		"/api/datasets": true,
 		"/api/datasets/dns/query?parameters=%7B%7D": true,
 		"/api/datasets/example_peers.peer/query":    true,
-		"/api/live/strip":                           true,
+		"/api/widget/live_strip":                    true,
+		"/api/live/strip":                           false,
 		"/api/datasets/../query":                    false,
 		"/api/datasets/./query":                     false,
 		"/api/datasets/dns/../../session/query":     false,

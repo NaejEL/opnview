@@ -1,6 +1,7 @@
 package widget
 
 import (
+	"context"
 	"io/fs"
 	"sync"
 )
@@ -58,4 +59,37 @@ func defaultSources() []Source {
 		return nil
 	}
 	return list()
+}
+
+var builtinLiveCadence = struct {
+	sync.Mutex
+	cadence func(ctx context.Context, reader SettingReader) int64
+}{}
+
+// SettingReader reads one setting row, as a live cadence setting is read.
+type SettingReader interface {
+	Setting(ctx context.Context, key string) (string, bool, error)
+}
+
+// RegisterBuiltinLiveCadence registers how the built-in plugins' finest live cadence is read: the plugin
+// loader registers it from its own init(), as it registers the built-in widget sources, so a service
+// built with no Options.LiveCadence reads the built-ins' live passes.
+func RegisterBuiltinLiveCadence(cadence func(ctx context.Context, reader SettingReader) int64) {
+	builtinLiveCadence.Lock()
+	defer builtinLiveCadence.Unlock()
+	builtinLiveCadence.cadence = cadence
+}
+
+// defaultLiveCadence is the built-in plugins' finest live cadence over a store, or none when no loader
+// registered one.
+func defaultLiveCadence(database SettingReader) func(ctx context.Context) int64 {
+	builtinLiveCadence.Lock()
+	cadence := builtinLiveCadence.cadence
+	builtinLiveCadence.Unlock()
+	return func(ctx context.Context) int64 {
+		if cadence == nil {
+			return 0
+		}
+		return cadence(ctx, database)
+	}
 }

@@ -10,6 +10,11 @@ function has(object, key) {
   return Object.prototype.hasOwnProperty.call(object, key);
 }
 
+// eventCount is a count of security events, in their own measure.
+function eventCount(value) {
+  return { measure: "security_events", lower_bound: true, value: value };
+}
+
 // numeric orders interface ids as numbers.
 function numeric(a, b) {
   return a - b;
@@ -102,9 +107,15 @@ exports.widget = {
     var unplaced = bins.list();
     total = host.figures.volume(host.figures.add(total, bins.total()));
 
-    var securityBins = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row,
-      reasons.no_coordinates]);
-    var securityEvents = host.figures.count(0);
+    // The security engine's half counts EVENTS, in their own measure: an event is not a connection of
+    // any volume measure, so it is never a Volume, never logged figures, and an answer in a declared
+    // measure serves it beside that measure's figures.
+    var securityReasons = [reasons.miss, reasons.pending, reasons.no_row, reasons.no_coordinates];
+    var securityBins = {};
+    securityReasons.forEach(function (reason) {
+      securityBins[reason] = { reason: reason, addresses: 0, events: eventCount(0) };
+    });
+    var securityEvents = eventCount(0);
     if (host.params.has("engines", "security_engine")) {
       var events = {};
       var interfaces = {};
@@ -135,7 +146,8 @@ exports.widget = {
         var geo = host.services.geolocation(address);
         var reason = host.peers.placement(geo);
         if (reason !== "") {
-          securityBins.add(reason, host.figures.withMeasure({ blocked_connections: count }, host.figures.zero()), 1);
+          securityBins[reason].addresses += 1;
+          securityBins[reason].events.value += count;
           return;
         }
         if (count < minimum) {
@@ -147,7 +159,7 @@ exports.widget = {
           engine: "security_engine",
           geo: geo,
           size: count,
-          events: { measure: "security_events", lower_bound: true, value: count },
+          events: eventCount(count),
           interfaces: interfaces[address].sort(numeric)
         });
       });
@@ -172,7 +184,7 @@ exports.widget = {
         unplaced: unplaced,
         total: total,
         security_events: securityEvents,
-        security_unplaced: securityBins.list(),
+        security_unplaced: securityReasons.map(function (reason) { return securityBins[reason]; }),
         dns_blocked_lookups: { measure: "dns_lookups", lower_bound: true, value: dns },
         total_refusals: { measure: "refusals", lower_bound: true, value: refusals }
       },

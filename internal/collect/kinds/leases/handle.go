@@ -6,7 +6,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/core"
 )
 
-// LeaseCoordinator is the part of the collector this package holds: the coordinator of the dhcp_lease kind, and of the neighbour table read beside it.
+// LeaseCoordinator is the part of the collector this package holds: the coordinator of the dhcp_lease kind.
 // internal/collect composes it into its Collector, so its methods are the Collector's.
 type LeaseCoordinator struct{ *core.Collector }
 

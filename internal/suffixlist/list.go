@@ -40,7 +40,7 @@ const (
 )
 
 // ErrMalformed is a download that does not hold the list.
-var ErrMalformed = errors.New("suffixlist: the file is not the Public Suffix List")
+var ErrMalformed = errors.New("suffixlist: the file is not a suffix list in the format the list publishes")
 
 // List is a parsed copy of the list.
 type List struct {

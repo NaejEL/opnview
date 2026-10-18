@@ -125,6 +125,8 @@ func readingsOf(answer provider.Answer, providerID int64) ([]vocab.MeasurementSa
 	for _, record := range provider.Records(answer, "readings") {
 		reading := vocab.MeasurementSample{
 			SubjectKind: vocab.SubjectKind(provider.Text(record, "subject_kind")), SubjectKey: provider.Text(record, "subject_key"),
+			InterfaceDevice: provider.TextPointer(record, "interface_device"),
+			LocalAddress:    provider.TextPointer(record, "local_address"), PeerAddress: provider.TextPointer(record, "peer_address"),
 			Measure: vocab.Measure(provider.Text(record, "measure")), Unit: vocab.Unit(provider.Text(record, "unit")),
 			Value: provider.Number(record, "value"), SampledAt: provider.Integer(record, "sampled_at"),
 		}

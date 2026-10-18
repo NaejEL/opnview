@@ -43,14 +43,14 @@ func percent(value float64) *float64 { return &value }
 
 func TestLiveEndpointsVerifiedTheMeasurementPollsEachCadenceThroughTheBroker(t *testing.T) {
 	fake := providertest.NewFirewall(t)
-	fake.Answer(collecttest.TrafficInterface, 200, []byte(`{"interfaces": {}}`))
+	fake.Answer(collecttest.Declared("insight", "traffic_interface"), 200, []byte(`{"interfaces": {}}`))
 	fake.AnswerStream(opnsense.CPUUsageStream, [][]byte{[]byte(`{"total": 10, "idle": 90}`),
 		[]byte(`{"total": 20, "idle": 80}`)}, true)
 	gate := broker.New(providertest.NewClient(t, fake), nil, broker.Options{})
 	gate.Scheduler().SetSettings(schedule.Settings{MaxInFlight: 8, MaxPerSecond: 1e6})
 	defer gate.Close()
 	clock := &fakeClock{now: time.Date(2026, time.October, 11, 12, 0, 0, 0, time.UTC)}
-	report, err := Measure(context.Background(), Options{Broker: gate, Endpoint: collecttest.TrafficInterface,
+	report, err := Measure(context.Background(), Options{Broker: gate, Endpoint: collecttest.Declared("insight", "traffic_interface"),
 		Idle: time.Minute, Duration: time.Minute, Cadences: []time.Duration{30 * time.Second, 10 * time.Second},
 		Clock: clock, StreamPoll: 5 * time.Millisecond})
 	if err != nil {
@@ -66,7 +66,7 @@ func TestLiveEndpointsVerifiedTheMeasurementPollsEachCadenceThroughTheBroker(t *
 		t.Errorf("a minute at 10 s polled %d times and at 30 s %d times, want 6 and 2", report.Cadences[0].Polls,
 			report.Cadences[1].Polls)
 	}
-	if got := len(fake.RequestsTo(collecttest.TrafficInterface)); got != 8 {
+	if got := len(fake.RequestsTo(collecttest.Declared("insight", "traffic_interface"))); got != 8 {
 		t.Errorf("the firewall saw %d polls, want every poll to reach it: 8", got)
 	}
 	for _, phase := range report.Cadences {

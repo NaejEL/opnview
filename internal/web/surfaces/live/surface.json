@@ -1,4 +1,4 @@
 {
   "name": "live",
-  "description": "Live figures in JSON: the rolling strip and the live-rate settings, both renewing or governing the live-interest lease."
+  "description": "The live-rate settings in JSON: the live-interest lease, the fine-sample retention and the live cadence of every live pass."
 }

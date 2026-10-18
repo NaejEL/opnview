@@ -1,0 +1,12 @@
+{
+  "api_version": 2,
+  "name": "example_domains",
+  "version": "1.0.0",
+  "display_name": "Example suffixes",
+  "description": "Groups site names by a list of suffixes downloaded from lists.example.org.",
+  "script": "example_domains.js",
+  "destinations": ["https://lists.example.org"],
+  "providers": [
+    { "kind": "registrable_domain", "display_name": "Example suffixes", "read_strategy": "full_reread" }
+  ]
+}

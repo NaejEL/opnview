@@ -327,7 +327,7 @@ func queryRefusal(widgetType, what string, err error) *params.Refusal {
 		sqldb.QueryMultipleStatements: params.RefusalQueryMultipleStatements,
 		sqldb.QueryNotReadOnly:        params.RefusalQueryNotReadOnly,
 		sqldb.QueryDoesNotPlan:        params.RefusalQueryDoesNotPlan,
-		sqldb.QueryUnboundParameter:   params.RefusalUnknownQueryParameter,
+		sqldb.QueryParameterNotBound:   params.RefusalUnknownQueryParameter,
 		sqldb.QueryEmpty:              params.RefusalQueryMissing,
 	}[problem.Kind]
 	return params.Refuse(widgetType, code, "%s: %s", what, problem.Detail)

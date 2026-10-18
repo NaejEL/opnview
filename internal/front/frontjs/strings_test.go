@@ -188,13 +188,12 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 		"column.scope.":     {"north_south", "east_west", "this_firewall"},
 		"reason.":           {"miss", "pending", "no_row", "no_coordinates"},
 		"column.direction.": {"in", "out", "inbound", "outbound"},
-		// The per-direction states the front labels (front/core/kit.js, directionState): the twelve the netflow
-		// measure declared before the live validation of 17 October 2026. Its two later states, ambiguous_records
-		// and not_expected_when_refused, have no catalogue string yet: labelling them is interface work, deferred
-		// to factory-ui-builder (Lot 3 hand-back).
+		// The per-direction states the front labels (front/core/kit.js, directionState): the fourteen the netflow
+		// measure declares.
 		"column.direction_state.": {"measured", "in_progress", "awaiting_export", "missing", "export_gap",
 			"not_exported_when_refused", "forwarding_export_unsettled", "ingress_not_captured", "parent_copies_only",
-			"interface_not_exported", "interface_not_captured", "capture_configuration_unknown"},
+			"interface_not_exported", "interface_not_captured", "capture_configuration_unknown", "ambiguous_records",
+			"not_expected_when_refused"},
 		"column.engine.": {"firewall_rule", "security_engine", "dns_advertising_list", "dns_threat_list",
 			"dns_unassigned_list", "dns_list_not_recorded"},
 		"scope.all.":                 scopeKinds,
@@ -205,8 +204,7 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 		// The collection's setting cards (internal/web/surfaces/collection, settingCardSpecs).
 		"collection.card.": {"pairing", "lease_backends", "attribution", "storage"},
 		"collection.kind.": {"firewall_log", "security_event", "dhcp_lease", "dns_lookup", "flow_volume",
-			"ip_geolocation", "measurement_sample", "registrable_domain", "resolver_cache", "resolver_local_data",
-			"flow_record"},
+			"ip_geolocation", "measurement_sample", "registrable_domain", "resolver_cache", "resolver_local_data"},
 		"collection.setting.": {config.KeyRetentionSeconds, config.KeyAggregateMode, config.KeyLegPairingWindow,
 			config.KeyLeaseBackendFailurePassLimit, config.KeyAttributionMaxDelay, config.KeyCacheAnswerDelay},
 		// Every condition a route the views call can answer (docs/widget-api.md).
@@ -223,26 +221,19 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 			"duplicate_client", "invalid_owner_assigned_at", "unknown_owner", "purpose_not_in_vocabulary",
 			"unknown_blocklist", "palette_unknown", "mode_unknown", "language_unknown",
 			"revision_conflict", "unknown_dashboard", "nothing_to_undo", "form_invalid"},
-		"gap_reason.": unquote(schemaVocabulary(t, "collection_gap", "reason")),
-		"opnsense_page.": {"ids_administration", "kea_dhcpv4", "dnsmasq_dhcp_ranges", "unbound_general",
-			"unbound_reporting", "netflow"},
-		"outcome.":             unquote(schemaVocabulary(t, "source_availability", "outcome")),
-		"parts.origin.":        {front.OriginBuiltin, front.OriginDataDirectory},
-		"parts.part.":          {front.PartTheme, front.PartLanguage, front.PartWidget, front.PartWidgetStrings},
-		"parts.state.":         {"loaded", "refused"},
-		"people.identity.":     unquote(schemaVocabulary(t, "client", "identity_kind")),
-		"people.not_restored.": {owners.NotRestoredAssignedElsewhere, owners.NotRestoredClientGone},
-		"settings.live.":       config.LiveSettingKeys(),
-		// The front's NetFlow settings card (front/views/settings.js) reads /api/netflow/settings, which Lot 2
-		// removed: the NetFlow settings are the netflow plugin's, drawn by the generic plugin form. The card
-		// draws nothing until factory-ui-builder removes it; its two keys are still composed.
-		"settings.netflow.":       {"netflow_join_tolerance_seconds", "retention_flow_record_seconds"},
+		"gap_reason.":             unquote(schemaVocabulary(t, "collection_gap", "reason")),
+		"outcome.":                unquote(schemaVocabulary(t, "source_availability", "outcome")),
+		"parts.origin.":           {front.OriginBuiltin, front.OriginDataDirectory},
+		"parts.part.":             {front.PartTheme, front.PartLanguage, front.PartWidget, front.PartWidgetStrings},
+		"parts.state.":            {"loaded", "refused"},
+		"people.identity.":        unquote(schemaVocabulary(t, "client", "identity_kind")),
+		"people.not_restored.":    {owners.NotRestoredAssignedElsewhere, owners.NotRestoredClientGone},
+		"settings.live.":          config.LiveSettingKeys(),
 		"sources.since.":          {request.SinceNotObserved, "state_unknown"},
 		"state.availability.":     {"healthy", "not_collecting", "unavailable", "not_yet_probed", "unknown"},
 		"state.counts.":           {"removed", "no_longer_detected"},
 		"state.credential.":       {"absent", "ready", "undecryptable"},
 		"state.origin.":           {flows.NetworkOriginDetected, flows.NetworkOriginOperator},
-		"state.public_suffix.":    {"downloaded", "not_modified", "failed", "malformed", "not_yet_refreshed"},
 		"state.sizing.selection_": {"auto", "on", "off"},
 		"state.sizing.": {"no_ingested_clock", "rate_not_measured", "page_within_ceiling", "page_above_ceiling",
 			"no_page_ceiling", "suggestion_available", "not_yet_measured", "rate_not_coverable", "source_not_collected"},

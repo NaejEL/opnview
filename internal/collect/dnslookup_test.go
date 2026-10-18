@@ -27,16 +27,16 @@ func arrangeResolverCollection(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
 	harness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	harness.Fake.AnswerFixture(collecttest.UnboundStatus, "unbound_status_running.json")
-	harness.Fake.AnswerFixture(collecttest.UnboundSettings, "unbound_settings.json")
-	harness.Fake.AnswerFixture(collecttest.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
-	harness.Fake.AnswerFixture(collecttest.SearchQueries, "search_queries_page1.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("unbound", "status"), "unbound_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("unbound", "settings"), "unbound_settings.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("unbound", "is_enabled"), "unbound_is_enabled_on.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("dnsmasq", "status"), "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("dnsmasq", "settings"), "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("unbound", "search_queries"), "search_queries_page1.json")
 	if err := harness.Collector.ProbeKind(context.Background(), "dns_lookup"); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != collecttest.ProviderUnbound {
+	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != "unbound" {
 		t.Fatalf("the resolver kind activated %q", key)
 	}
 	return harness
@@ -55,7 +55,7 @@ func TestTheResolverQueryIsAJSONPostWithIntegerBounds(t *testing.T) {
 	}
 	harness.Fake.AssertEveryPathIsRegistered()
 
-	requests := harness.Fake.RequestsTo(collecttest.SearchQueries)
+	requests := harness.Fake.RequestsTo(collecttest.Declared("unbound", "search_queries"))
 	if len(requests) == 0 {
 		t.Fatal("the query report was never requested")
 	}
@@ -118,7 +118,7 @@ func TestTheCollectorNeverPresentsWhatItReadAsCoverageOfTheWindow(t *testing.T) 
 		t.Fatalf("collecting: %v", err)
 	}
 
-	detail := harness.DetailOf(t, "dns_lookup", collecttest.ProviderUnbound)
+	detail := harness.DetailOf(t, "dns_lookup", "unbound")
 	for _, phrase := range []string{
 		"most recent lookups",
 		"ignores timeStart and timeEnd",
@@ -256,7 +256,7 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 		LookupKey:     "content:an-earlier-pass-stored-this",
 		ClientAddress: "example-address",
 		Domain:        "example-domain",
-		Resolver:      collecttest.ProviderUnbound,
+		Resolver:      "unbound",
 		Action:        "pass",
 		LookedUpAt:    oldest - 3600,
 		IngestedAt:    oldest - 3600,
@@ -304,7 +304,7 @@ func TestTheCollectorWalksTheRingBufferAndStopsWhenAPageIsAllKnown(t *testing.T)
 	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	requests := harness.Fake.RequestsTo(collecttest.SearchQueries)
+	requests := harness.Fake.RequestsTo(collecttest.Declared("unbound", "search_queries"))
 	if len(requests) < 2 {
 		t.Fatalf("the collector made %d requests; it must page rather than read one page", len(requests))
 	}

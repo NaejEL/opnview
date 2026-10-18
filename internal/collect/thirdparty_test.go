@@ -42,8 +42,8 @@ func TestAThirdPartyLeaseAndLookupPluginStoreTheirRecords(t *testing.T) {
 
 	// The built-in implementations answer nothing (the fake's 404): only the two plugins are there.
 	// The neighbour tables the lease pass reads beside the lease table, as the lease harness answers them.
-	fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
-	fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
+	fake.AnswerFixture(collecttest.Declared("neighbours", "arp"), "get_arp.json")
+	fake.AnswerFixture(collecttest.Declared("neighbours", "ndp"), "get_ndp.json")
 	running := map[string]any{"status": "running"}
 	fake.AnswerJSON(opnsense.Endpoint{Path: "/api/exampledhcp/service/status", Method: "GET"}, running)
 	fake.AnswerJSON(opnsense.Endpoint{Path: "/api/exampledhcp/leases/search", Method: "POST"},

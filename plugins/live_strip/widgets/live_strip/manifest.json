@@ -1,0 +1,31 @@
+{
+  "manifest_version": 1,
+  "type": "live_strip",
+  "shape": "figure",
+  "providers": [
+    "firewall_log",
+    "dns_lookup"
+  ],
+  "primary": "firewall_log",
+  "windowed": false,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "window_seconds",
+      "kind": "integer",
+      "default": null,
+      "min": 2,
+      "max": 3600,
+      "class": "data"
+    }
+  ],
+  "references": [],
+  "queries": [
+    "live_strip.statements.sql"
+  ],
+  "script": "live_strip.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
+}

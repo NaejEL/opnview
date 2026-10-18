@@ -224,6 +224,21 @@ function readRecords(host, endpoint, path, ownerField, messageCacheReferences) {
   return answer;
 }
 
+// normaliseAction maps the query report's `action` onto the closed vocabulary of the dns_lookup
+// contract. Anything else is `unknown`: a lookup whose verdict opnview cannot name must not be
+// counted as allowed.
+function normaliseAction(raw) {
+  switch (d.lower(raw)) {
+    case "pass": case "passed": case "allowed":
+      return "pass";
+    case "block": case "blocked":
+      return "block";
+    case "drop": case "dropped":
+      return "drop";
+  }
+  return "unknown";
+}
+
 exports.dns_lookup = {
   page_bound: pageBound,
   requested_span_seconds: requestedSpan,
@@ -306,7 +321,7 @@ exports.dns_lookup = {
       if (domain === null) {
         continue;
       }
-      var action = opnview.dns_lookup.normaliseAction(d.rawString(row, "action"));
+      var action = normaliseAction(d.rawString(row, "action"));
       var blocklistName = "";
       if (action === "block" || action === "drop") {
         // The endpoint does not attribute every block. An unattributed one stays "blocked, list
@@ -351,5 +366,6 @@ exports.resolver_local_data = {
 // The pure functions above, exported for the plugin's own tests.
 exports.helpers = {
   lookup_key: lookupKey,
-  query_family: queryFamily
+  query_family: queryFamily,
+  normalise_action: normaliseAction
 };

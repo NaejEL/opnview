@@ -31,16 +31,16 @@ func TestAnImplementationThatCannotBeReadReportsWhyRatherThanFailingThePass(t *t
 		key  string
 		call func(context.Context) error
 	}{
-		{"dhcp_lease", collecttest.ProviderISC, func(ctx context.Context) error {
-			if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", collecttest.ProviderISC); err != nil {
+		{"dhcp_lease", "isc", func(ctx context.Context) error {
+			if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", "isc"); err != nil {
 				return err
 			}
 			var seen []string
 			_, err := harness.Collector.CollectLeases(ctx, &seen)
 			return err
 		}},
-		{"dns_lookup", collecttest.ProviderDnsmasq, func(ctx context.Context) error {
-			if err := harness.Store.SetActiveProviders(ctx, "dns_lookup", collecttest.ProviderDnsmasq); err != nil {
+		{"dns_lookup", "dnsmasq", func(ctx context.Context) error {
+			if err := harness.Store.SetActiveProviders(ctx, "dns_lookup", "dnsmasq"); err != nil {
 				return err
 			}
 			return harness.Collector.CollectDNSLookup(ctx)
@@ -119,11 +119,11 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 			harness := collecttest.NewProbeHarness(t)
 			collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 
-			first, err := harness.Store.ProviderID(ctx, "dhcp_lease", collecttest.ProviderKea)
+			first, err := harness.Store.ProviderID(ctx, "dhcp_lease", "kea")
 			if err != nil {
 				t.Fatalf("looking up the first server: %v", err)
 			}
-			second, err := harness.Store.ProviderID(ctx, "dhcp_lease", collecttest.ProviderDnsmasq)
+			second, err := harness.Store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 			if err != nil {
 				t.Fatalf("looking up the second server: %v", err)
 			}
@@ -251,11 +251,11 @@ func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 	harness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 
-	first, err := harness.Store.ProviderID(ctx, "dhcp_lease", collecttest.ProviderKea)
+	first, err := harness.Store.ProviderID(ctx, "dhcp_lease", "kea")
 	if err != nil {
 		t.Fatalf("looking up the first server: %v", err)
 	}
-	second, err := harness.Store.ProviderID(ctx, "dhcp_lease", collecttest.ProviderDnsmasq)
+	second, err := harness.Store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 	if err != nil {
 		t.Fatalf("looking up the second server: %v", err)
 	}
@@ -356,10 +356,10 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 	t.Parallel()
 	harness := collecttest.LeaseRetryHarness(t, "example-key-failing", "example-host-failing")
 	ctx := context.Background()
-	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
+	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", "dnsmasq", "kea"); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
-	harness.Fake.Answer(collecttest.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
+	harness.Fake.Answer(collecttest.Declared("kea", "leases"), http.StatusInternalServerError, []byte(`{}`))
 
 	limit := int(config.DefaultLeaseBackendFailurePassLimit)
 	if limit < 2 {
@@ -380,24 +380,24 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 			t.Fatalf("pass %d, the limit: the lookup is examined %t, %s; the failing backend "+
 				"still holds it back", pass, done, resolution)
 		}
-		detail := harness.DetailOf(t, "dhcp_lease", collecttest.ProviderKea)
+		detail := harness.DetailOf(t, "dhcp_lease", "kea")
 		if !strings.Contains(detail, "lease passes in a row") {
 			t.Errorf("pass %d: the failing backend's detail %q does not state the limit", pass, detail)
 		}
 	}
-	if detail := harness.DetailOf(t, "dhcp_lease", collecttest.ProviderKea); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, "dhcp_lease", "kea"); !strings.Contains(detail,
 		"re-examined without this backend") {
 		t.Errorf("at the limit the detail %q does not say the retry goes on without the backend", detail)
 	}
 
 	// A read that succeeds again ends the count: the next failure holds the retry back
 	// from the start.
-	harness.Fake.AnswerFixture(collecttest.KeaLeases, "kea_leases.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("kea", "leases"), "kea_leases.json")
 	collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(time.Duration(limit+1)*5*time.Minute))
 	if err := harness.Collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("the pass whose backends both answered: %v", err)
 	}
-	if failures := harness.Collector.LeaseFailurePasses(collecttest.MustProviderID(t, harness, collecttest.ProviderKea)); failures != 0 {
+	if failures := harness.Collector.LeaseFailurePasses(collecttest.MustProviderID(t, harness, "kea")); failures != 0 {
 		t.Errorf("a backend read again still counts %d failed passes", failures)
 	}
 }

@@ -56,7 +56,8 @@
             /* Why, then how many addresses where there are any, then the figure with what it counts. */
             h("span", {}, [(kit.placeReason(row.reason) || tk("plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.", row.reason)),
               row.addresses ? [" · ", tp("column.address_count", row.addresses)] : null]),
-            h("span", { "class": "counter-figure" }, [kit.value(row.volume, unit, { field: field }),
+            /* A security bin counts events, in their own measure, never a volume. */
+            h("span", { "class": "counter-figure" }, row.events ? kit.value(row.events) : [kit.value(row.volume, unit, { field: field }),
               field === "connections" ? [" ", t("column.figure.connections")] : null])
           ]);
         }));

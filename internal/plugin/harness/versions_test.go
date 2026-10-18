@@ -47,9 +47,9 @@ exports.dhcp_lease = {
 		var rows = d.rows(response.value);
 		var leases = [];
 		for (var i = 0; i < rows.length; i++) {
-			var lease = opnview.dhcp_lease.decodeLease(rows[i]);
-			if (lease !== null) {
-				leases.push(lease);
+			var address = d.string(rows[i], "address");
+			if (address !== null) {
+				leases.push({ address: address, mac: d.rawString(rows[i], "hwaddr"), lease_state: "active" });
 			}
 		}
 		result.state = "reachable";

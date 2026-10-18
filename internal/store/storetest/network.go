@@ -136,7 +136,14 @@ func NewNetwork(t *testing.T, interfaceCount, clientCount int) *Network {
 		t.Fatalf("writing a rule: %v", err)
 	}
 
-	leaseProvider, err := database.ProviderID(ctx, "dhcp_lease", "dnsmasq")
+	// Any registered lease provider: the leases are the network's, and which built-in server issued
+	// them is no fact this network presupposes.
+	var leaseBackend string
+	if err := database.DB().QueryRowContext(ctx, "SELECT provider_key FROM provider WHERE kind = 'dhcp_lease' "+
+		"ORDER BY provider_key LIMIT 1").Scan(&leaseBackend); err != nil {
+		t.Fatalf("looking up a lease provider: %v", err)
+	}
+	leaseProvider, err := database.ProviderID(ctx, "dhcp_lease", leaseBackend)
 	if err != nil {
 		t.Fatalf("looking up a lease provider: %v", err)
 	}
@@ -161,7 +168,7 @@ func NewNetwork(t *testing.T, interfaceCount, clientCount int) *Network {
 			}
 			expiry := network.Now + 3600
 			if err := database.InsertDHCPLease(ctx, leaseProvider, vocab.DHCPLease{
-				ClientID: &clientID, Backend: "dnsmasq", Address: client.Address, MAC: &mac,
+				ClientID: &clientID, Backend: leaseBackend, Address: client.Address, MAC: &mac,
 				LeaseState: "active", InterfaceID: &iface.ID,
 				GenerationKey: vocab.GenerationKeyOf(nil, &expiry, 0), ExpiresAt: &expiry,
 				ObservedAt: network.Now - 3600,

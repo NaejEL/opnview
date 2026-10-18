@@ -265,6 +265,27 @@ func Lookup(name string) (Protocol, bool) {
 	return protocol, found
 }
 
+// GapReasoner is a protocol that records collection gaps for reasons of its own, beside the push
+// sources' common ones: what its own framing reveals was lost. The protocol declares them, so the
+// core names none of a protocol's reasons.
+type GapReasoner interface {
+	GapReasons() []string
+}
+
+// ProtocolGapReasons returns the gap reasons every registered protocol declares, sorted.
+func ProtocolGapReasons() []string {
+	registryMutex.RLock()
+	defer registryMutex.RUnlock()
+	var reasons []string
+	for _, protocol := range registry {
+		if reasoner, declares := protocol.(GapReasoner); declares {
+			reasons = append(reasons, reasoner.GapReasons()...)
+		}
+	}
+	sort.Strings(reasons)
+	return reasons
+}
+
 // Protocols returns the names of every registered protocol, sorted.
 func Protocols() []string {
 	registryMutex.RLock()

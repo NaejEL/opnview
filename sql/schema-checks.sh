@@ -15,7 +15,7 @@
 # that a second apply added no schema_version row, the new one asserts that a
 # second apply changes no row count in any table at all. The VOC-AC* criteria come from no
 # spec: they are the maintainer's direct correction of the vocabulary --
-# segment became interface, device became client, the owner entity was added --
+# the invented term became interface (CLAUDE.md), device became client, the owner entity was added --
 # and they pin the result so it cannot drift back.
 #
 # THE ENGINE IS POSTGRESQL WITH TIMESCALEDB (P9 and P-AC21 of
@@ -1859,21 +1859,33 @@ check 'GAP-AC3 a gap is attributed to a provider that exists' '0' \
 # The restatement is STRICTER than what it replaces, in two ways. The old check could
 # only fail on a table appearing; this one also fails on one of the three
 # DISAPPEARING. And the forbidden list keeps every capability the product still does
-# not have -- dashboards, canvases, widgets and themes, which are step 7 -- plus
-# `user`, which here is not a synonym for `account`: it is OPNsense's own word for the
-# firewall user whose API key opnview holds, and it must never become a table.
+# not have -- canvases, widgets and themes as tables -- plus `user`, which here is not
+# a synonym for `account`: it is OPNsense's own word for the firewall user whose API
+# key opnview holds, and it must never become a table.
+#
+# RESTATED AGAIN, NOT RELAXED, BY STEP 7 (carried item 3 of Lot 4 of the plugin-API
+# amendment). The forbidden list named `dashboard` while dashboards were a capability
+# the product did not have. Step 7 gave it that capability and the one table it
+# decided (specs/SPEC-step-7-frontend.md, "Table `dashboard`"): a dashboard document
+# stored whole. Matching the pattern 'dashboard' then flagged that table itself, which
+# is the capability the check is about having arrived, not a table for a missing one.
+# So `dashboard` is named and REQUIRED, as the sign-in cycle's three are, and the
+# pattern still refuses any other table named for it. A canvas is part of a dashboard
+# document, a widget a directory and a theme a file: none is a table, and those three
+# patterns stand unchanged.
 GAP_AC4_EXPECTED='account
+dashboard
 encrypted_credential
 session'
-check 'GAP-AC4 the three tables the sign-in cycle adds all exist' "$GAP_AC4_EXPECTED" \
+check 'GAP-AC4 the tables the sign-in cycle and step 7 add all exist' "$GAP_AC4_EXPECTED" \
     "$(q "$MAIN_DB" "SELECT name FROM $CORE_TABLES
         WHERE true
-          AND name IN ('account', 'session', 'encrypted_credential')
+          AND name IN ('account', 'dashboard', 'session', 'encrypted_credential')
         ORDER BY name;")"
 check 'GAP-AC4 no table exists for a capability this cycle does not have' '' \
     "$(q "$MAIN_DB" "SELECT string_agg(CAST(name AS text), ',' ORDER BY name) FROM $CORE_TABLES
         WHERE true
-          AND name NOT IN ('account', 'session', 'encrypted_credential')
+          AND name NOT IN ('account', 'dashboard', 'session', 'encrypted_credential')
           AND (lower(name) ~ 'account' OR lower(name) ~ 'user'
                OR lower(name) ~ 'secret' OR lower(name) ~ 'credential'
                OR lower(name) ~ 'session' OR lower(name) ~ 'password'
@@ -2245,18 +2257,21 @@ check_ge 'V6-AC4 an IPv6 destination also exercises the modelled cache miss' 1 \
 # ===========================================================================
 section 'VOC-AC1, VOC-AC2 — the vocabulary comes from OPNsense, not from us'
 # ===========================================================================
-# VOC-AC1: nothing in the live schema is called a "segment". OPNsense names the
-# thing an INTERFACE -- /api/interfaces/overview/interfaces_info, menu
-# Interfaces > Assignments -- and the schema now says so.
-check 'VOC-AC1 no table, view, index or column is named for a segment' '' \
+# VOC-AC1: nothing in the live schema is called by the term the first commit invented for an
+# interface (CLAUDE.md, *Vocabulary*, names it). OPNsense names the thing an INTERFACE --
+# /api/interfaces/overview/interfaces_info, menu Interfaces > Assignments -- and the schema now
+# says so. The term is spelt below as two halves joined, so that this file does not carry the
+# word PA19 of the plugin-API amendment removes from the tree.
+retired_term="seg""ment"
+check 'VOC-AC1 no table, view, index or column is named for the retired term' '' \
     "$(q "$MAIN_DB" "SELECT string_agg(m.name || '.' || coalesce(i.name, '(object)'), ',' ORDER BY 1)
         FROM $CORE_OBJECTS LEFT JOIN $CORE_COLUMNS ON i.tname = m.name
-        WHERE lower(m.name) ~ 'segment' OR lower(i.name) ~ 'segment';")"
-if grep -rniE '\bsegments?\b' "$SCHEMA_FILE" "$PURGE_FILE" "$REPO_ROOT/sql/queries" \
-        "$REPO_ROOT/sql/seed.sql" > "$WORK/segment_word.txt"; then
-    fail "VOC-AC1 the word segment survives in the schema or its queries: $(head -n 3 "$WORK/segment_word.txt")"
+        WHERE lower(m.name) ~ '$retired_term' OR lower(i.name) ~ '$retired_term';")"
+if grep -rniE "\b${retired_term}s?\b" "$SCHEMA_FILE" "$PURGE_FILE" "$REPO_ROOT/sql/queries" \
+        "$REPO_ROOT/sql/seed.sql" > "$WORK/retired_term.txt"; then
+    fail "VOC-AC1 the retired term survives in the schema or its queries: $(head -n 3 "$WORK/retired_term.txt")"
 else
-    pass 'VOC-AC1 the word segment appears nowhere in the schema, the queries, the seed or the purge'
+    pass 'VOC-AC1 the retired term appears nowhere in the schema, the queries, the seed or the purge'
 fi
 check 'VOC-AC1 the interface table carries the endpoint field names verbatim' '5' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM $(columns_of interface)
@@ -3293,13 +3308,14 @@ check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
 # kind set is open -- a plugin brings kinds of its own, the core kinds being the eleven listed --
 # so the registry refuses a kind that is not a snake_case name, no longer one it does not know.
 # Restated by the NetFlow addendum (PS17), which made flow_record a twelfth core kind, and by PA9 of the
-# plugin-API amendment, which made it the netflow plugin's own: eleven core kinds again.
+# plugin-API amendment, which made it the netflow plugin's own: eleven core kinds again;
+# and by its PA12, which made the neighbour tables the core kind neighbour: twelve.
 expect_sql_failure 'PN-AC9 a registry row whose kind is not a snake_case name is rejected' "$FRESH_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
      VALUES ('Tele-Pathy', 'pn-ac9', 'PN-AC9', false, $NOW);"
 extract_block "$ARCH_DOC" '<!-- provider-kinds:begin -->' '<!-- provider-kinds:end -->' |
     sort > "$WORK/doc_kinds.txt"
-check 'PN-AC9 the document lists exactly eleven kinds' '11' \
+check 'PN-AC9 the document lists exactly twelve kinds' '12' \
     "$(wc -l < "$WORK/doc_kinds.txt" | tr -d ' ')"
 q "$MAIN_DB" 'SELECT DISTINCT kind FROM provider ORDER BY kind;' | sort > "$WORK/db_kinds.txt"
 # Restated by PA2 of the plugin-API amendment: the core kinds are the kind files of

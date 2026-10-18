@@ -2,6 +2,7 @@
   "language": "en",
   "strings": {
     "provider.flow_record.netflow": "NetFlow export",
+    "collection.kind.flow_record": "Flow records",
     "plugin.netflow.setting.join_tolerance_seconds": "Join tolerance, in seconds",
     "plugin.netflow.setting.retention_flow_record_seconds": "Flow record retention, in seconds (0 follows the retention)",
     "plugin.netflow.page.join": "Joining flow records to logged connections",

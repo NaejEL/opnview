@@ -31,6 +31,9 @@ func (protocol) NewDecoder(limits push.Limits) push.Decoder { return newDecoder(
 func (protocol) NewFramer(io.Reader, int) push.Framer       { return nil }
 func (protocol) Fields() map[string]string                  { return nil }
 
+// GapReasons are the gaps the exporter's own numbering and templates reveal (push.GapReasoner).
+func (protocol) GapReasons() []string { return []string{ReasonSequenceGap, ReasonTemplateMissing} }
+
 // FieldType is the plugin type of a registry element, by name; the elements the decoder adds from
 // the header are registry elements too.
 func (protocol) FieldType(name string) (string, bool) {

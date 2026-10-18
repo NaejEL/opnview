@@ -15,11 +15,11 @@ import (
 	"github.com/NaejEL/opnview/internal/widget/script"
 )
 
-// TestEveryHostAreaIsDocumented: every area of the widget host has its section in docs/plugins.md,
+// TestEveryHostAreaIsDocumented: every area of the widget host has its section in docs/widget-host.md,
 // and the document describes no area the host does not have.
 func TestEveryHostAreaIsDocumented(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugins.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "widget-host.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestEveryHostAreaIsDocumented(t *testing.T) {
 	}
 	for _, area := range areas {
 		if !documented[area] {
-			t.Errorf("the host area %s has no section in docs/plugins.md", area)
+			t.Errorf("the host area %s has no section in docs/widget-host.md", area)
 		}
 		delete(documented, area)
 	}
@@ -43,6 +43,6 @@ func TestEveryHostAreaIsDocumented(t *testing.T) {
 	}
 	sort.Strings(extra)
 	if len(extra) > 0 {
-		t.Errorf("docs/plugins.md documents host areas that do not exist: %s", strings.Join(extra, ", "))
+		t.Errorf("docs/widget-host.md documents host areas that do not exist: %s", strings.Join(extra, ", "))
 	}
 }

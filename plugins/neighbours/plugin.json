@@ -1,0 +1,33 @@
+{
+  "api_version": 2,
+  "name": "neighbours",
+  "version": "1.0.0",
+  "display_name": "Neighbour tables",
+  "description": "Reads the firewall's ARP (IPv4) and NDP (IPv6) neighbour tables: the address, hardware address, interface and vendor of each neighbour, the client identity of last resort on a firewall whose DHCP is unreadable.",
+  "script": "neighbours.js",
+  "endpoints": [
+    {
+      "name": "arp",
+      "path": "/api/diagnostics/interface/get_arp",
+      "method": "GET",
+      "survey_section": "Verified against a live firewall, 2026-09-27",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/InterfaceController.php",
+      "note": "getArpAction runs the configd action `interface list arp json` (scripts/interfaces/list_arp.py: one row per complete entry with mac, ip, intf, expired, expires, permanent, type, manufacturer, hostname) and adds intf_description. Read without `resolve`, so no name lookup runs on the firewall. https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/interfaces/list_arp.py"
+    },
+    {
+      "name": "ndp",
+      "path": "/api/diagnostics/interface/get_ndp",
+      "method": "GET",
+      "survey_section": "Verified against a live firewall, 2026-09-27",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/InterfaceController.php",
+      "note": "getNdpAction runs the configd action `interface list ndp json` (scripts/interfaces/list_ndp.py: one row per complete entry with ip, mac, intf, manufacturer) and adds intf_description. https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/interfaces/list_ndp.py"
+    }
+  ],
+  "providers": [
+    {
+      "kind": "neighbour",
+      "display_name": "Neighbour tables",
+      "read_strategy": "full_reread"
+    }
+  ]
+}

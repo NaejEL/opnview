@@ -14,7 +14,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
 	"github.com/NaejEL/opnview/internal/collect/kinds/leases"
-	"github.com/NaejEL/opnview/internal/collect/kinds/resolverrecords"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/config"
@@ -138,12 +137,7 @@ func CountRows(t *testing.T, database *store.Store, table string) int {
 // runs one discovery pass, which is the precondition of every collector.
 func ArrangeDiscoverableFirewall(t *testing.T, fake *providertest.Firewall, collector *collect.Collector) {
 	t.Helper()
-	fake.AnswerFixture(opnsense.InterfacesInfo, "interfaces_info.json")
-	fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")
-	fake.AnswerFixture(opnsense.SearchRule, "search_rule.json")
-	// The firewall's clock, from which discovery measures its offset from UTC: the
-	// fixture is a firewall on UTC at the reference instant, so the offset is zero.
-	fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
+	AnswerArranged(t, fake, "discoverable_firewall")
 	if err := collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("runtime discovery: %v", err)
 	}
@@ -178,24 +172,38 @@ func NewTestCollector(t *testing.T, client *opnsense.Client, database *store.Sto
 	return collector
 }
 
-// ArrangeLeaseCollection stands up a harness whose Dnsmasq backend is the active one, which
-// is what the surveyed firewall reported: Kea disabled, Dnsmasq running.
+// AnswerArranged puts an arranged world's answers in place on a fake firewall, probing nothing
+// (arrangements.go).
+func AnswerArranged(t *testing.T, fake *providertest.Firewall, name string) Arrangement {
+	t.Helper()
+	arrangement := ReadArrangement(t, name)
+	for _, answer := range arrangement.Answers {
+		endpoint, err := answer.EndpointOf()
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.AnswerFixture(endpoint, answer.Fixture)
+	}
+	return arrangement
+}
+
+// ArrangeLeaseCollection stands up a harness whose one lease backend is the one the surveyed
+// firewall reported active (testdata/arrangements/lease_collection.json).
 func ArrangeLeaseCollection(t *testing.T) *ProbeHarness {
 	t.Helper()
 	harness := NewProbeHarness(t)
 	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	harness.Fake.AnswerFixture(KeaStatus, "kea_status_disabled.json")
-	harness.Fake.AnswerFixture(DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(DnsmasqSettings, "dnsmasq_settings.json")
-	harness.Fake.AnswerFixture(DnsmasqLeases, "dnsmasq_leases.json")
-	harness.Fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
-	harness.Fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
-	if err := harness.Collector.ProbeKind(context.Background(), leases.Kind); err != nil {
-		t.Fatalf("probing the lease backends: %v", err)
-	}
-	if key := harness.ActiveKeyOf(t, leases.Kind); key != ProviderDnsmasq {
-		t.Fatalf("the lease kind activated %q", key)
-	}
+	harness.Arrange(t, "lease_collection")
+	return harness
+}
+
+// ArrangeNeighbourCollection stands up a harness whose neighbour tables are the active neighbour
+// source (testdata/arrangements/neighbour_collection.json).
+func ArrangeNeighbourCollection(t *testing.T) *ProbeHarness {
+	t.Helper()
+	harness := NewProbeHarness(t)
+	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
+	harness.Arrange(t, "neighbour_collection")
 	return harness
 }
 
@@ -240,17 +248,19 @@ func (h *ProbeHarness) AvailabilityInstant(t *testing.T, kind, providerKey strin
 // names: the lookup is resolved by the first lease pass that examines it.
 func LeaseRetryHarness(t *testing.T, key, hostname string) *ProbeHarness {
 	t.Helper()
-	harness := ArrangeLeaseCollection(t)
+	harness := NewProbeHarness(t)
+	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
+	arrangement := harness.Arrange(t, "lease_collection")
 	ctx := context.Background()
 	UnresolvedLookup(t, harness.Store, key, hostname+".example.invalid",
 		ReferenceEpoch()-120, ReferenceEpoch()-100)
-	provider, err := harness.Store.ProviderID(ctx, leases.Kind, ProviderDnsmasq)
+	provider, err := harness.Store.ProviderID(ctx, leases.Kind, arrangement.Backend)
 	if err != nil {
 		t.Fatalf("looking up the readable backend: %v", err)
 	}
 	label := hostname
 	if err := harness.Store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
-		Backend: "dnsmasq", Address: "198.51.100.51", Hostname: &label, LeaseState: "reserved",
+		Backend: arrangement.Backend, Address: "198.51.100.51", Hostname: &label, LeaseState: "reserved",
 		GenerationKey: vocab.GenerationKeyOf(nil, nil, ReferenceEpoch()), ObservedAt: ReferenceEpoch(),
 	}); err != nil {
 		t.Fatalf("writing the lease: %v", err)
@@ -268,14 +278,16 @@ func MustProviderID(t *testing.T, harness *ProbeHarness, key string) int64 {
 	return id
 }
 
-// UnresolvedLookup stores one lookup whose logged host name named no lease.
+// UnresolvedLookup stores one lookup whose logged host name named no lease, logged by the resolver
+// the lease world's lookups name.
 func UnresolvedLookup(t *testing.T, database *store.Store, key, hostname string, lookedUpAt, ingestedAt int64) {
 	t.Helper()
+	resolver := ReadArrangement(t, "lease_collection").Resolver
 	name := hostname
 	if err := database.InsertDNSResolution(context.Background(), vocab.DNSResolution{
 		LookupKey: key, ClientAddress: name, ClientHostname: &name,
 		ClientResolution: vocab.ClientResolutionUnknown, Domain: "example-site.example.invalid",
-		Resolver: "unbound", Action: "pass", LookedUpAt: lookedUpAt, IngestedAt: ingestedAt,
+		Resolver: resolver, Action: "pass", LookedUpAt: lookedUpAt, IngestedAt: ingestedAt,
 	}); err != nil {
 		t.Fatalf("writing the lookup: %v", err)
 	}
@@ -490,21 +502,11 @@ func (h *ProbeHarness) SelectSource(t *testing.T, kind, providerKey, value strin
 	}
 }
 
-// The provider keys the coordinator tests arrange and assert against.
-//
-// They are fixture values and nothing more: the shipped implementations declare their own keys in
-// their plugin manifest (plugins/<name>/plugin.json), no non-test code in this package names one, and a test reads the key it
-// needs from this list the way it reads a fixture file name. A test that needs the key of an
-// implementation that does not ship declares its own.
-const (
-	ProviderPf       = "pf"
-	ProviderSuricata = "suricata"
-	ProviderInsight  = "insight"
-	ProviderKea      = "kea"
-	ProviderDnsmasq  = "dnsmasq"
-	ProviderISC      = "isc"
-	ProviderUnbound  = "unbound"
-)
+// ProviderPf is the provider key of the filter log the coordinator tests arrange and assert against:
+// a fixture value and nothing more. The shipped implementations declare their own keys in their plugin
+// manifest (plugins/<name>/plugin.json); a test that needs another key writes it as it writes a fixture
+// file name.
+const ProviderPf = "pf"
 
 // MustFirewallLogSource returns a registered firewall_log implementation.
 func MustFirewallLogSource(t *testing.T, key string) provider.Registration {
@@ -516,29 +518,13 @@ func MustFirewallLogSource(t *testing.T, key string) provider.Registration {
 	return source
 }
 
-// ArrangeRecordCollection stands up a harness whose Unbound runs, so the cache and the
-// local data are both active.
+// ArrangeRecordCollection stands up a harness whose one resolver serves both the cache and the
+// local data (testdata/arrangements/record_collection.json).
 func ArrangeRecordCollection(t *testing.T) *ProbeHarness {
 	t.Helper()
 	harness := NewProbeHarness(t)
 	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	harness.Fake.AnswerFixture(UnboundStatus, "unbound_status_running.json")
-	harness.Fake.AnswerFixture(UnboundSettings, "unbound_settings.json")
-	harness.Fake.AnswerFixture(UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.Fake.AnswerFixture(DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(DnsmasqSettings, "dnsmasq_settings.json")
-	ctx := context.Background()
-	if err := harness.Collector.ProbeKind(ctx, resolverrecords.KindCache); err != nil {
-		t.Fatalf("probing the cache: %v", err)
-	}
-	if err := harness.Collector.ProbeKind(ctx, resolverrecords.KindLocalData); err != nil {
-		t.Fatalf("probing the local data: %v", err)
-	}
-	for _, kind := range []string{resolverrecords.KindCache, resolverrecords.KindLocalData} {
-		if keys := harness.ActiveKeysOf(t, kind); len(keys) != 1 || keys[0] != ProviderUnbound {
-			t.Fatalf("the %s kind activated %v, not Unbound alone", kind, keys)
-		}
-	}
+	harness.Arrange(t, "record_collection")
 	return harness
 }
 

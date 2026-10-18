@@ -1,0 +1,9 @@
+{
+  "description": "The discovery responses, which every collector needs before its first pass: the interfaces, the device-to-description map, the rules, and the firewall's clock, which reads a firewall on UTC at the reference instant, so the measured offset is zero.",
+  "answers": [
+    {"path": "/api/interfaces/overview/interfaces_info", "fixture": "interfaces_info.json"},
+    {"path": "/api/diagnostics/interface/get_interface_names", "fixture": "get_interface_names.json"},
+    {"path": "/api/firewall/filter/search_rule", "fixture": "search_rule.json"},
+    {"path": "/api/diagnostics/system/systemTime", "fixture": "system_time.json"}
+  ]
+}

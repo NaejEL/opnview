@@ -1,0 +1,2 @@
+{ "language": "en", "strings": { "provider.example_logins.example_logins": "Example logins",
+  "collection.kind.example_logins": "Logins", "plugin.example_logins.dataset.logins": "Logins" } }

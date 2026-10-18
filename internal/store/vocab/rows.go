@@ -110,15 +110,13 @@ const (
 	GapDownloadFailed GapReason = "download_failed"
 	// The push sources' gaps (docs/plugins.md, "Push sources"): a drop in opnview's own queues, a
 	// batch that could not be committed, a listener that was not listening, a parse function that
-	// threw or timed out, a source that stopped sending, and the two a NetFlow exporter's own
-	// numbering reveals.
+	// threw or timed out, and a source that stopped sending. A push protocol's decoder adds the
+	// reasons its own numbering reveals (internal/push/protocols/<name>).
 	GapPushBufferOverflow     GapReason = "push_buffer_overflow"
 	GapPushStoreFailed        GapReason = "push_store_failed"
 	GapPushListenerDown       GapReason = "push_listener_down"
 	GapPushScriptFailed       GapReason = "push_script_failed"
 	GapPushNotAlive           GapReason = "push_not_alive"
-	GapNetflowSequenceGap     GapReason = "netflow_sequence_gap"
-	GapNetflowTemplateMissing GapReason = "netflow_template_missing"
 )
 
 // LogReasons is the established value set of the filter log's `reason` field,
@@ -163,8 +161,9 @@ const (
 	// name, the token interface_map keys by.
 	SubjectInterface SubjectKind = "interface"
 	// SubjectInterfaceEndpointPair is one pair of addresses AS READ ON ONE
-	// INTERFACE, local end first. Its subject key is the network device name, the
-	// local address and the peer address, joined by single spaces. It replaces the
+	// INTERFACE, local end first. Its parts are the network device, the local
+	// address and the peer address (MeasurementSample.InterfaceDevice, LocalAddress,
+	// PeerAddress); its subject key is the provider's own name for it. It replaces the
 	// canonical endpoint_pair subject step 4 wrote, because that subject's
 	// lexicographic key dropped two facts traffic/top states: the interface the record
 	// was read on, and which address was the local one -- so one pair read on two
@@ -172,8 +171,8 @@ const (
 	// word for it; the term is opnview's own.
 	SubjectInterfaceEndpointPair SubjectKind = "interface_endpoint_pair"
 	// SubjectInterfaceEndpoint is one local address AS READ ON ONE INTERFACE, over
-	// all its peers. Its subject key is the network device name and the local
-	// address, joined by a single space. It carries the totals traffic/top reports
+	// all its peers. Its parts are the network device and the local address; its
+	// subject key is the provider's own name for it. It carries the totals traffic/top reports
 	// on the record itself -- rate_bits_in, rate_bits_out, cumulative_bytes_in and
 	// cumulative_bytes_out -- because the local address's outbound figure exists
 	// ONLY as that total: it is split per peer nowhere, so a pair carries it only
@@ -184,16 +183,6 @@ const (
 	// reports for it.
 	SubjectGateway SubjectKind = "gateway"
 )
-
-// InterfaceEndpointPairKey composes the subject key of an interface endpoint pair.
-func InterfaceEndpointPairKey(device, local, peer string) string {
-	return device + " " + local + " " + peer
-}
-
-// InterfaceEndpointKey composes the subject key of an interface endpoint.
-func InterfaceEndpointKey(device, local string) string {
-	return device + " " + local
-}
 
 // SampleSeconds is how long one traffic/top sample covers. The endpoint runs
 // iftop with `-s 2`, printing one text output after two seconds and quitting
@@ -747,8 +736,13 @@ type MeasurementSample struct {
 	ProviderID *int64
 	// SubjectKind and SubjectKey name what was measured.
 	SubjectKind SubjectKind
-	// SubjectKey is the device name, the canonical pair, or the empty string.
+	// SubjectKey is the provider's own name for the subject, which the core reads as an identity
+	// and never composes or parses; it may be empty.
 	SubjectKey string
+	// InterfaceDevice, LocalAddress and PeerAddress are the subject's parts as the provider reports
+	// them: the network device the reading was taken on, the local address it is of and the peer it
+	// was read with. Nil where the subject has no such part.
+	InterfaceDevice, LocalAddress, PeerAddress *string
 	// Measure is what was measured.
 	Measure Measure
 	// Unit is mandatory.

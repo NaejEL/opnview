@@ -119,6 +119,116 @@ func NewTestDatabase(ctx context.Context) (*TestDatabase, error) {
 	return newTestDatabase(dsn, name, admin, started), nil
 }
 
+// A DERIVED TEMPLATE is the template with something more written into it once: a preparation a test
+// world would otherwise repeat in every database it creates, such as loading the built-in plugins --
+// their tables, their registry rows, their measures -- which cost a plugin test world about 450 ms of
+// database time under the suite's load (carried item 1 of Lot 4 of the plugin-API amendment). Its name
+// carries the base template's name and the preparation's revision, which the caller derives from
+// everything the preparation reads, so a changed plugin builds a new one, and an unchanged one is
+// reused across runs as the base template is. It is built under a temporary name and renamed when
+// complete, as the base is, and its clones share the base template's read role.
+var derivedTemplates = struct {
+	mutex sync.Mutex
+	built map[string]*derivedTemplate
+}{built: map[string]*derivedTemplate{}}
+
+// derivedTemplate is one derived template of this process: built once, then cloned.
+type derivedTemplate struct {
+	once sync.Once
+	name string
+	err  error
+}
+
+// NewTestDatabasePrepared creates a database cloned from the derived template of a preparation:
+// the template, with prepare run once over it. revision must change whenever what prepare writes
+// does. prepare is handed the connection string of the database it prepares, and closes every
+// connection it opens before it returns, since a database being cloned holds none.
+func NewTestDatabasePrepared(ctx context.Context, revision string,
+	prepare func(ctx context.Context, dsn string) error) (*TestDatabase, error) {
+	admin := os.Getenv(TestDatabaseVariable)
+	if admin == "" {
+		return nil, fmt.Errorf("store: %s is not set; the tests run inside the development containers, "+
+			"which set it (docker compose run --rm checks)", TestDatabaseVariable)
+	}
+	templateOnce.Do(func() { templateName, templateErr = ensureTemplate(ctx, admin) })
+	if templateErr != nil {
+		return nil, templateErr
+	}
+	derivedTemplates.mutex.Lock()
+	derived, found := derivedTemplates.built[revision]
+	if !found {
+		derived = &derivedTemplate{}
+		derivedTemplates.built[revision] = derived
+	}
+	derivedTemplates.mutex.Unlock()
+	derived.once.Do(func() { derived.name, derived.err = ensureDerivedTemplate(ctx, admin, revision, prepare) })
+	if derived.err != nil {
+		return nil, derived.err
+	}
+	name, err := uniqueName("opnview_test_")
+	if err != nil {
+		return nil, err
+	}
+	started := time.Now()
+	if err := createDatabase(ctx, admin, name, derived.name); err != nil {
+		return nil, err
+	}
+	shareReadRole(name, sqldb.ReadRoleName(templateName))
+	dsn, err := withDatabase(admin, name)
+	if err != nil {
+		return nil, err
+	}
+	return newTestDatabase(dsn, name, admin, started), nil
+}
+
+// ensureDerivedTemplate returns the derived template of a preparation, building it from the base
+// template when the instance has none.
+func ensureDerivedTemplate(ctx context.Context, admin, revision string,
+	prepare func(ctx context.Context, dsn string) error) (string, error) {
+	digest := sha256.Sum256([]byte(templateName + "\x00" + revision))
+	name := "opnview_template_" + hex.EncodeToString(digest[:])[:16]
+	db, err := adminPool(admin)
+	if err != nil {
+		return "", err
+	}
+	var exists bool
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", name).
+		Scan(&exists); err != nil {
+		return "", fmt.Errorf("store: looking for a derived test template: %w", err)
+	}
+	if exists {
+		return name, nil
+	}
+	building, err := uniqueName("opnview_building_")
+	if err != nil {
+		return "", err
+	}
+	if err := createDatabase(ctx, admin, building, templateName); err != nil {
+		return "", err
+	}
+	shareReadRole(building, sqldb.ReadRoleName(templateName))
+	defer forgetSharedReadRole(building)
+	dsn, err := withDatabase(admin, building)
+	if err != nil {
+		return "", err
+	}
+	if err := prepare(ctx, dsn); err != nil {
+		_, _ = db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{building}.Sanitize()+" WITH (FORCE)")
+		return "", fmt.Errorf("store: preparing a derived test template: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, "ALTER DATABASE "+pgx.Identifier{building}.Sanitize()+" RENAME TO "+
+		pgx.Identifier{name}.Sanitize()); err != nil {
+		_, _ = db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{building}.Sanitize()+" WITH (FORCE)")
+		var nowExists bool
+		if checkErr := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
+			name).Scan(&nowExists); checkErr == nil && nowExists {
+			return name, nil
+		}
+		return "", fmt.Errorf("store: naming a derived test template: %w", err)
+	}
+	return name, nil
+}
+
 // Name is the database's name.
 func (d *TestDatabase) Name() string { return d.name }
 

@@ -12,7 +12,6 @@ import (
 	"strconv"
 
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/live/strip"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/widget"
 )
@@ -34,19 +33,12 @@ func init() {
 
 // The paths.
 const (
-	// PathStrip is the rolling strip.
-	PathStrip = "/api/live/strip"
 	// PathSettings is the live-rate settings, read and written.
 	PathSettings = "/api/live/settings"
 )
 
 // The conditions the surface answers with, beside the configuration's setting codes.
 const (
-	// ConditionMalformedParameters is a strip request whose parameters are not one JSON object, or
-	// whose window_seconds is not a whole number.
-	ConditionMalformedParameters = "malformed_parameters"
-	// ConditionWindowOutOfRange is a window_seconds outside the bounds the answer names.
-	ConditionWindowOutOfRange = "window_out_of_range"
 	// ConditionMalformedBody is a settings write whose body is not one JSON object.
 	ConditionMalformedBody = "malformed_body"
 	// ConditionReadFailed is a read the store could not complete.
@@ -64,7 +56,6 @@ type surface struct {
 
 func (s *surface) routes() []web.Route {
 	return []web.Route{
-		web.JSONRoute(http.MethodGet, PathStrip, s.handleStrip),
 		web.JSONRoute(http.MethodGet, PathSettings, s.handleSettings),
 		web.JSONRoute(http.MethodPost, PathSettings, s.handleWrite),
 	}
@@ -74,71 +65,6 @@ func (s *surface) routes() []web.Route {
 type Refusal struct {
 	Condition string `json:"condition"`
 	Key       string `json:"key,omitempty"`
-	Minimum   *int64 `json:"minimum,omitempty"`
-	Maximum   *int64 `json:"maximum,omitempty"`
-}
-
-// cadence is the strip's bucket width: the finest live cadence a loaded plugin declares, in force
-// now, or the measurement interval where none declares a live pass.
-func (s *surface) cadence(ctx context.Context) (int64, error) {
-	finest := int64(0)
-	for _, pass := range s.Plugins().LivePasses() {
-		seconds := int64(pass.Cadence(ctx, s.Store()).Seconds())
-		if finest == 0 || seconds < finest {
-			finest = seconds
-		}
-	}
-	if finest > 0 {
-		return finest, nil
-	}
-	return s.Store().MeasurementIntervalSeconds(ctx)
-}
-
-// stripParameters is the strip's one parameter.
-type stripParameters struct {
-	WindowSeconds *json.Number `json:"window_seconds"`
-}
-
-func (s *surface) handleStrip(writer http.ResponseWriter, request *http.Request) {
-	cadence, err := s.cadence(request.Context())
-	if err != nil {
-		widget.WriteJSON(writer, http.StatusInternalServerError, Refusal{Condition: ConditionReadFailed})
-		return
-	}
-	window := strip.DefaultWindowSeconds
-	if raw := request.URL.Query().Get(widget.ParametersQueryKey); raw != "" {
-		var parameters stripParameters
-		decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
-		decoder.UseNumber()
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&parameters); err != nil {
-			widget.WriteJSON(writer, http.StatusBadRequest, Refusal{Condition: ConditionMalformedParameters})
-			return
-		}
-		if parameters.WindowSeconds != nil {
-			value, err := strconv.ParseInt(parameters.WindowSeconds.String(), 10, 64)
-			if err != nil {
-				widget.WriteJSON(writer, http.StatusBadRequest, Refusal{Condition: ConditionMalformedParameters,
-					Key: "window_seconds"})
-				return
-			}
-			window = value
-		}
-	}
-	answer, err := strip.Read(request.Context(), s.Store(), strip.Request{Now: s.Now(), CadenceSeconds: cadence,
-		WindowSeconds: window, Interest: s.Widgets().LiveInterest()})
-	var outOfRange *strip.ErrWindowOutOfRange
-	switch {
-	case errors.As(err, &outOfRange):
-		minimum, maximum := outOfRange.Minimum, outOfRange.Maximum
-		widget.WriteJSON(writer, http.StatusBadRequest, Refusal{Condition: ConditionWindowOutOfRange,
-			Key: "window_seconds", Minimum: &minimum, Maximum: &maximum})
-		return
-	case err != nil:
-		widget.WriteJSON(writer, http.StatusInternalServerError, Refusal{Condition: ConditionReadFailed})
-		return
-	}
-	widget.WriteJSON(writer, http.StatusOK, answer)
 }
 
 // Setting is one live setting as it stands.

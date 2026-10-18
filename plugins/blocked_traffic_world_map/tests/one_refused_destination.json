@@ -244,7 +244,7 @@
       "unknown_connections": 0
     },
     "security_events": {
-      "measure": "logged",
+      "measure": "security_events",
       "lower_bound": true,
       "value": 0
     },
@@ -252,65 +252,37 @@
       {
         "reason": "miss",
         "addresses": 0,
-        "volume": {
-          "measure": "logged",
+        "events": {
+          "measure": "security_events",
           "lower_bound": true,
-          "bytes": 0,
-          "allowed_bytes": 0,
-          "blocked_bytes": 0,
-          "unknown_bytes": 0,
-          "connections": 0,
-          "allowed_connections": 0,
-          "blocked_connections": 0,
-          "unknown_connections": 0
+          "value": 0
         }
       },
       {
         "reason": "pending",
         "addresses": 0,
-        "volume": {
-          "measure": "logged",
+        "events": {
+          "measure": "security_events",
           "lower_bound": true,
-          "bytes": 0,
-          "allowed_bytes": 0,
-          "blocked_bytes": 0,
-          "unknown_bytes": 0,
-          "connections": 0,
-          "allowed_connections": 0,
-          "blocked_connections": 0,
-          "unknown_connections": 0
+          "value": 0
         }
       },
       {
         "reason": "no_row",
         "addresses": 0,
-        "volume": {
-          "measure": "logged",
+        "events": {
+          "measure": "security_events",
           "lower_bound": true,
-          "bytes": 0,
-          "allowed_bytes": 0,
-          "blocked_bytes": 0,
-          "unknown_bytes": 0,
-          "connections": 0,
-          "allowed_connections": 0,
-          "blocked_connections": 0,
-          "unknown_connections": 0
+          "value": 0
         }
       },
       {
         "reason": "no_coordinates",
         "addresses": 0,
-        "volume": {
-          "measure": "logged",
+        "events": {
+          "measure": "security_events",
           "lower_bound": true,
-          "bytes": 0,
-          "allowed_bytes": 0,
-          "blocked_bytes": 0,
-          "unknown_bytes": 0,
-          "connections": 0,
-          "allowed_connections": 0,
-          "blocked_connections": 0,
-          "unknown_connections": 0
+          "value": 0
         }
       }
     ],

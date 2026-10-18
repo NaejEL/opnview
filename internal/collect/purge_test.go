@@ -483,17 +483,17 @@ func arrangeEveryStoringSource(t *testing.T) *collecttest.ProbeHarness {
 	harness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	for endpoint, fixture := range map[opnsense.Endpoint]string{
-		opnsense.FirewallLog:         "firewall_log.json",
-		collecttest.KeaStatus:        "kea_status_disabled.json",
-		collecttest.DnsmasqStatus:    "dnsmasq_status_running.json",
-		collecttest.DnsmasqSettings:  "dnsmasq_settings.json",
-		collecttest.DnsmasqLeases:    "dnsmasq_leases.json",
-		opnsense.ARPTable:            "get_arp.json",
-		opnsense.NDPTable:            "get_ndp.json",
-		collecttest.UnboundStatus:    "unbound_status_running.json",
-		collecttest.UnboundSettings:  "unbound_settings.json",
-		collecttest.UnboundIsEnabled: "unbound_is_enabled_on.json",
-		collecttest.SearchQueries:    "search_queries_page1.json",
+		opnsense.FirewallLog:                              "firewall_log.json",
+		collecttest.Declared("kea", "status"):             "kea_status_disabled.json",
+		collecttest.Declared("dnsmasq", "status"):         "dnsmasq_status_running.json",
+		collecttest.Declared("dnsmasq", "settings"):       "dnsmasq_settings.json",
+		collecttest.Declared("dnsmasq", "leases"):         "dnsmasq_leases.json",
+		collecttest.Declared("neighbours", "arp"):         "get_arp.json",
+		collecttest.Declared("neighbours", "ndp"):         "get_ndp.json",
+		collecttest.Declared("unbound", "status"):         "unbound_status_running.json",
+		collecttest.Declared("unbound", "settings"):       "unbound_settings.json",
+		collecttest.Declared("unbound", "is_enabled"):     "unbound_is_enabled_on.json",
+		collecttest.Declared("unbound", "search_queries"): "search_queries_page1.json",
 	} {
 		harness.Fake.AnswerFixture(endpoint, fixture)
 	}
@@ -503,8 +503,8 @@ func arrangeEveryStoringSource(t *testing.T) *collecttest.ProbeHarness {
 			t.Fatalf("probing: %v", err)
 		}
 	}
-	for kind, want := range map[string]string{"firewall_log": collecttest.ProviderPf, "dhcp_lease": collecttest.ProviderDnsmasq,
-		"dns_lookup": collecttest.ProviderUnbound} {
+	for kind, want := range map[string]string{"firewall_log": collecttest.ProviderPf, "dhcp_lease": "dnsmasq",
+		"dns_lookup": "unbound"} {
 		if key := harness.ActiveKeyOf(t, kind); key != want {
 			t.Fatalf("the %s kind activated %q, not %q", kind, key, want)
 		}
@@ -571,7 +571,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 	}
 	// The resolver's page starts empty; each resolver pass replaces it.
 	emptyLookups := map[string]any{"total": 0, "rowCount": 0, "current": 1, "rows": []any{}}
-	harness.Fake.AnswerJSON(collecttest.SearchQueries, emptyLookups)
+	harness.Fake.AnswerJSON(collecttest.Declared("unbound", "search_queries"), emptyLookups)
 
 	const iterations = 36
 	var (
@@ -656,7 +656,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		}
 		offeredMutex.Unlock()
 		// The lookups are generated, one just before every outbound record, newest first.
-		harness.Fake.AnswerJSON(collecttest.SearchQueries, map[string]any{
+		harness.Fake.AnswerJSON(collecttest.Declared("unbound", "search_queries"), map[string]any{
 			"total": len(rows), "rowCount": len(rows), "current": 1, "rows": rows})
 		return harness.Collector.CollectDNSLookup(ctx)
 	})

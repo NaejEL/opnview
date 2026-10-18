@@ -11,11 +11,10 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/decode"
-	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
-// The dhcp_lease kind, and the two neighbour tables.
+// The dhcp_lease kind.
 //
 // What is true of any lease source, and is therefore here: the identity cascade, resolving
 // the interface the backend named, reading one page of the standard envelope, normalising the
@@ -40,33 +39,17 @@ import (
 // because a reservation is standing configuration rather than a generation, and it therefore
 // yields one row per day rather than one per poll.
 //
-// THE NEIGHBOUR TABLES ARE READ WHETHER OR NOT ANY LEASE BACKEND IS. get_arp and get_ndp carry
-// a MAC, an address, the interface and a vendor string, and the survey's inferred text named
-// neither. They matter because on a firewall whose DHCP is unreadable — Kea with its control
-// agent off, a Dnsmasq with no ranges, an ISC plugin that is gone — they are the only client
-// identity there is, and without them every machine on such a network would fall to the
-// weakest level of the cascade.
-//
-// They belong to no provider kind: they are the firewall's own view of its neighbours rather
-// than an implementation of one of the eight contracts, so no availability row moves for them.
-// What a failure costs is client identity, which the cascade already degrades for explicitly,
-// and what it must not do is stop the lease pass.
+// The neighbour tables, read beside the leases until the plugin-API amendment, are the neighbour
+// kind's (internal/collect/kinds/neighbours, plugins/neighbours).
 
-// CollectDHCPLease runs one neighbour pass and one lease pass.
-//
-// The neighbour pass runs first and unconditionally: a machine it identifies by MAC is a
-// machine the filter-log collector will find by address instead of minting the weakest
-// identity for.
+// CollectDHCPLease runs one lease pass.
 func (c *LeaseCoordinator) CollectDHCPLease(ctx context.Context) error {
-	// No retention purge runs between this pass storing a lease or a neighbour and the
-	// end of its derivation (purge.go).
+	// No retention purge runs between this pass storing a lease and the end of its
+	// derivation (purge.go).
 	defer c.Storing()()
 	var failures []error
 
 	var seen []string
-	if err := c.collectNeighbours(ctx, &seen); err != nil {
-		failures = append(failures, err)
-	}
 	// The instant the lease read begins. A lookup ingested at or after it may postdate the
 	// leases this pass reads, so it is left for the next lease pass.
 	leasesReadAt := c.Now()
@@ -75,7 +58,7 @@ func (c *LeaseCoordinator) CollectDHCPLease(ctx context.Context) error {
 		failures = append(failures, err)
 	}
 
-	// A lease or a neighbour entry is on-link evidence, and one that names an address
+	// A lease is on-link evidence, and one that names an address
 	// seen only in flows is a better identity for it: every address read is placed
 	// again, which re-points the rows naming it and decides their attribution again.
 	// A lease can also name the host a lookup logged as its client before the lease
@@ -386,89 +369,6 @@ func leaseIdentity(observation vocab.DHCPLease, interfaceID *int64,
 		Kind: vocab.IdentityAddressInInterface,
 		Key:  identity.AddressIdentityKey(interfaceID, observation.Address, now),
 	}
-}
-
-// collectNeighbours reads the ARP and NDP tables.
-func (c *LeaseCoordinator) collectNeighbours(ctx context.Context, seen *[]string) error {
-	snapshot := c.Discovery()
-	now := c.Now()
-	var failures []error
-
-	for _, endpoint := range []opnsense.Endpoint{opnsense.ARPTable, opnsense.NDPTable} {
-		response, err := c.Read(ctx, Kind, endpoint, opnsense.RequestOptions{}, c.KindMaxAge(Kind, ""))
-		if err != nil && response.Outcome == "" {
-			failures = append(failures, err)
-			continue
-		}
-		if !response.OK() {
-			failures = append(failures,
-				fmt.Errorf("collect: %s answered %s", endpoint.Path, response.Outcome))
-			continue
-		}
-		rows, err := decode.Rows(response.Body)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("collect: reading %s: %w", endpoint.Path, err))
-			continue
-		}
-		for _, row := range rows {
-			if err := c.ingestNeighbour(ctx, row, snapshot, now); err != nil {
-				failures = append(failures, err)
-				break
-			}
-			*seen = append(*seen, decode.RawString(row, "ip"))
-		}
-	}
-
-	if len(failures) > 0 {
-		return fmt.Errorf("collect: the neighbour tables were incomplete: %w", core.JoinErrors(failures))
-	}
-	return nil
-}
-
-// ingestNeighbour turns one ARP or NDP row into a machine at the MAC level.
-func (c *LeaseCoordinator) ingestNeighbour(ctx context.Context, row decode.Object,
-	snapshot core.Discovery, now int64) error {
-	mac := decode.MACPointer(decode.RawString(row, "mac"))
-	address, hasAddress := decode.String(row, "ip")
-	if mac == nil || !hasAddress {
-		// Without both there is nothing here the cascade can use: a MAC with no address names a
-		// machine opnview cannot match to a flow, and an address with no MAC is what the
-		// filter-log collector already handles.
-		return nil
-	}
-
-	var interfaceID *int64
-	if id, found := snapshot.InterfaceIDByDevice[decode.RawString(row, "intf")]; found {
-		interfaceID = &id
-	}
-	if interfaceID != nil {
-		if _, upstream := snapshot.Upstream[*interfaceID]; upstream {
-			// A neighbour of an upstream interface -- the provider's router, typically --
-			// is outside, and an outside address never becomes a client row.
-			return nil
-		}
-	}
-	// The tables list this firewall's own interface entries as well as its neighbours.
-	// An entry at an address the firewall holds at this instant is this firewall, which
-	// is never a client (step-5A live corrections, item 1.2; defect L2 of
-	// specs/SPEC-test-budget-and-two-live-defects.md, where each such entry had become a
-	// MAC-level client), so it creates and updates nothing.
-	if firewall, err := c.Store.IsThisFirewallAt(ctx, address, now); err != nil {
-		return err
-	} else if firewall {
-		return nil
-	}
-
-	_, err := c.Store.UpsertClient(ctx, vocab.Client{
-		Identity:    vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: *mac},
-		InterfaceID: interfaceID,
-		MAC:         mac,
-		// `manufacturer` is the neighbour table's spelling of the vendor string the leases call
-		// `mac_info`. It is context and is never a basis for classifying a machine.
-		VendorHint:  decode.StringPointer(row, "manufacturer"),
-		LastAddress: &address,
-	}, now)
-	return err
 }
 
 // Kind is the kind this coordinator collects.

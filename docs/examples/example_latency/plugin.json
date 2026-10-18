@@ -1,0 +1,20 @@
+{
+  "api_version": 2,
+  "name": "example_latency",
+  "version": "1.0.0",
+  "display_name": "Example latency",
+  "description": "Ranks the targets a prober measures by a percentile of their round-trip time.",
+  "tables": [
+    {
+      "name": "probe",
+      "nature": "sample",
+      "columns": [
+        { "name": "measured_at", "type": "integer", "role": "time" },
+        { "name": "target", "type": "text" },
+        { "name": "latency_ms", "type": "real", "role": "measure", "unit": "millisecond" }
+      ],
+      "retention": { "column": "measured_at" }
+    }
+  ],
+  "widgets": ["example_latency_percentile"]
+}

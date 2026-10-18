@@ -1,0 +1,100 @@
+{
+  "kind" : "neighbour",
+  "description" : "The firewall's neighbour tables, ARP for IPv4 and NDP for IPv6: a MAC, an address and the interface each neighbour was learned on. On a firewall whose DHCP is unreadable they are the only client identity there is; the kind runs the client identity cascade at the MAC level on what they report, never makes this firewall a client, and never makes a neighbour of an upstream interface one.",
+  "concurrent" : false,
+  "push" : false,
+  "bindable" : false,
+  "cadences" : [
+    {
+      "role" : "poll",
+      "setting" : "poll_interval_neighbour_seconds",
+      "default_seconds" : 300,
+      "basis" : "The neighbour tables were read at every lease pass before they became a kind of their own, and the lease cadence is kept: survey, data source 4, \"Sustainable polling frequency\" -- identities change on the scale of minutes to hours, and both tables are small."
+    }
+  ],
+  "functions" : [
+    {
+      "description" : "Called at every probe round: asks the firewall whether this implementation can be read.",
+      "name" : "probe",
+      "arguments" : "host",
+      "returns" : "probe_answer"
+    },
+    {
+      "description" : "Called at every neighbour pass: every neighbour the tables hold now.",
+      "name" : "neighbours",
+      "arguments" : "host",
+      "returns" : "neighbours_answer"
+    }
+  ],
+  "records" : [
+    {
+      "description" : "What `probe` returns.",
+      "name" : "probe_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Why the probe could not finish, when it could not.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `neighbours` returns.",
+      "name" : "neighbours_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "The `neighbour_record` records read, absent when the read failed.",
+          "name" : "neighbours",
+          "type" : "records",
+          "of" : "neighbour_record"
+        },
+        {
+          "description" : "Why the read failed, when it did; the result then says what the firewall answered.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "One neighbour: an address the firewall resolved to a hardware address on one of its interfaces.",
+      "name" : "neighbour_record",
+      "fields" : [
+        {
+          "description" : "The neighbour's address.",
+          "name" : "address",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The hardware address; the host lower-cases it and stores a value that is not six colon-separated octets as absent, and a neighbour with none creates no client.",
+          "name" : "mac",
+          "type" : "text"
+        },
+        {
+          "description" : "The network device the neighbour was learned on.",
+          "name" : "interface_device",
+          "type" : "text"
+        },
+        {
+          "description" : "The vendor the firewall names for the hardware address: context, never a basis for classifying a machine.",
+          "name" : "vendor_hint",
+          "type" : "text"
+        }
+      ]
+    }
+  ]
+}

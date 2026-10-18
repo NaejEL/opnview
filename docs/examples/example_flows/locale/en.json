@@ -1,0 +1,2 @@
+{ "language": "en", "strings": { "provider.example_flows.example_flows": "Example flows",
+  "collection.kind.example_flows": "Flow records", "plugin.example_flows.dataset.records": "Flow records, counted once per interface" } }

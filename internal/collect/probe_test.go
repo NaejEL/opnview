@@ -60,11 +60,11 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		{
 			name: "the intrusion-detection engine is installed and stopped",
 			arrange: func(fake *providertest.Firewall) {
-				fake.AnswerFixture(collecttest.IDSStatus, "ids_status_stopped.json")
+				fake.AnswerFixture(collecttest.Declared("suricata", "status"), "ids_status_stopped.json")
 			},
-			kind: "security_event", key: collecttest.ProviderSuricata,
+			kind: "security_event", key: "suricata",
 			wantState: vocab.StatePresentButDisabled,
-			wantProbe: collecttest.IDSStatus.Path,
+			wantProbe: collecttest.Declared("suricata", "status").Path,
 			// The survey's own words: 404, 401 or 403 is absent; a status of stopped,
 			// disabled or unknown is present but disabled.
 			wantDetailContains: "stopped",
@@ -74,11 +74,11 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		{
 			name: "the firewall exports its flow data elsewhere and keeps none",
 			arrange: func(fake *providertest.Firewall) {
-				fake.AnswerFixture(collecttest.NetflowIsEnabled, "netflow_is_enabled_export_only.json")
+				fake.AnswerFixture(collecttest.Declared("insight", "netflow_is_enabled"), "netflow_is_enabled_export_only.json")
 			},
-			kind: "measurement_sample", key: collecttest.ProviderInsight,
+			kind: "measurement_sample", key: "insight",
 			wantState:          vocab.StatePresentButDisabled,
-			wantProbe:          collecttest.NetflowIsEnabled.Path,
+			wantProbe:          collecttest.Declared("insight", "netflow_is_enabled").Path,
 			wantDetailContains: "local collection is off",
 			wantMoved:          []string{"measurement_sample/insight"},
 			wantStateTotal:     1,
@@ -86,12 +86,12 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		{
 			name: "the DHCP backend runs and serves no range",
 			arrange: func(fake *providertest.Firewall) {
-				fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
-				fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings_no_ranges.json")
+				fake.AnswerFixture(collecttest.Declared("dnsmasq", "status"), "dnsmasq_status_running.json")
+				fake.AnswerFixture(collecttest.Declared("dnsmasq", "settings"), "dnsmasq_settings_no_ranges.json")
 			},
-			kind: "dhcp_lease", key: collecttest.ProviderDnsmasq,
+			kind: "dhcp_lease", key: "dnsmasq",
 			wantState:          vocab.StatePresentButDisabled,
-			wantProbe:          collecttest.DnsmasqStatus.Path,
+			wantProbe:          collecttest.Declared("dnsmasq", "status").Path,
 			wantDetailContains: "dhcp_ranges is empty",
 			// TWO rows, and that is correct rather than a smear: one service status
 			// endpoint informs two registry rows, because Dnsmasq is an implementation of
@@ -103,13 +103,13 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		{
 			name: "the resolver runs and its query reporting is off",
 			arrange: func(fake *providertest.Firewall) {
-				fake.AnswerFixture(collecttest.UnboundStatus, "unbound_status_running.json")
-				fake.AnswerFixture(collecttest.UnboundSettings, "unbound_settings.json")
-				fake.AnswerFixture(collecttest.UnboundIsEnabled, "unbound_is_enabled_off.json")
+				fake.AnswerFixture(collecttest.Declared("unbound", "status"), "unbound_status_running.json")
+				fake.AnswerFixture(collecttest.Declared("unbound", "settings"), "unbound_settings.json")
+				fake.AnswerFixture(collecttest.Declared("unbound", "is_enabled"), "unbound_is_enabled_off.json")
 			},
-			kind: "dns_lookup", key: collecttest.ProviderUnbound,
+			kind: "dns_lookup", key: "unbound",
 			wantState: vocab.StatePresentButDisabled,
-			wantProbe: collecttest.UnboundStatus.Path,
+			wantProbe: collecttest.Declared("unbound", "status").Path,
 			// The survey is explicit that this is a setting to turn on and never an
 			// absence of lookups, and the detail has to say so.
 			wantDetailContains: "query reporting is off",
@@ -240,7 +240,7 @@ func TestASourceThatAnswers404IsUnavailableAndNotActivated(t *testing.T) {
 func TestAReachableSourceWithNothingToSayStaysReachable(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.NewProbeHarness(t)
-	harness.Fake.AnswerFixture(collecttest.IDSStatus, "ids_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("suricata", "status"), "ids_status_running.json")
 	// An empty array, written here rather than as a fixture because the value is the
 	// whole of what it says: the engine answered and had nothing to report.
 	harness.Fake.AnswerJSON(opnsense.FirewallLog, []any{})
@@ -249,7 +249,7 @@ func TestAReachableSourceWithNothingToSayStaysReachable(t *testing.T) {
 		t.Logf("the probe round reported: %v", err)
 	}
 
-	state, _, _ := harness.AvailabilityOf(t, "security_event", collecttest.ProviderSuricata)
+	state, _, _ := harness.AvailabilityOf(t, "security_event", "suricata")
 	if state != vocab.StateReachable {
 		t.Errorf("a running engine reads %q", state)
 	}
@@ -294,13 +294,13 @@ func TestTwoProvidersOfAnExclusiveKindTheFirewallDoesNotSeparateActivateNeitherA
 			return provider.Result{
 				State:     vocab.StateReachable,
 				Outcome:   vocab.OutcomeHealthy,
-				Probe:     collecttest.UnboundIsEnabled,
+				Probe:     collecttest.Declared("unbound", "is_enabled"),
 				Separable: true,
 			}, nil
 		}}
 	}
 	if err := harness.Collector.ResolveKind(ctx, "dns_lookup",
-		[]core.Probeable{separable(collecttest.ProviderUnbound), separable(collecttest.ProviderDnsmasq)}); err != nil {
+		[]core.Probeable{separable("unbound"), separable("dnsmasq")}); err != nil {
 		t.Fatalf("resolving an ambiguous exclusive kind: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestTwoProvidersOfAnExclusiveKindTheFirewallDoesNotSeparateActivateNeitherA
 		t.Fatalf("an exclusive kind activated %q although the firewall separates neither provider",
 			key)
 	}
-	for _, key := range []string{collecttest.ProviderUnbound, collecttest.ProviderDnsmasq} {
+	for _, key := range []string{"unbound", "dnsmasq"} {
 		state, _, _ := harness.AvailabilityOf(t, "dns_lookup", key)
 		if state != vocab.StateReachable {
 			t.Errorf("%s reads %q, and both are running", key, state)
@@ -336,13 +336,13 @@ func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *te
 			return provider.Result{
 				State:     vocab.StateReachable,
 				Outcome:   vocab.OutcomeHealthy,
-				Probe:     collecttest.KeaStatus,
+				Probe:     collecttest.Declared("kea", "status"),
 				Separable: true,
 			}, nil
 		}}
 	}
 	if err := harness.Collector.ResolveKind(ctx, "dhcp_lease",
-		[]core.Probeable{separable(collecttest.ProviderKea), separable(collecttest.ProviderDnsmasq)}); err != nil {
+		[]core.Probeable{separable("kea"), separable("dnsmasq")}); err != nil {
 		t.Fatalf("resolving a concurrent kind: %v", err)
 	}
 
@@ -363,18 +363,18 @@ func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *te
 func TestOneBackendTheFirewallSeparatesIsActivated(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.NewProbeHarness(t)
-	harness.Fake.AnswerFixture(collecttest.KeaStatus, "kea_status_disabled.json")
-	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("kea", "status"), "kea_status_disabled.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("dnsmasq", "status"), "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("dnsmasq", "settings"), "dnsmasq_settings.json")
 
 	if err := harness.Collector.ProbeAll(context.Background()); err != nil {
 		t.Logf("the probe round reported: %v", err)
 	}
 
-	if key := harness.ActiveKeyOf(t, "dhcp_lease"); key != collecttest.ProviderDnsmasq {
+	if key := harness.ActiveKeyOf(t, "dhcp_lease"); key != "dnsmasq" {
 		t.Fatalf("the DHCP kind activated %q, want the one backend the firewall separates", key)
 	}
-	state, _, _ := harness.AvailabilityOf(t, "dhcp_lease", collecttest.ProviderKea)
+	state, _, _ := harness.AvailabilityOf(t, "dhcp_lease", "kea")
 	if state != vocab.StatePresentButDisabled {
 		t.Errorf("the disabled backend reads %q", state)
 	}
@@ -390,25 +390,25 @@ func TestOneBackendTheFirewallSeparatesIsActivated(t *testing.T) {
 func TestTheDnsmasqResolverIsDetectedAndReportedAndNeverActivated(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.NewProbeHarness(t)
-	harness.Fake.AnswerFixture(collecttest.UnboundStatus, "unbound_status_running.json")
-	harness.Fake.AnswerFixture(collecttest.UnboundSettings, "unbound_settings.json")
-	harness.Fake.AnswerFixture(collecttest.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("unbound", "status"), "unbound_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("unbound", "settings"), "unbound_settings.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("unbound", "is_enabled"), "unbound_is_enabled_on.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("dnsmasq", "status"), "dnsmasq_status_running.json")
 	// log_queries is on in this fixture, so the state is detected rather than inferred.
-	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("dnsmasq", "settings"), "dnsmasq_settings.json")
 
 	if err := harness.Collector.ProbeAll(context.Background()); err != nil {
 		t.Logf("the probe round reported: %v", err)
 	}
 
-	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != collecttest.ProviderUnbound {
+	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != "unbound" {
 		t.Fatalf("the resolver kind activated %q, want the one with a structured query API", key)
 	}
-	state, _, _ := harness.AvailabilityOf(t, "dns_lookup", collecttest.ProviderDnsmasq)
+	state, _, _ := harness.AvailabilityOf(t, "dns_lookup", "dnsmasq")
 	if state != vocab.StatePresentButDisabled {
 		t.Errorf("the Dnsmasq resolver reads %q", state)
 	}
-	detail := harness.DetailOf(t, "dns_lookup", collecttest.ProviderDnsmasq)
+	detail := harness.DetailOf(t, "dns_lookup", "dnsmasq")
 	if !strings.Contains(detail, "not recorded") || !strings.Contains(detail, "does not parse") {
 		t.Errorf("the detail is %q, which does not say that the grammar is unrecorded and "+
 			"therefore unparsed", detail)
@@ -425,14 +425,14 @@ func TestTheEndOfLifeISCPluginIsRecordedAsAbsentRatherThanRead(t *testing.T) {
 		t.Logf("the probe round reported: %v", err)
 	}
 
-	state, probe, _ := harness.AvailabilityOf(t, "dhcp_lease", collecttest.ProviderISC)
+	state, probe, _ := harness.AvailabilityOf(t, "dhcp_lease", "isc")
 	if state != vocab.StateUnavailable {
 		t.Errorf("the end-of-life plugin reads %q", state)
 	}
-	if !strings.Contains(probe, collecttest.ISCStatus.Path) {
+	if !strings.Contains(probe, collecttest.Declared("isc", "status").Path) {
 		t.Errorf("the probe is %q, which does not name the presence check", probe)
 	}
-	if detail := harness.DetailOf(t, "dhcp_lease", collecttest.ProviderISC); !strings.Contains(
+	if detail := harness.DetailOf(t, "dhcp_lease", "isc"); !strings.Contains(
 		detail, "not installed") {
 		t.Errorf("the detail is %q", detail)
 	}
@@ -479,7 +479,7 @@ func everyProvider(t *testing.T, database *store.Store) []registryRow {
 func reachableAndSeparable(key string) core.Probeable {
 	return core.Probeable{ProviderKey: key, Run: func(context.Context, provider.Session) (provider.Result, error) {
 		return provider.Result{State: vocab.StateReachable, Outcome: vocab.OutcomeHealthy,
-			Probe: collecttest.UnboundIsEnabled, Separable: true}, nil
+			Probe: collecttest.Declared("unbound", "is_enabled"), Separable: true}, nil
 	}}
 }
 
@@ -563,17 +563,17 @@ func TestASelectionThatCannotBeReadIsReportedRatherThanTreatedAsAuto(t *testing.
 	t.Parallel()
 	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
-	harness.SelectSource(t, "dns_lookup", collecttest.ProviderUnbound, "yes")
+	harness.SelectSource(t, "dns_lookup", "unbound", "yes")
 
-	err := harness.Collector.ResolveKind(ctx, "dns_lookup", []core.Probeable{reachableAndSeparable(collecttest.ProviderUnbound)})
+	err := harness.Collector.ResolveKind(ctx, "dns_lookup", []core.Probeable{reachableAndSeparable("unbound")})
 	if err == nil {
 		t.Fatal("an unreadable selection was not reported")
 	}
-	key := config.KeySourceSelection("dns_lookup", collecttest.ProviderUnbound)
+	key := config.KeySourceSelection("dns_lookup", "unbound")
 	if !strings.Contains(err.Error(), key) {
 		t.Errorf("the report %q does not name the setting %s", err, key)
 	}
-	if state, _, _ := harness.AvailabilityOf(t, "dns_lookup", collecttest.ProviderUnbound); state != vocab.StateReachable {
+	if state, _, _ := harness.AvailabilityOf(t, "dns_lookup", "unbound"); state != vocab.StateReachable {
 		t.Errorf("the availability reads %q; an unreadable selection must not stop it being recorded", state)
 	}
 }
@@ -586,16 +586,16 @@ func TestTurningOneOnBreaksTheTieThatUsedToReadNeither(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
-	harness.SelectSource(t, "dns_lookup", collecttest.ProviderUnbound, string(config.SelectionOn))
+	harness.SelectSource(t, "dns_lookup", "unbound", string(config.SelectionOn))
 
 	if err := harness.Collector.ResolveKind(ctx, "dns_lookup",
-		[]core.Probeable{reachableAndSeparable(collecttest.ProviderUnbound), reachableAndSeparable(collecttest.ProviderDnsmasq)}); err != nil {
+		[]core.Probeable{reachableAndSeparable("unbound"), reachableAndSeparable("dnsmasq")}); err != nil {
 		t.Fatalf("resolving the kind: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != collecttest.ProviderUnbound {
+	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != "unbound" {
 		t.Fatalf("the active resolver is %q, want the one turned on", key)
 	}
-	for _, provider := range []string{collecttest.ProviderUnbound, collecttest.ProviderDnsmasq} {
+	for _, provider := range []string{"unbound", "dnsmasq"} {
 		if state, _, _ := harness.AvailabilityOf(t, "dns_lookup", provider); state != vocab.StateReachable {
 			t.Errorf("%s reads %q, and both answered", provider, state)
 		}
@@ -623,7 +623,7 @@ func TestASavedSelectionIsAppliedWithoutProbingTheFirewallAgain(t *testing.T) {
 	ctx := context.Background()
 	runs := 0
 	candidates := []core.Probeable{
-		countingProbeable(collecttest.ProviderDnsmasq, &runs), countingProbeable(collecttest.ProviderUnbound, &runs),
+		countingProbeable("dnsmasq", &runs), countingProbeable("unbound", &runs),
 	}
 	if err := harness.Collector.ResolveKind(ctx, "dns_lookup", candidates); err != nil {
 		t.Fatalf("resolving the kind: %v", err)
@@ -631,23 +631,23 @@ func TestASavedSelectionIsAppliedWithoutProbingTheFirewallAgain(t *testing.T) {
 	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != "" {
 		t.Fatalf("two resolvers the firewall does not separate activated %q", key)
 	}
-	_, _, checkedBefore := harness.AvailabilityOf(t, "dns_lookup", collecttest.ProviderUnbound)
+	_, _, checkedBefore := harness.AvailabilityOf(t, "dns_lookup", "unbound")
 	runsBefore := runs
 
-	harness.SelectSource(t, "dns_lookup", collecttest.ProviderUnbound, string(config.SelectionOn))
+	harness.SelectSource(t, "dns_lookup", "unbound", string(config.SelectionOn))
 	if err := harness.Collector.Reselect(ctx, "dns_lookup"); err != nil {
 		t.Fatalf("applying the selection: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != collecttest.ProviderUnbound {
+	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != "unbound" {
 		t.Errorf("the active resolver is %q after turning Unbound on, want it", key)
 	}
 
-	harness.SelectSource(t, "dns_lookup", collecttest.ProviderUnbound, string(config.SelectionOff))
-	harness.SelectSource(t, "dns_lookup", collecttest.ProviderDnsmasq, string(config.SelectionOn))
+	harness.SelectSource(t, "dns_lookup", "unbound", string(config.SelectionOff))
+	harness.SelectSource(t, "dns_lookup", "dnsmasq", string(config.SelectionOn))
 	if err := harness.Collector.Reselect(ctx, "dns_lookup"); err != nil {
 		t.Fatalf("applying the second selection: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != collecttest.ProviderDnsmasq {
+	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != "dnsmasq" {
 		t.Errorf("the active resolver is %q after switching, want dnsmasq", key)
 	}
 
@@ -658,7 +658,7 @@ func TestASavedSelectionIsAppliedWithoutProbingTheFirewallAgain(t *testing.T) {
 	if err := harness.Collector.Reselect(ctx, "dns_lookup"); err != nil {
 		t.Fatalf("applying the selection again: %v", err)
 	}
-	if _, _, checked := harness.AvailabilityOf(t, "dns_lookup", collecttest.ProviderUnbound); checked != checkedBefore {
+	if _, _, checked := harness.AvailabilityOf(t, "dns_lookup", "unbound"); checked != checkedBefore {
 		t.Error("applying a selection rewrote an availability row, which records a check that did not happen")
 	}
 }
@@ -669,7 +669,7 @@ func TestASelectionSavedBeforeAnyProbeRoundWaitsForTheFirst(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
-	harness.SelectSource(t, "dns_lookup", collecttest.ProviderUnbound, string(config.SelectionOn))
+	harness.SelectSource(t, "dns_lookup", "unbound", string(config.SelectionOn))
 	if err := harness.Collector.Reselect(ctx, "dns_lookup"); err != nil {
 		t.Fatalf("applying a selection before any round: %v", err)
 	}
@@ -677,10 +677,10 @@ func TestASelectionSavedBeforeAnyProbeRoundWaitsForTheFirst(t *testing.T) {
 		t.Errorf("a selection activated %q with nothing probed", key)
 	}
 	if err := harness.Collector.ResolveKind(ctx, "dns_lookup",
-		[]core.Probeable{reachableAndSeparable(collecttest.ProviderDnsmasq), reachableAndSeparable(collecttest.ProviderUnbound)}); err != nil {
+		[]core.Probeable{reachableAndSeparable("dnsmasq"), reachableAndSeparable("unbound")}); err != nil {
 		t.Fatalf("resolving the kind: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != collecttest.ProviderUnbound {
+	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != "unbound" {
 		t.Errorf("the first round activated %q, want the resolver turned on", key)
 	}
 }
@@ -691,16 +691,16 @@ func TestASelectionThatCannotBeReadLeavesTheActiveSourcesAsTheyWere(t *testing.T
 	t.Parallel()
 	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
-	harness.SelectSource(t, "dns_lookup", collecttest.ProviderUnbound, string(config.SelectionOn))
+	harness.SelectSource(t, "dns_lookup", "unbound", string(config.SelectionOn))
 	if err := harness.Collector.ResolveKind(ctx, "dns_lookup",
-		[]core.Probeable{reachableAndSeparable(collecttest.ProviderDnsmasq), reachableAndSeparable(collecttest.ProviderUnbound)}); err != nil {
+		[]core.Probeable{reachableAndSeparable("dnsmasq"), reachableAndSeparable("unbound")}); err != nil {
 		t.Fatalf("resolving the kind: %v", err)
 	}
-	harness.SelectSource(t, "dns_lookup", collecttest.ProviderUnbound, "maybe")
+	harness.SelectSource(t, "dns_lookup", "unbound", "maybe")
 	if err := harness.Collector.Reselect(ctx, "dns_lookup"); err == nil {
 		t.Error("a selection that cannot be read was applied without an error")
 	}
-	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != collecttest.ProviderUnbound {
+	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != "unbound" {
 		t.Errorf("the active resolver is %q after a failed application, want it unchanged", key)
 	}
 }

@@ -254,9 +254,9 @@ func TestTheRegistryAddsExactlyTheResolverCacheCycleEndpoints(t *testing.T) {
 			}
 		}
 	}
-	if got := len(Registry()); got != 9 {
+	if got := len(Registry()); got != 7 {
 		t.Errorf("the compiled registry holds %d endpoints; it holds what discovery, the filter log, the "+
-			"neighbour tables, the clock, the versions and the processor stream read, 9, every other "+
+			"clock, the versions and the processor stream read, 7, every other "+
 			"endpoint being a plugin's declaration (PA16 B7)", got)
 	}
 }

@@ -14,8 +14,12 @@ import (
 	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 )
 
-// The live surface (C3 of the backend-completion cycle): the rolling strip and the live settings, in
-// JSON, behind the session and, for the write, the CSRF proof (C-AC4).
+// The live surface (C3 of the backend-completion cycle): the live settings, in JSON, behind the session
+// and, for the write, the CSRF proof (C-AC4); and the rolling strip, the live_strip widget, behind the
+// same session (PA13 of the plugin-API amendment).
+
+// stripPath is the rolling strip, answered by the generic widget path.
+const stripPath = "/api/widget/live_strip"
 
 func decode(t *testing.T, answer *http.Response, into any) {
 	t.Helper()
@@ -45,7 +49,7 @@ func TestLiveSettingsWriteRefusesAMissingOrForeignProof(t *testing.T) {
 		condition(t, answer) != "no_session" {
 		t.Errorf("a write without a session answered %d", answer.StatusCode)
 	}
-	if answer := anonymous.Get(surface.PathStrip); answer.StatusCode != http.StatusUnauthorized {
+	if answer := anonymous.Get(stripPath); answer.StatusCode != http.StatusUnauthorized {
 		t.Errorf("the strip without a session answered %d", answer.StatusCode)
 	}
 	if answer := anonymous.Get(surface.PathSettings); answer.StatusCode != http.StatusUnauthorized {
@@ -132,27 +136,47 @@ func TestLiveFieldsAndStripTheStripRenewsTheLeaseAtTheLiveCadence(t *testing.T) 
 	harness.CompleteSetup()
 	interest := live.New(nil)
 	harness.Server.Widgets().SetLiveInterest(interest)
-	answer := harness.Get(surface.PathStrip)
+	answer := harness.Get(stripPath)
 	if answer.StatusCode != http.StatusOK {
 		t.Fatalf("the strip answered %d: %.300s", answer.StatusCode, webtest.ReadBody(t, answer))
 	}
-	var strip struct {
+	type stripData struct {
 		CadenceSeconds    int64           `json:"cadence_seconds"`
+		Window            struct{ From, To int64 } `json:"window"`
 		LiveInterestUntil *int64          `json:"live_interest_until"`
 		Throughput        json.RawMessage `json:"throughput"`
 		Decisions         json.RawMessage `json:"decisions"`
 	}
-	decode(t, answer, &strip)
-	if strip.CadenceSeconds != 10 || strip.LiveInterestUntil == nil || interest.Renewals() != 1 {
-		t.Errorf("the strip is at %d s, its lease until %v, renewed %d times", strip.CadenceSeconds,
-			strip.LiveInterestUntil, interest.Renewals())
+	var strip struct {
+		States []string  `json:"states"`
+		Data   stripData `json:"data"`
 	}
-	if strings.Contains(string(strip.Throughput), `"measure":"logged"`) ||
-		strings.Contains(string(strip.Decisions), `"measure":"sampled"`) {
+	decode(t, answer, &strip)
+	// The cadence is the insight plugin's live pass, at its default of 10 s: the web host hands the widget
+	// service the loaded plugins' finest live cadence.
+	if strip.Data.CadenceSeconds != 10 || strip.Data.LiveInterestUntil == nil || interest.Renewals() != 1 {
+		t.Errorf("the strip is at %d s, its lease until %v, renewed %d times", strip.Data.CadenceSeconds,
+			strip.Data.LiveInterestUntil, interest.Renewals())
+	}
+	if strings.Contains(string(strip.Data.Throughput), `"measure":"logged"`) ||
+		strings.Contains(string(strip.Data.Decisions), `"measure":"sampled"`) {
 		t.Error("a strip series mixes the sampled and the logged measures")
 	}
-	refused := harness.Get(surface.PathStrip + "?" + "parameters=" + url.QueryEscape(`{"window_seconds": 5}`))
-	if refused.StatusCode != http.StatusBadRequest || condition(t, refused) != surface.ConditionWindowOutOfRange {
-		t.Errorf("a window of 5 s answered %d", refused.StatusCode)
+	if len(strip.States) != 0 {
+		t.Errorf("the default window recorded the states %v", strip.States)
+	}
+	// A window shorter than two cadences is drawn at two cadences, and the answer says so.
+	refused := harness.Get(stripPath + "?" + "parameters=" + url.QueryEscape(`{"window_seconds": 5}`))
+	if refused.StatusCode != http.StatusOK {
+		t.Fatalf("a window of 5 s answered %d", refused.StatusCode)
+	}
+	var clamped struct {
+		States []string  `json:"states"`
+		Data   stripData `json:"data"`
+	}
+	decode(t, refused, &clamped)
+	if len(clamped.States) != 1 || clamped.States[0] != "window_out_of_range" ||
+		clamped.Data.Window.To-clamped.Data.Window.From < 20 || clamped.Data.Window.To-clamped.Data.Window.From > 30 {
+		t.Errorf("a window of 5 s answered the states %v over %+v", clamped.States, clamped.Data.Window)
 	}
 }

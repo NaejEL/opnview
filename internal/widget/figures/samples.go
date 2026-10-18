@@ -15,21 +15,9 @@ import (
 // aggregation -- mean, minimum, maximum, sum or last -- never a count; and a bucket with no
 // sample is a gap, because a missing sample means opnview was not collecting, never a 0.
 
-// MetricMeasures maps a health metric of the catalogue to the subject kind and the
-// measures the sampler stores it under (internal/store, Measure).
-var MetricMeasures = map[string]struct {
-	Kind     vocab.SubjectKind
-	Measures []vocab.Measure
-}{
-	"uptime":          {vocab.SubjectFirewall, []vocab.Measure{vocab.MeasureUptimeSeconds}},
-	"cpu":             {vocab.SubjectFirewall, []vocab.Measure{vocab.MeasureCPUUseRatio}},
-	"memory":          {vocab.SubjectFirewall, []vocab.Measure{vocab.MeasureMemoryUseRatio}},
-	"swap":            {vocab.SubjectFirewall, []vocab.Measure{vocab.MeasureSwapUsedBytes, vocab.MeasureSwapTotalBytes}},
-	"disk":            {vocab.SubjectFirewall, []vocab.Measure{vocab.MeasureDiskUseRatio}},
-	"temperature":     {vocab.SubjectFirewall, []vocab.Measure{vocab.MeasureTemperatureCelsius}},
-	"gateway_latency": {vocab.SubjectGateway, []vocab.Measure{vocab.MeasureDelayMilliseconds}},
-	"gateway_loss":    {vocab.SubjectGateway, []vocab.Measure{vocab.MeasureLossRatio}},
-}
+// Which subject kind and which measures serve a health metric is the provider's fact, declared by its
+// plugin under `sample_metrics` and read here from the declarations (vocab.SampleMetrics): no Go file
+// maps a metric to a measure.
 
 // Subject is one measured subject.
 type Subject struct {
@@ -38,17 +26,17 @@ type Subject struct {
 
 // MeasuredSubjects returns the subjects that reported a metric's measures in the window.
 func MeasuredSubjects(r *request.Request, metric string) ([]Subject, error) {
-	mapping := MetricMeasures[metric]
+	mapping, _ := vocab.SampleMetricNamed(metric)
 	var result []Subject
 	err := r.Db.WidgetRows(r.Ctx, "widget_measurement_subjects", vocab.Period{}, map[string]any{
-		"from": r.Window.From, "to": r.Window.To, "subject_kinds": request.JsonTexts([]string{string(mapping.Kind)}),
+		"from": r.Window.From, "to": r.Window.To, "subject_kinds": request.JsonTexts([]string{mapping.SubjectKind}),
 	}, func(row reads.RowScanner) error {
 		var item Subject
 		if err := row.Scan(&item.Kind, &item.Key, &item.Measure, &item.Unit); err != nil {
 			return err
 		}
 		for _, measure := range mapping.Measures {
-			if string(measure) == item.Measure {
+			if measure == item.Measure {
 				result = append(result, item)
 			}
 		}

@@ -420,6 +420,13 @@ func TestAnInstalledSourceNotCollectingLinksToTheOPNsensePageThatTurnsItOn(t *te
 		web.ConditionOf(msgPageIDSAdministration) {
 		t.Errorf("Suricata installed and not collecting does not link to Intrusion Detection: %v", got)
 	}
+	// Each link carries the catalogue key its plugin declares for the page's name, which the front draws as
+	// given: no front file or surface catalogue lists the pages.
+	for _, page := range settingstest.Path(providerOf(t, answer, "security_event", "suricata"), "opnsense_pages").([]any) {
+		if label := settingstest.Path(page, "label"); label != string(msgPageIDSAdministration) {
+			t.Errorf("the Intrusion Detection link is labelled %v, not the plugin's key %s", label, msgPageIDSAdministration)
+		}
+	}
 	unbound := pages(answer, "dns_lookup", "unbound")
 	if unbound[webtest.ReviewFirewallURL+"/ui/unbound/general"] != web.ConditionOf(msgPageUnboundGeneral) ||
 		unbound[webtest.ReviewFirewallURL+"/ui/unbound/overview"] != web.ConditionOf(msgPageUnboundReporting) {

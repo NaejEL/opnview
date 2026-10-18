@@ -47,7 +47,7 @@ func TestLiveCadenceAndInterestThePassRunsOnlyWhileTheLeaseHolds(t *testing.T) {
 	t.Parallel()
 	harness, interest := arrangeLive(t)
 	ctx := context.Background()
-	calls := func() int { return len(harness.Fake.RequestsTo(collecttest.TrafficTop)) }
+	calls := func() int { return len(harness.Fake.RequestsTo(collecttest.Declared("insight", "traffic_top"))) }
 	before := calls()
 
 	// Nobody has asked for a live figure: no live pass, no call.
@@ -152,7 +152,7 @@ func TestLiveCadenceAndInterestNParallelReadersMakeOneRoundOfCallsPerCadence(t *
 	t.Parallel()
 	harness, interest := arrangeLive(t)
 	ctx := context.Background()
-	before := len(harness.Fake.RequestsTo(collecttest.TrafficTop))
+	before := len(harness.Fake.RequestsTo(collecttest.Declared("insight", "traffic_top")))
 	// Eight readers renew the lease at the same instant, and as many ticks run at once.
 	var group sync.WaitGroup
 	for reader := 0; reader < 8; reader++ {
@@ -166,7 +166,7 @@ func TestLiveCadenceAndInterestNParallelReadersMakeOneRoundOfCallsPerCadence(t *
 		}()
 	}
 	group.Wait()
-	if got := len(harness.Fake.RequestsTo(collecttest.TrafficTop)) - before; got != 1 {
+	if got := len(harness.Fake.RequestsTo(collecttest.Declared("insight", "traffic_top"))) - before; got != 1 {
 		t.Errorf("eight readers in one cadence made %d calls to traffic/top, want 1", got)
 	}
 }
@@ -180,13 +180,13 @@ func TestLivePersistenceOneRoundOfCallsServesTheLiveAndTheBaselinePass(t *testin
 		t.Fatal(err)
 	}
 	fine := fineRows(t, harness.Store)
-	calls := len(harness.Fake.RequestsTo(collecttest.TrafficTop))
+	calls := len(harness.Fake.RequestsTo(collecttest.Declared("insight", "traffic_top")))
 	// The baseline pass falls due during live mode: the broker serves it the live pass's answer.
 	harness.Clock.Advance(3 * time.Second)
 	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(harness.Fake.RequestsTo(collecttest.TrafficTop)); got != calls {
+	if got := len(harness.Fake.RequestsTo(collecttest.Declared("insight", "traffic_top"))); got != calls {
 		t.Errorf("the baseline pass made %d more calls to traffic/top; the live pass's answer serves it", got-calls)
 	}
 	if got := fineRows(t, harness.Store); got != 0 {
@@ -208,17 +208,17 @@ func TestLiveEndpointsVerifiedAFailedLivePassYieldsAClosedOutcome(t *testing.T) 
 	t.Parallel()
 	harness, interest := arrangeLive(t)
 	ctx := context.Background()
-	harness.Fake.Answer(collecttest.TrafficTop, http.StatusInternalServerError, []byte(`{}`))
+	harness.Fake.Answer(collecttest.Declared("insight", "traffic_top"), http.StatusInternalServerError, []byte(`{}`))
 	interest.Renew(harness.Clock.Now())
 	_ = harness.Collector.CollectLive(ctx)
-	state, _, _ := harness.AvailabilityOf(t, "measurement_sample", collecttest.ProviderInsight)
+	state, _, _ := harness.AvailabilityOf(t, "measurement_sample", "insight")
 	if state != vocab.StateUnavailable {
 		t.Errorf("a live pass the firewall did not answer left the provider %q", state)
 	}
 	var outcome string
 	if err := harness.Store.DB().QueryRowContext(ctx, `SELECT a.outcome FROM source_availability AS a
 		JOIN provider AS p ON p.id = a.provider_id WHERE p.kind = 'measurement_sample' AND p.provider_key = $1`,
-		collecttest.ProviderInsight).Scan(&outcome); err != nil {
+		"insight").Scan(&outcome); err != nil {
 		t.Fatal(err)
 	}
 	if !vocab.AvailabilityOutcome(outcome).Valid() {

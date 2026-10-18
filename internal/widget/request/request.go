@@ -125,6 +125,9 @@ type Request struct {
 	Datasets *dataset.Catalogue
 	// LiveInterest is the lease a live figure renews (live.go).
 	LiveInterest *live.Interest
+	// LiveCadence is the finest live cadence the loaded plugins declare, in force now, in seconds; 0 when
+	// none declares a live pass. Nil reads as none.
+	LiveCadence func(ctx context.Context) int64
 
 	installation *installation
 	// placed are the outside peers placed and whose geolocation is not read yet (installation.go,

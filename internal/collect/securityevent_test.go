@@ -23,9 +23,9 @@ func arrangeAlertCollection(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
 	harness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	harness.Fake.AnswerFixture(collecttest.IDSStatus, "ids_status_running.json")
-	harness.Fake.AnswerFixture(collecttest.AlertLogs, "get_alert_logs.json")
-	harness.Fake.AnswerFixture(collecttest.QueryAlerts, "query_alerts.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("suricata", "status"), "ids_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("suricata", "alert_logs"), "get_alert_logs.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("suricata", "query_alerts"), "query_alerts.json")
 	if err := harness.Collector.ProbeKind(context.Background(), "security_event"); err != nil {
 		t.Fatalf("probing the alert feed: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestTheCursorResumesWithoutLossOrDoubleCountAcrossShiftingOffsets(t *testin
 	for _, record := range appended {
 		rows = append(rows, record)
 	}
-	harness.Fake.AnswerJSON(collecttest.QueryAlerts, map[string]any{
+	harness.Fake.AnswerJSON(collecttest.Declared("suricata", "query_alerts"), map[string]any{
 		"rows": rows, "total_rows": len(rows), "origin": "example-eve-current",
 	})
 
@@ -220,7 +220,7 @@ func TestAnUnreadableRotationListConcludesNoLoss(t *testing.T) {
 		t.Fatalf("seeding a watermark: %v", err)
 	}
 	// The rotation view answers 404 by removing its arranged reply.
-	harness.Fake.Answer(collecttest.AlertLogs, 404, []byte(`{"errorMessage":"Endpoint not found"}`))
+	harness.Fake.Answer(collecttest.Declared("suricata", "alert_logs"), 404, []byte(`{"errorMessage":"Endpoint not found"}`))
 
 	if err := harness.Collector.CollectSecurityEvent(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
@@ -244,18 +244,18 @@ func TestAnUnreadableRotationListConcludesNoLoss(t *testing.T) {
 func TestAnEmptyAlertFeedFromARunningEngineStaysReachable(t *testing.T) {
 	t.Parallel()
 	harness := arrangeAlertCollection(t)
-	harness.Fake.AnswerJSON(collecttest.QueryAlerts, map[string]any{
+	harness.Fake.AnswerJSON(collecttest.Declared("suricata", "query_alerts"), map[string]any{
 		"rows": []any{}, "total_rows": 0, "origin": "example-eve-current",
 	})
 
 	if err := harness.Collector.CollectSecurityEvent(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	state, _, _ := harness.AvailabilityOf(t, "security_event", collecttest.ProviderSuricata)
+	state, _, _ := harness.AvailabilityOf(t, "security_event", "suricata")
 	if state != vocab.StateReachable {
 		t.Fatalf("a running engine with nothing to report reads %q", state)
 	}
-	detail := harness.DetailOf(t, "security_event", collecttest.ProviderSuricata)
+	detail := harness.DetailOf(t, "security_event", "suricata")
 	if !strings.Contains(detail, "not a fault") {
 		t.Errorf("the detail is %q, which does not record that silence here is a true reading",
 			detail)

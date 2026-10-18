@@ -28,7 +28,7 @@ per-installation values discovered at runtime (see *Runtime discovery*), never e
 Users; the secret is downloadable once. Requests are stateless and the URI is checked against the key owner's ACL, so the key must belong to
 a least-privilege user whose privileges cover every endpoint `opnview` calls. `X-CSRFToken` applies only to GUI session calls.
 
-**URL shape.** `{base}/api/<module>/<controller>/<command>[/<p1>/<p2>…]`, `{base}` being the firewall's HTTPS URL. Segments after the
+**URL shape.** `{base}/api/<module>/<controller>/<command>[/<p1>/<p2>…]`, `{base}` being the firewall's HTTPS URL. Path components after the
 command are passed positionally, and the router camelises each, so `search_rule` and `searchRule` reach the same handler. Since the 25.7
 series the default ACLs spell the URLs `snake_case`; `opnview` uses that spelling.
 
@@ -118,7 +118,7 @@ records add `class`, `flow`, `hoplimit`, `protoname`, `protonum`, `length`, `src
 | timestamp | `__timestamp__` | **string, not epoch**; depending on the syslog format in use, either `"Mon dd HH:MM:SS"` (no year, no zone) or ISO with the UTC offset stripped |
 
 All nine required fields are returned. Two consequences for step 4: the timestamp must be normalised and a year inferred on ingest, and
-`interface` must be translated through the device-to-description map before it can name a segment. `log_filters` returns `{"action": […],
+`interface` must be translated through the device-to-description map before it can name an interface. `log_filters` returns `{"action": […],
 "interface_name": […], "dir": […]}`, read from the configuration, not from the log.
 
 ### Retention on the firewall
@@ -136,7 +136,7 @@ digest is **included** and must be deduplicated on `__digest__`; if that digest 
 as such. `stream_log` is unsuitable as the primary path — throttled, and closed by the server after about 60 seconds.
 
 **Observation-point limit.** The filter log only records packets that traverse the firewall and match a rule with logging enabled. Traffic
-between two devices inside the same segment never reaches the router and never appears here. Any screen built on these counts must say so.
+between two devices behind the same interface never reaches the router and never appears here. Any screen built on these counts must say so.
 
 ### Which packets a logging rule writes, read for step 5
 
@@ -431,7 +431,7 @@ NetFlow capture and the Insight reporting views are part of the base system, not
 | `/api/diagnostics/networkinsight/top/<provider>/<from>/<to>/<fields>/<measure>/<max_hits>` | GET | positional; optional `filter_field` / `filter_value` in the query string | https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/NetworkinsightController.php |
 | `/api/diagnostics/networkinsight/timeserie/<provider>/<measure>/<from>/<to>/<resolution>/<fields>` | GET | positional | https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/NetworkinsightController.php |
 
-`provider` is an aggregate class name; `fields` is a single path segment holding a comma-separated list of that provider's aggregation
+`provider` is an aggregate class name; `fields` is a single path component holding a comma-separated list of that provider's aggregation
 fields; `measure` is `octets` or `packets` for `top`, and additionally `octets_ps`, `packets_ps` or `bps` for `timeserie`; `from` and `to`
 are Unix timestamps. **The endpoint returning per-address-pair volume** is `top` with the provider `FlowSourceAddrDetails` and a field list
 containing both `src_addr` and `dst_addr`.
@@ -472,7 +472,7 @@ per-source data is kept and the one-hour retention of that resolution: polling m
 often than hourly loses it permanently. The per-pair aggregate only advances once per day, so 900 s is already far more often than the data
 changes.
 
-**Observation-point limit.** NetFlow is captured on the firewall's own interfaces, so volume between two devices inside the same segment is
+**Observation-point limit.** NetFlow is captured on the firewall's own interfaces, so volume between two devices behind the same interface is
 never seen: every figure derived from Insight is a lower bound, and every screen presenting it must say so.
 
 ### Degradation
@@ -526,8 +526,8 @@ an `interfaces` map from interface identifier to description.
 | vendor hint | `mac_info` | `mac_info` | `man` |
 
 The hostname field is uniformly `hostname`. The MAC field is `hwaddr` on the two current backends and `mac` on the legacy plugin — the only
-normalisation needed. `mac_info` carries the OUI vendor string, useful context but never a basis for classifying a device, and never a
-segment.
+normalisation needed. `mac_info` carries the OUI vendor string, useful context but never a basis for classifying a device, and never an
+interface.
 
 ### Retention on the firewall
 
@@ -727,7 +727,7 @@ Everything here is read at startup and refreshed periodically. None of it is eve
 description, falling back to the upper-cased identifier), `device`, `status`, `enabled`, `link_type`, `addr4` and `addr6` (primary address
 in `address/prefix` form — the subnet source), `ipv4[]` and `ipv6[]` (each entry an `ipaddr` in the same form), `vlan_tag`, `gateways[]`,
 `routes[]`, `macaddr`. `/api/diagnostics/interface/get_interface_names` (GET) returns a flat map from raw device name to description — the
-join key that turns the filter log's `interface` field into a segment name. https://docs.opnsense.org/development/api/core/interfaces.html ·
+join key that turns the filter log's `interface` field into an interface name. https://docs.opnsense.org/development/api/core/interfaces.html ·
 https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/OverviewController.php ·
 https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/InterfaceController.php
 
@@ -795,7 +795,7 @@ running**; HTTP 200 with `status` of `running` means **running**. `/api/ids/sett
 `ids.general.interfaces`, an object keyed by interface identifier with `{value, selected}` per entry — the interfaces Suricata actually runs
 on are the keys whose `selected` is truthy. Also read `ids.general.enabled` and `ids.general.eveLog.tls.enable` /
 `ids.general.eveLog.http.enable`. A mixed installation, covering only some interfaces, is fully representable, and the UI must state per
-segment whether it is covered. https://docs.opnsense.org/development/api/core/ids.html ·
+interface whether it is covered. https://docs.opnsense.org/development/api/core/ids.html ·
 https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/IDS/Api/SettingsController.php
 
 ## Polling plan
@@ -1846,7 +1846,7 @@ alternative in this document involves reading a file on the firewall, SSH, or an
    country and operator. Suricata's `tls` SNI would have covered part of this case, and per gap 2 it cannot be read. *Alternative:* none
    that recovers the names; expose the fallback attribution rate per device, so such a device shows up as poorly attributed rather than
    mis-attributed, and say in the UI that encrypted DNS is the reason.
-9. **Traffic inside a segment is invisible.** Not an API gap but a physical one. *Alternative:* none; stated in the UI wherever volumes are
+9. **Traffic behind one interface is invisible.** Not an API gap but a physical one. *Alternative:* none; stated in the UI wherever volumes are
    shown.
 10. **The resolver query window is reachable, but only through one call form, and the wrong form fails silently.** `search_queries` honours
     `timeStart`/`timeEnd` only when they arrive as JSON integers; any other encoding returns the 1000 most recent records with HTTP 200 and

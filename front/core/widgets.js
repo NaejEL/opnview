@@ -11,7 +11,7 @@
  *   opnview.widgets.register({ shape: "<shape>", render: function (input) { ... } });
  *
  * A front-only widget registers `requests` beside `render`: a function of {parameters} answering the
- * reads the core performs for it, limited to the four read routes below.
+ * reads the core performs for it, limited to the three read routes below.
  *
  * A RENDERER IS GIVEN (draw below): the widget's answer, its effective parameters, its registry row,
  * the card's size in CSS pixels, the string lookup (t, tp, tk, td), the formatters and a kit made for
@@ -25,13 +25,14 @@
   var byType = {}, byShape = {};
   var state = { rows: [], shapes: [], refused: [], loaded: false, loading: null, scripts: {} };
 
-  /* The routes a front-only widget's requests may name: reads, of these four, and nothing else. */
+  /* The routes a front-only widget's requests may name: reads, of these three, and nothing else. The
+   * rolling strip is a widget, live_strip, read through the first. */
   var FRONT_ONLY_READS = [/^\/api\/widget\/[a-z0-9_]+(\?.*)?$/, /^\/api\/datasets(\?.*)?$/,
-    /^\/api\/datasets\/[a-z0-9_]+(\.[a-z0-9_]+)*\/query(\?.*)?$/, /^\/api\/live\/strip(\?.*)?$/];
+    /^\/api\/datasets\/[a-z0-9_]+(\.[a-z0-9_]+)*\/query(\?.*)?$/];
 
   /* A path is matched as written, so a dot component or an escape that a browser would resolve to
    * another route is refused before any pattern is tried: a dataset's name is dot-separated words,
-   * never "." or "..", and nothing in the four routes is escaped. */
+   * never "." or "..", and nothing in the three routes is escaped. */
   function allowedRead(path) {
     if (typeof path !== "string") { return false; }
     var route = path.split("?")[0];

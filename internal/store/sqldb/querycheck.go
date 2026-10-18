@@ -31,8 +31,8 @@ const (
 	QueryNotReadOnly = "not_read_only"
 	// QueryDoesNotPlan is a text PostgreSQL cannot plan.
 	QueryDoesNotPlan = "does_not_plan"
-	// QueryUnboundParameter is a parameter the query names that the caller does not bind.
-	QueryUnboundParameter = "unbound_parameter"
+	// QueryParameterNotBound is a parameter the query names that the caller does not bind.
+	QueryParameterNotBound = "parameter_not_bound"
 	// QueryEmpty is a text with no statement at all.
 	QueryEmpty = "empty"
 )
@@ -67,7 +67,7 @@ var writingKeywords = map[string]bool{
 
 // CheckQuery validates an operator query against the read connections and returns its
 // columns and parameters. allowed lists the parameter names the caller binds; a parameter
-// outside it is a QueryUnboundParameter refusal.
+// outside it is a QueryParameterNotBound refusal.
 func (s *Handle) CheckQuery(ctx context.Context, text string, allowed []string) (QueryInfo, error) {
 	if s.Reader == nil {
 		return QueryInfo{}, errors.New("store: no read connections")
@@ -85,7 +85,7 @@ func (s *Handle) CheckQuery(ctx context.Context, text string, allowed []string) 
 			Detail: fmt.Sprintf("a widget query is a SELECT, and this one starts with %q", lexed.firstWord)}
 	}
 	for _, name := range lexed.positional {
-		return QueryInfo{}, &QueryProblem{Kind: QueryUnboundParameter,
+		return QueryInfo{}, &QueryProblem{Kind: QueryParameterNotBound,
 			Detail: fmt.Sprintf("the parameter %q is not a named :parameter and nothing binds it", name)}
 	}
 	bound := map[string]bool{}
@@ -94,7 +94,7 @@ func (s *Handle) CheckQuery(ctx context.Context, text string, allowed []string) 
 	}
 	for _, name := range lexed.Parameters {
 		if !bound[name] {
-			return QueryInfo{}, &QueryProblem{Kind: QueryUnboundParameter,
+			return QueryInfo{}, &QueryProblem{Kind: QueryParameterNotBound,
 				Detail: fmt.Sprintf("the query uses :%s, which no parameter of the widget supplies", name)}
 		}
 	}

@@ -1,0 +1,14 @@
+{
+  "manifest_version": 1,
+  "type": "example_latency_percentile",
+  "shape": "ranked_bars",
+  "windowed": true,
+  "parameters": [
+    { "key": "period", "kind": "enum", "values": ["1h", "24h"], "default": "24h" },
+    { "key": "percentile", "kind": "integer", "min": 1, "max": 99, "default": 50 },
+    { "key": "limit", "kind": "integer", "min": 1, "default": 10 },
+    { "key": "compact", "kind": "boolean", "default": false, "class": "rendering" }
+  ],
+  "queries": ["latency.statements.sql"],
+  "script": "latency.js"
+}

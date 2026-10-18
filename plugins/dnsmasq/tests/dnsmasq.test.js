@@ -32,6 +32,25 @@ test("Dnsmasq leases are read from the fixture with no validity start", function
   });
 });
 
+// Dnsmasq's own fields are decoded here, in the plugin (PA11 of the plugin-API amendment): it reports
+// the interface under its device as well, a reservation through is_reserved, and no lease state
+// beside it, so a lease that is not a reservation is `unknown` rather than a guess.
+test("Dnsmasq's lease fields are decoded into the dhcp_lease contract", function (t) {
+  t.answer("leases", { fixture: "dnsmasq_leases.json" });
+  var read = t.call("dhcp_lease", "leases", 100);
+  t.equal(read.leases.length, 3, "the leases read");
+  var first = read.leases[0];
+  t.equal(first.address, "198.51.100.10", "the address");
+  t.equal(first.mac, "0a:11:22:33:44:55", "the hardware address, as Dnsmasq spells it");
+  t.equal(first.dhcp_client_id, "example-client-identifier-one", "the client identifier");
+  t.equal(first.interface_identifier, "example_if_a", "the interface's configuration key");
+  t.equal(first.interface_device, "exdev0", "the interface's device");
+  t.equal(first.expires_at, 1750003600, "the expiry");
+  t.equal(first.lease_state, "unknown", "a lease that is not a reservation");
+  t.equal(read.leases[2].lease_state, "reserved", "a reservation");
+  t.assert(read.leases[2].expires_at === undefined, "a reservation reports an expiry");
+});
+
 // The resolver: lookups.
 
 test("the Dnsmasq resolver is registered, probed and never read", function (t) {

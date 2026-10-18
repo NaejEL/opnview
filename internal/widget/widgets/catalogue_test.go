@@ -207,11 +207,11 @@ func TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets(t *testing.T) {
 }
 
 // TestTheAPIDocumentsParameterTableMatchesTheCode is AC6's document half: the table of
-// docs/widget-api.md lists every served type's every key, with its class -- data or
+// docs/widget-parameters.md (cited by docs/widget-api.md, *Parameters*) lists every served type's every key, with its class -- data or
 // rendering -- and its default, exactly as the code declares them.
 func TestTheAPIDocumentsParameterTableMatchesTheCode(t *testing.T) {
 	t.Parallel()
-	body, err := os.ReadFile("../../../docs/widget-api.md")
+	body, err := os.ReadFile("../../../docs/widget-parameters.md")
 	check(t, err)
 	documented := map[string]bool{}
 	row := regexp.MustCompile("^\\| `([a-z_]+)` \\| `([a-z_]+)` \\| (data|rendering) \\| (.*) \\|$")
@@ -230,14 +230,14 @@ func TestTheAPIDocumentsParameterTableMatchesTheCode(t *testing.T) {
 			line := strings.Join([]string{preset.Type, param.Key, class, documentedDefault(param)}, " ")
 			expected = append(expected, line)
 			if !documented[line] {
-				t.Errorf("docs/widget-api.md lacks the row: | `%s` | `%s` | %s | %s |", preset.Type, param.Key,
+				t.Errorf("docs/widget-parameters.md lacks the row: | `%s` | `%s` | %s | %s |", preset.Type, param.Key,
 					class, documentedDefault(param))
 			}
 			delete(documented, line)
 		}
 	}
 	for line := range documented {
-		t.Errorf("docs/widget-api.md documents a row the code does not declare: %s", line)
+		t.Errorf("docs/widget-parameters.md documents a row the code does not declare: %s", line)
 	}
 	sort.Strings(expected)
 }

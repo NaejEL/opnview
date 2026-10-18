@@ -14,12 +14,10 @@ import (
 const secretTyped = "secret-typed-in-the-test"
 
 // settingsAnswer is GET /api/settings, as a save leaves it.
-func settingsAnswer(verification string, interval int) map[string]any {
+func settingsAnswer(verification string) map[string]any {
 	return map[string]any{
 		"firewall": map[string]any{"url": "https://firewall.example", "api_key": "key-of-the-test",
 			"certificate_fingerprint": nil, "credential_state": "ready", "verification": verification},
-		"public_suffix": map[string]any{"state": "not_modified", "in_use": true, "version": "2026-10-01",
-			"version_stated": true, "rules": 9000, "confirmed_at": 1773478800, "refresh_interval_seconds": interval},
 	}
 }
 
@@ -50,15 +48,12 @@ func settingsServer(t *testing.T) *fakeServer {
 		"plugin.example_settings.setting.enabled": "Enabled", "plugin.example_settings.setting.greeting": "Greeting",
 		"plugin.example_settings.setting.flavour": "Flavour", "plugin.example_settings.setting.token": "Token",
 	}
-	server.on("GET /api/settings", func(frontjsRequest) frontjsAnswer { return ok(settingsAnswer("not_attempted", 86400)) })
+	server.on("GET /api/settings", func(frontjsRequest) frontjsAnswer { return ok(settingsAnswer("not_attempted")) })
 	server.on("POST /api/settings/firewall", func(request frontjsRequest) frontjsAnswer {
-		return ok(settingsAnswer("verified", 86400))
+		return ok(settingsAnswer("verified"))
 	})
 	server.on("POST /api/settings/firewall/certificate", func(frontjsRequest) frontjsAnswer {
 		return ok(map[string]any{"presented_fingerprint": strings.Repeat("ab", 32)})
-	})
-	server.on("POST /api/settings/public-suffix", func(request frontjsRequest) frontjsAnswer {
-		return ok(settingsAnswer("not_attempted", 43200))
 	})
 	secretSet := false
 	server.on("GET /api/plugins", func(frontjsRequest) frontjsAnswer {
@@ -82,10 +77,6 @@ func settingsServer(t *testing.T) *fakeServer {
 	liveSettings := map[string]any{"settings": []any{map[string]any{"key": "live_interest_seconds", "value": 60,
 		"default": 60, "minimum": 10, "maximum": 3600, "set": false}}, "cadences": []any{}}
 	server.on("GET /api/live/settings", func(frontjsRequest) frontjsAnswer { return ok(liveSettings) })
-	server.on("GET /api/netflow/settings", func(frontjsRequest) frontjsAnswer {
-		return ok(map[string]any{"settings": []any{map[string]any{"key": "netflow_join_tolerance_seconds", "value": 5,
-			"default": 5, "minimum": 1, "maximum": 60, "set": false}}})
-	})
 	server.on("GET /api/widgets", func(frontjsRequest) frontjsAnswer {
 		return ok(map[string]any{"widgets": []any{}, "shapes": []any{},
 			"themes":    []any{map[string]any{"id": "industrial", "origin": "builtin", "file": "front/themes/industrial.json"}},
@@ -145,13 +136,25 @@ func TestTheSettingsViewSavesTheFirewallCardAndFetchesTheCertificate(t *testing.
 	}
 }
 
-func TestTheSettingsViewSavesThePublicSuffixCard(t *testing.T) {
+// TestTheSettingsViewDrawsNoCardForARouteThatIsGone (carried item 6 of Lot 4): the Public Suffix List's and
+// NetFlow's settings are their plugins' (PA8 of the open-plugin-API amendment), drawn by the generic plugin
+// form; the view draws no card of its own for either and reads neither /api/netflow/settings nor
+// /api/settings/public-suffix, which the server no longer answers.
+func TestTheSettingsViewDrawsNoCardForARouteThatIsGone(t *testing.T) {
 	t.Parallel()
 	page := settingsServer(t).page(t, "/settings")
-	page.Input("#suffix-interval", "43200")
-	page.Click(`#card-public-suffix button[type="submit"]`)
-	if body := lastWrite(t, page.Writes(), "/api/settings/public-suffix"); body["refresh_interval_seconds"] != float64(43200) {
-		t.Errorf("the Public Suffix List save sent %v", body)
+	if page.Count("#card-firewall") != 1 || page.Count("#card-live") != 1 {
+		t.Fatalf("the firewall and live cards are not drawn:\n%s", page.Outline())
+	}
+	for _, card := range []string{"#card-public-suffix", "#card-netflow"} {
+		if page.Count(card) != 0 {
+			t.Errorf("the view draws %s, whose route is gone:\n%s", card, page.Outline())
+		}
+	}
+	for _, request := range page.Requests() {
+		if request.Path == "/api/netflow/settings" || request.Path == "/api/settings/public-suffix" {
+			t.Errorf("the view requested %s %s, which the server no longer answers", request.Method, request.Path)
+		}
 	}
 }
 

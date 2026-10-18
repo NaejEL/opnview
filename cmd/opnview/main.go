@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"strings"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/auth"
@@ -19,6 +20,7 @@ import (
 	livelease "github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
+	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/web"
@@ -87,7 +89,8 @@ func run() (err error) {
 		"version to report in the start-up line, for a build that stamps one")
 	var listens pushListens
 	flag.Var(&listens, "push-listen",
-		"a push listener, as <protocol>/<transport>=<host:port> -- syslog/udp, syslog/tcp or netflow/udp -- "+
+		"a push listener, as <protocol>/<transport>=<host:port>, the protocol one of "+
+			strings.Join(push.Protocols(), ", ")+" and the transport udp or tcp as the protocol takes it -- "+
 			"repeatable. Optional and with no default, for the reason --listen has none: with none, no "+
 			"push socket is opened and the firewall's exports are not received (README, \"Push sources\")")
 	var extraSenders pushExtraSenders

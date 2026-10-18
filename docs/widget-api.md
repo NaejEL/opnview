@@ -9,11 +9,9 @@ interface shows: every code below is an English identifier the interface transla
 through its string catalogue.
 
 The code is `internal/widget` (the core) and `plugins/<plugin>/widgets/<type>/` (one directory per
-built-in preset, a widget plugin: its `manifest.json`, its statements and, when the shape cannot
-express it, its script; `docs/plugins.md`, *Widgets*), served by `internal/web`. A widget is a directory, there is no list of them, and an
-operator adds one under `<data-dir>/widgets/<type>/` with a manifest and a query: see
-`docs/widget-authoring.md` and `docs/extending.md`. An operator widget answers with this same envelope
-and these same conditions; its figures are `{"measure", "lower_bound", "value"}`.
+built-in preset, a widget plugin; `docs/plugins.md`, *Widgets*), served by `internal/web`. A widget
+is a directory, there is no list of them, and an operator adds one under `<data-dir>/widgets/<type>/`
+(`docs/widget-authoring.md`, `docs/extending.md`); it answers with this same envelope and conditions.
 
 ## Path, carrier and access
 
@@ -112,7 +110,7 @@ history stored answers that history under the degraded condition. A type that re
 | `series_read_from_hour_slots_beyond_flow_horizon` | whole-hour buckets before the earliest flow came from the interface family's slots |
 | `registrable_domain_grouping_unavailable` | no Public Suffix List has been downloaded yet; nothing is grouped |
 | `unnamed_destinations_beyond_flow_horizon` | part of the window precedes the purge horizon: no aggregate keeps the destinations no name was inferred for by address, so those hours have no address rows (`top_sites`, `sites_by_client`); never estimated |
-| `netflow_not_configured` | a volume answer is not of the `netflow` measure, or carries no figure: no provider of `flow_record` is active, or the capture configuration in force names no interface or has the export disabled |
+| `netflow_not_configured` | a volume answer is not of the `netflow` measure, or carries no figure: no `netflow` provider is active, or the capture configuration in force names no interface or has the export disabled |
 | `capture_configuration_unknown` | the same: the capture configuration could not be read, or lies between two reads that differ |
 | `netflow_not_covering_window` | the same: the window mixes intervals in different states, or the answer counts a connection that is not covered (*Volumes and the observation-point limit*). Its detail, `state_details.netflow_not_covering_window.interval_states`, lists the capture states of the intervals the window meets, in name order: `capture_configured` for an interval with a readable capture configuration whose export is enabled and captures an interface (`opnview`'s own term: no product names it), and `netflow_not_configured` or `capture_configuration_unknown` for the others. A window with a configuration throughout whose answer counts an uncovered connection lists `capture_configured` alone |
 | `netflow_not_served_by_type` | the same: the type built a figure the core did not read in the `netflow` measure, so its answer cannot be given in it (`docs/plugins.md`, *Volume figures and their measure*) |
@@ -183,32 +181,22 @@ the answer is given in; the types are those whose row in *Parameters* carries th
 is of one measure, and every figure in it says which.
 
 - **`logged`** answers the filter log's figures, as every volume type always has.
-- **`best_available`** answers `netflow` only when the window has a readable capture configuration
-  with the export enabled throughout, and every connection the answer counts is covered; with several
-  declared measures, the first in name order that answers. Otherwise it answers `logged`, byte for
-  byte what `logged` answers, with
-  one named state saying why (*Named states*): `netflow_not_configured`,
-  `capture_configuration_unknown`, `netflow_not_covering_window` or `netflow_not_served_by_type`.
-  Every interface may be captured; an answer counting a connection NetFlow cannot measure -- an
-  egress-only interface's inbound traffic, forwarding between two exported interfaces -- falls back
-  to `logged` with `netflow_not_covering_window`. The rule is strict on purpose this cycle (decided
-  question 5 of the amendment "the NetFlow join with every interface captured").
-- **`netflow`** answers the netflow figures. When the window has no readable, enabled configuration,
-  or the type built a figure the core did not read in that measure, it carries **no figure** --
-  `data` is `null` -- and the same named state; it never carries logged figures labelled `netflow`.
-  When NetFlow covered only part of what the answer counts, it answers the netflow figures, each
-  with its `coverage`, and the state `netflow_not_covering_window`.
+- **`best_available`** answers a declared measure only under its strict rule -- for `netflow`, a
+  readable capture configuration with the export enabled throughout the window, and every connection
+  the answer counts covered -- the first such measure in name order. Otherwise it answers `logged`, byte
+  for byte, with one named state saying why: `netflow_not_configured`, `capture_configuration_unknown`,
+  `netflow_not_covering_window` or `netflow_not_served_by_type`.
+- **`netflow`** (any declared measure named) answers its figures. When the window cannot be answered in
+  it, or the type built a figure the core did not read in it, it carries **no figure** -- `data` is
+  `null` -- and the same state, never logged figures labelled `netflow`. When it covered only part of
+  what the answer counts, it answers its figures, each with its `coverage`, and
+  `netflow_not_covering_window`.
 
-Whether a connection is covered is read from what is stored -- the capture configuration in force,
-never inferred from the records, and each connection's measured volume, which the aggregates count
-per direction state -- and judged over the figures the answer itself builds. A connection is
-**covered** when its capture was known and each of its directions is `measured`, `in_progress`,
-`awaiting_export` or `missing`: the export reports it, or should have and reported nothing. Every
-other state of NJ5, or a connection whose capture was not known (`capture_not_known`), is not
-covered. So a figure still
-growing (`in_progress`) or one whose records are late or lost (`awaiting_export`, `missing`) is
-answered in the `netflow` measure, and its `coverage` says so: a covered connection is not
-necessarily `measured`.
+Coverage is read from what is stored, never inferred from the records, and judged over the figures
+the answer builds. A connection is **covered** when its capture was known and each direction is
+`measured`, `in_progress`, `awaiting_export` or `missing` -- the export reports it, or should have and
+reported nothing -- so a covered connection is not necessarily `measured`; every other state, or
+`capture_not_known`, is not covered.
 
 **`lower_bound`** is `true` on every `logged` figure and on every aggregate `netflow` figure: an
 unlogged connection is in no keyed aggregate, and traffic inside one interface is invisible. It is
@@ -344,17 +332,12 @@ reads and its label), so adding one is adding a directory:
 | `read_through` | sample | none | none | none: how far each provider's source has been read |
 | `retention_purge` | sample | none | none | none: how far back the purge has removed the flows |
 
-The NetFlow datasets are the netflow plugin's tables since PA9 of the plugin-API amendment, named as
-every plugin table is (below). `netflow.flow_record` serves every flow record stored, whatever the
-capture configuration was, with what its two indexes named when the join mapped them (`ingress_role`, `ingress_identifier`, `egress_role`,
-`egress_identifier`), its `join_state`, `copy_kind`, `counted_copy` and `unmatched_reason`, and
-**`loss_detectable` per row**: 1 over the intervals whose configuration bounded the exporter's
-sequence counters, so that a loss would have been recorded as a gap, and 0 elsewhere. Its label states
-that a sum over records that are not joined counts copies -- a packet is exported again in its
-translated form, or by a VLAN's parent -- and no built-in widget serves such a sum.
-`netflow.unmatched_record` is the unmatched counters' hour slots: the records that joined no logged leg and are
-no copy, by ingress and egress interface (an identifier, or the role of an index that names none),
-protocol, IP version and reason.
+The NetFlow datasets are the netflow plugin's tables, named as every plugin table is (below):
+`netflow.flow_record`, every flow record stored, with what its indexes named (`ingress_role`,
+`ingress_identifier`, `egress_role`, `egress_identifier`), its `join_state`, `copy_kind`, `counted_copy`,
+`unmatched_reason` and `loss_detectable` per row -- a sum over records not joined counts copies, and no
+built-in widget serves one -- and `netflow.unmatched_record`, the unmatched counters' hour slots by
+ingress and egress interface, protocol, IP version and reason.
 
 **Every table a loaded plugin declares is a dataset**, its columns as its manifest declares them
 (`docs/plugins.md`, *Tables*).
@@ -473,18 +456,14 @@ sampled_at, span_seconds, cadence_seconds, lower_bound}`:
 | `cadence_seconds` | how often the readings are taken: the live cadence of a fine sample, the measurement interval of a baseline one |
 | `lower_bound` | always true: traffic between two clients behind one interface reaches no source |
 
-**Rates summed and rates per peer.** A person's rate (`owner_activity` `cards[].current_rate`, and
-`chip_remainder.current_rate` for the machines folded past `clients_per_card`) is the sum of the rates
-of their machines holding a current sample, `cards[].current_rate_clients` of them: `out_bits_per_second`
-only when every rate summed measured it, `sampled_at` the newest reading, `cadence_seconds` the
-coarsest, `stale_sample` when any rate summed is; with none, `no_current_sample`. A rate per peer
-(`client_traffic_detail` `current_rate_by_peer[]`, `{peer, rate}` by address in byte order) is the
-per-pair reading of `traffic/top` for that peer: `in_bits_per_second` what the peer sent,
-`out_bits_per_second` what was sent to it, measured only when the local address was read with that one
-peer -- `traffic/top` reports a local address's sending only as its total over every peer -- and
-otherwise `null` with `out_measured` false. A peer with no current reading is absent from the list,
-never a rate of 0. The core reads them once for every widget: `host.rates.byPeer()` and
-`host.rates.clientPeers(id)` (`docs/plugins.md`, *The widget host*).
+**Rates summed and rates per peer.** A person's rate (`owner_activity` `cards[].current_rate`,
+`chip_remainder.current_rate`) is the sum over their machines holding a current sample,
+`current_rate_clients` of them: `out_bits_per_second` only when every rate summed measured it, the
+newest `sampled_at`, the coarsest `cadence_seconds`, `stale_sample` when any is. A rate per peer
+(`client_traffic_detail` `current_rate_by_peer[]`, `{peer, rate}` in byte order) is the per-pair
+reading of `traffic/top`, its outbound figure measured only when the local address was read with that
+one peer, and otherwise `null` with `out_measured` false; a peer with no current reading is absent,
+never a rate of 0 (`docs/widget-host.md`, *`host.rates`*).
 
 **The rolling strip.** `GET /api/live/strip`, authenticated, takes `parameters` as a widget does:
 `{"window_seconds": n}`, 120 by default, from two cadences to 3 600 and at most 1 000 buckets; a value
@@ -516,12 +495,9 @@ range is `400` `{"condition", "key"}` -- `unknown_setting`, `invalid_setting_val
 floor. Fine samples are purged after `live_sample_retention_seconds`; baseline samples follow
 `retention_seconds`.
 
-**NetFlow settings.** The netflow plugin declares them, with their bounds and defaults, in its manifest:
-`join_tolerance_seconds` (default 3, 1 to 60), how far after a leg was logged a flow record may start
-and still join it, and `retention_flow_record_seconds` (default 0, which follows `retention_seconds`), how
-long a flow record is kept. They are read and written as every plugin's settings are, through
-`GET` and `POST /api/plugins/netflow/settings`, which also carry the page the manifest groups them in
-(PS17 and PS19 of the NetFlow join amendment, as PA8 of the plugin-API amendment moves them).
+**NetFlow settings** are the netflow plugin's, declared with their bounds and defaults in its manifest
+(`join_tolerance_seconds`, default 3, 1 to 60; `retention_flow_record_seconds`, default 0, which follows
+`retention_seconds`), and read and written through `GET` and `POST /api/plugins/netflow/settings`.
 
 **Rate by port and protocol: the pf state table.** `traffic/top` runs iftop without `-P`, so its
 samples carry no port and no protocol (`scripts/interfaces/traffic_top.py`). The built-in `pf_states`
@@ -532,27 +508,14 @@ completion)*), and stores the rate as the dataset `pf_states.rate` (*Data catalo
 `interface_device`, `direction` (pf's `in` or `out`), `protocol`, `port` (the destination port, `null`
 for a protocol with none), `forward_bits_per_second` (from the state's initiator),
 `reverse_bits_per_second`, `bits_per_second` and `states`. A rate is the difference of each state's
-cumulative bytes between two reads, over the seconds between them; a state created in between counts
-whole, and one that ended in between is gone with its last bytes, so every figure is a lower bound of
-the `sampled` measure, never summed with a logged one. pf keeps a state on the interface a forwarded
-connection enters (`in`) and another on the one it leaves by (`out`): filter `direction` `eq` `in` to
-count a forwarded connection once (the firewall's own traffic has an `out` state only).
+cumulative bytes between two reads, so every figure is a lower bound of the `sampled` measure, never
+summed with a logged one. pf keeps a state on the interface a forwarded connection enters (`in`) and
+another on the one it leaves by (`out`): filter `direction` `eq` `in` to count it once.
 `traffic_composition` serves it per protocol or service member as a live figure of the shape above,
-like a client's or an interface's: a live figure is relative to the local side, and a direction-in
-state sits on the interface its connection entered by, so the local side is the initiator --
-`out_bits_per_second` is the sum of `forward_bits_per_second`, `in_bits_per_second` of
-`reverse_bits_per_second`, `out_measured` is `true` (pf keeps both counters on every state and neither
-column is nullable; a figure a source cannot fill is `null` with `out_measured` false, never a rate of
-`0`, and none is unfilled here), `sampled_at` is the pass's instant, and `span_seconds` and
-`cadence_seconds` are both the pass's `span_seconds`, the cadence the pass actually ran at;
-`bits_per_second` and `states` have no field in a live figure and are not carried. The provider
-(kind `pf_state_rate`) is active on installation and passes every 60 seconds by default
-(`cadence__pf_state_rate__pf_states`, at least 10); it reads at most `max_states` states a pass
-(50 000 by default), and a table larger than that is read in part, its availability
-`partial_readings`. Its cost on the firewall -- one walk of the whole state table per pass -- is
-measured by LV-C, and the maintainer decides whether it stays on if it exceeds 2 processor points.
-It is not a live pass: its cadence does not follow the live-interest lease. Logged volume by port and
-protocol is served from the filter log.
+its fields mapped as `docs/widget-host.md`, *`host.rates`*, tables them. The provider (kind
+`pf_state_rate`) passes every 60 seconds by default (`cadence__pf_state_rate__pf_states`, at least 10)
+and reads at most `max_states` states a pass (50 000), a larger table read in part
+(`partial_readings`). It is not a live pass. Logged volume by port and protocol is the filter log's.
 
 ## Events
 
@@ -593,10 +556,9 @@ outlives its session by more than one lifetime. An event is never replayed: a re
 stream again asks again what it shows. Nothing is buffered beyond 64 events per reader; the server
 holds one database listener while at least one stream is open, and none otherwise.
 
-**The freshness these events stand for.** The current slot of every period is rewritten by every
-derivation (`docs/data-model.md`, *Refresh contract*, rule 2), and a filter-log pass runs every
-`poll_interval_firewall_log_seconds`, 10 by default: a windowed answer can change after each pass,
-and its `aggregate_refresh` is on the stream as soon as the pass has committed.
+The current slot of every period is rewritten by every derivation (`docs/data-model.md`, *Refresh
+contract*, rule 2), so a windowed answer can change after each filter-log pass, and its
+`aggregate_refresh` is on the stream as soon as the pass has committed.
 
 ## Response budgets
 
@@ -607,188 +569,10 @@ one. A figure over its budget fails the run.
 
 ## Parameters
 
-Every served type, every key it accepts -- exactly the backticked keys of its catalogue
-**Parameters** paragraph -- its class and its default. `data` keys are applied: two values
-give two different responses. `rendering` keys are accepted, echoed in `parameters`, and
-never applied. `none` is an absent default: an empty optional list means no restriction. A
-test compares this table with the code.
-
-| Type | Key | Class | Default |
-|---|---|---|---|
-| `interface_traffic_matrix` | `period` | data | `"24h"` |
-| `interface_traffic_matrix` | `scope` | data | `"all"` |
-| `interface_traffic_matrix` | `measure` | data | `"bytes"` |
-| `interface_traffic_matrix` | `interfaces` | data | none |
-| `interface_traffic_matrix` | `show_rules` | data | `true` |
-| `interface_traffic_matrix` | `volume_measure` | data | `"best_available"` |
-| `traffic_over_time_by_scope` | `period` | data | `"24h"` |
-| `traffic_over_time_by_scope` | `scopes` | data | `["outbound","inbound","inter_interface"]` |
-| `traffic_over_time_by_scope` | `measure` | data | `"bytes"` |
-| `traffic_over_time_by_scope` | `interfaces` | data | none |
-| `traffic_over_time_by_scope` | `stacked` | rendering | `false` |
-| `traffic_over_time_by_scope` | `volume_measure` | data | `"best_available"` |
-| `interface_volume_ranking` | `period` | data | `"24h"` |
-| `interface_volume_ranking` | `measure` | data | `"bytes"` |
-| `interface_volume_ranking` | `scope` | data | `"all"` |
-| `interface_volume_ranking` | `limit` | data | `10` |
-| `interface_volume_ranking` | `include_unlabelled` | data | `true` |
-| `interface_volume_ranking` | `volume_measure` | data | `"best_available"` |
-| `client_volume_ranking` | `period` | data | `"24h"` |
-| `client_volume_ranking` | `interfaces` | data | none |
-| `client_volume_ranking` | `identity` | data | `"any"` |
-| `client_volume_ranking` | `limit` | data | `10` |
-| `client_volume_ranking` | `include_unstable` | data | `true` |
-| `client_volume_ranking` | `measure` | data | `"bytes"` |
-| `client_volume_ranking` | `volume_measure` | data | `"best_available"` |
-| `client_traffic_detail` | `client` | data | required |
-| `client_traffic_detail` | `period` | data | `"24h"` |
-| `client_traffic_detail` | `action` | data | `"all"` |
-| `client_traffic_detail` | `scope` | data | `"all"` |
-| `client_traffic_detail` | `columns` | rendering | `["observed_at","destination","port","protocol","action","scope","bytes","country","operator","site_name","method","correlation_delay","interface"]` |
-| `client_traffic_detail` | `limit` | data | `100` |
-| `client_traffic_detail` | `volume_measure` | data | `"best_available"` |
-| `traffic_composition` | `period` | data | `"24h"` |
-| `traffic_composition` | `group_by` | data | `"interface"` |
-| `traffic_composition` | `measure` | data | `"bytes"` |
-| `traffic_composition` | `slices` | data | `6` |
-| `traffic_composition` | `interfaces` | data | none |
-| `traffic_composition` | `clients` | data | none |
-| `traffic_composition` | `scope` | data | `"all"` |
-| `traffic_composition` | `split_by` | data | `"none"` |
-| `traffic_composition` | `window_seconds` | data | none |
-| `traffic_composition` | `show_other` | rendering | `true` |
-| `traffic_composition` | `line_interpolation` | rendering | `"linear"` |
-| `traffic_composition` | `volume_measure` | data | `"best_available"` |
-| `connection_tree` | `period` | data | `"24h"` |
-| `connection_tree` | `root` | data | `"interface"` |
-| `connection_tree` | `depth` | data | `2` |
-| `connection_tree` | `interfaces` | data | none |
-| `connection_tree` | `clients` | data | none |
-| `connection_tree` | `owners` | data | none |
-| `connection_tree` | `measure` | data | `"bytes"` |
-| `connection_tree` | `limit_per_level` | data | `10` |
-| `connection_tree` | `sort` | data | `"volume"` |
-| `connection_tree` | `include_blocked` | data | `true` |
-| `connection_tree` | `volume_measure` | data | `"best_available"` |
-| `owner_activity` | `period` | data | `"24h"` |
-| `owner_activity` | `owners` | data | none |
-| `owner_activity` | `include_unassigned` | data | `true` |
-| `owner_activity` | `measure` | data | `"bytes"` |
-| `owner_activity` | `scope` | data | `"all"` |
-| `owner_activity` | `sort` | data | `"volume"` |
-| `owner_activity` | `clients_per_card` | data | `6` |
-| `owner_activity` | `show_timeline` | data | `true` |
-| `owner_activity` | `volume_measure` | data | `"best_available"` |
-| `top_sites` | `period` | data | `"24h"` |
-| `top_sites` | `interfaces` | data | none |
-| `top_sites` | `clients` | data | none |
-| `top_sites` | `limit` | data | `20` |
-| `top_sites` | `min_flows` | data | `1` |
-| `top_sites` | `group_by_registrable_domain` | data | `false` |
-| `top_sites` | `volume_measure` | data | `"best_available"` |
-| `sites_by_client` | `period` | data | `"24h"` |
-| `sites_by_client` | `interfaces` | data | none |
-| `sites_by_client` | `clients` | data | none |
-| `sites_by_client` | `sites_per_client` | data | `5` |
-| `sites_by_client` | `min_flows` | data | `1` |
-| `sites_by_client` | `show_attribution_rate` | data | `true` |
-| `sites_by_client` | `volume_measure` | data | `"best_available"` |
-| `attribution_rate_per_client` | `period` | data | `"24h"` |
-| `attribution_rate_per_client` | `interfaces` | data | none |
-| `attribution_rate_per_client` | `clients` | data | none |
-| `attribution_rate_per_client` | `limit` | data | `20` |
-| `attribution_rate_per_client` | `sort` | data | `"worst_first"` |
-| `attribution_rate_per_client` | `volume_measure` | data | `"best_available"` |
-| `passed_traffic_world_map` | `period` | data | `"24h"` |
-| `passed_traffic_world_map` | `interfaces` | data | none |
-| `passed_traffic_world_map` | `scope` | data | `"north_south"` |
-| `passed_traffic_world_map` | `size_by` | data | `"bytes"` |
-| `passed_traffic_world_map` | `min_bytes` | data | `0` |
-| `passed_traffic_world_map` | `show_unplaced` | rendering | `true` |
-| `passed_traffic_world_map` | `cluster` | rendering | `true` |
-| `passed_traffic_world_map` | `volume_measure` | data | `"best_available"` |
-| `blocked_traffic_world_map` | `period` | data | `"24h"` |
-| `blocked_traffic_world_map` | `engines` | data | `["firewall_rule","security_engine"]` |
-| `blocked_traffic_world_map` | `interfaces` | data | none |
-| `blocked_traffic_world_map` | `endpoint` | data | `"destination"` |
-| `blocked_traffic_world_map` | `size_by` | data | `"connections"` |
-| `blocked_traffic_world_map` | `min_count` | data | `0` |
-| `blocked_traffic_world_map` | `show_unplaced` | rendering | `true` |
-| `blocked_traffic_world_map` | `cluster` | rendering | `true` |
-| `blocked_traffic_world_map` | `volume_measure` | data | `"best_available"` |
-| `destination_countries` | `period` | data | `"24h"` |
-| `destination_countries` | `interfaces` | data | none |
-| `destination_countries` | `limit` | data | `20` |
-| `destination_countries` | `series` | data | `["allowed","blocked"]` |
-| `destination_countries` | `sort` | data | `"bytes"` |
-| `destination_countries` | `volume_measure` | data | `"best_available"` |
-| `destination_operators` | `period` | data | `"24h"` |
-| `destination_operators` | `interfaces` | data | none |
-| `destination_operators` | `limit` | data | `20` |
-| `destination_operators` | `series` | data | `["allowed","blocked"]` |
-| `destination_operators` | `group` | data | `"asn"` |
-| `destination_operators` | `volume_measure` | data | `"best_available"` |
-| `traffic_sankey` | `period` | data | `"24h"` |
-| `traffic_sankey` | `left` | data | `"interface"` |
-| `traffic_sankey` | `right` | data | `"operator"` |
-| `traffic_sankey` | `scope` | data | `"all"` |
-| `traffic_sankey` | `interfaces` | data | none |
-| `traffic_sankey` | `measure` | data | `"bytes"` |
-| `traffic_sankey` | `max_nodes` | data | `12` |
-| `traffic_sankey` | `min_share` | data | `0` |
-| `traffic_sankey` | `show_blocked` | data | `true` |
-| `traffic_sankey` | `volume_measure` | data | `"best_available"` |
-| `unified_blocked_feed` | `period` | data | `"24h"` |
-| `unified_blocked_feed` | `engines` | data | `["firewall_rule","dns_advertising_list","dns_threat_list","security_engine"]` |
-| `unified_blocked_feed` | `interfaces` | data | none |
-| `unified_blocked_feed` | `clients` | data | none |
-| `unified_blocked_feed` | `limit` | data | `50` |
-| `unified_blocked_feed` | `group_by` | data | `"none"` |
-| `blocked_by_firewall_rule` | `period` | data | `"24h"` |
-| `blocked_by_firewall_rule` | `interfaces` | data | none |
-| `blocked_by_firewall_rule` | `clients` | data | none |
-| `blocked_by_firewall_rule` | `limit` | data | `20` |
-| `blocked_by_firewall_rule` | `include_automatic` | data | `true` |
-| `blocked_by_firewall_rule` | `sort` | data | `"blocked"` |
-| `blocked_dns_lookups` | `period` | data | `"24h"` |
-| `blocked_dns_lookups` | `purposes` | data | `["advertising","tracking","threat","parental","other","unassigned","not_recorded"]` |
-| `blocked_dns_lookups` | `blocklists` | data | none |
-| `blocked_dns_lookups` | `interfaces` | data | none |
-| `blocked_dns_lookups` | `clients` | data | none |
-| `blocked_dns_lookups` | `limit` | data | `20` |
-| `blocked_dns_lookups` | `min_count` | data | `1` |
-| `public_address` | `families` | data | `["ipv4","ipv6"]` |
-| `public_address` | `gateways` | data | none |
-| `public_address` | `show_history` | data | `true` |
-| `public_address` | `history_limit` | data | `5` |
-| `firewall_health_overview` | `metrics` | data | `["uptime","cpu","memory","swap","disk","temperature","gateway_latency","gateway_loss"]` |
-| `firewall_health_overview` | `period` | data | `"24h"` |
-| `firewall_health_overview` | `thresholds` | data | none |
-| `firewall_health_overview` | `layout` | rendering | `"tiles"` |
-| `firewall_health_overview` | `show_last_sampled` | data | `true` |
-| `interface_throughput` | `interfaces` | data | none |
-| `interface_throughput` | `period` | data | `"24h"` |
-| `interface_throughput` | `direction` | data | `"both"` |
-| `interface_throughput` | `measure` | data | `"bits_per_second"` |
-| `interface_throughput` | `stacked` | rendering | `false` |
-| `interface_throughput` | `per_interface_axis` | rendering | `false` |
-| `custom_chart` | `period` | data | `"24h"` |
-| `custom_chart` | `series` | data | `[]` |
-| `custom_chart` | `axes` | rendering | none |
-| `custom_chart` | `legend` | rendering | `"table"` |
-| `custom_chart` | `tooltip` | rendering | `"single"` |
-| `custom_chart` | `annotations` | data | `[]` |
-| `custom_chart` | `volume_measure` | data | `"best_available"` |
-| `source_availability` | `kinds` | data | `["firewall_log","security_event","flow_volume","dhcp_lease","dns_lookup","ip_geolocation","measurement_sample","reconciled_state","registrable_domain","resolver_cache","resolver_local_data"]` |
-| `source_availability` | `show_inactive` | data | `true` |
-| `source_availability` | `compact` | rendering | `false` |
-| `aggregate_freshness` | `periods` | data | `["1h","24h","7d","30d"]` |
-| `aggregate_freshness` | `show_bytes` | data | `true` |
-| `aggregate_freshness` | `compact` | rendering | `false` |
-| `unresolved_joins` | `period` | data | `"24h"` |
-| `unresolved_joins` | `counters` | data | `["interface","rule","client_identity","geo"]` |
-| `unresolved_joins` | `interfaces` | data | none |
-| `unresolved_joins` | `show_records` | data | `false` |
+Every served type's keys, each with its class -- `data`, applied, or `rendering`, echoed and never
+applied -- and its default, are tabled in `docs/widget-parameters.md`, which a test holds equal to the
+code. Every type serving a Volume or a byte Count also takes `volume_measure` (*Volumes and the
+observation-point limit*).
 
 Three choices the catalogue leaves open are recorded here. `show_other` and
 `show_unplaced` are rendering-only: the Other slice and the unplaced counter are always
@@ -854,14 +638,11 @@ Nothing here contacts the firewall.
 | `POST /api/clients/unassign` | `{"clients": [id, ...]}` | the same |
 | `GET /api/clients` | | `{"clients": [...]}`: every client, with or without traffic, by id |
 
-- A `display_name` is trimmed; once trimmed it must be non-empty and held by nobody else, compared
-  byte for byte as the schema's `UNIQUE` compares it.
-- **Undo** creates the person again and restores each assignment **with its original
-  `owner_assigned_at`**. A client assigned to somebody else in the meantime is listed in
-  `not_restored` with `reason` `assigned_elsewhere` and the `owner_id` it now has, a client that
-  no longer exists with `client_not_found`; both are left as they are.
-- **Assignment** sets `owner_assigned_at` to now. A client already assigned to that person keeps its
-  original instant and is answered `changed: false`, as is an unassigned client unassigned again.
+- A `display_name` is trimmed, non-empty and held by nobody else, compared byte for byte.
+- **Undo** restores each assignment **with its original `owner_assigned_at`**; a client assigned
+  elsewhere meanwhile is `not_restored` with `assigned_elsewhere` and its `owner_id`, one that no
+  longer exists with `client_not_found`. **Assignment** sets `owner_assigned_at` to now; a client
+  already so assigned keeps its instant and answers `changed: false`.
 - **A client of the listing** carries `id`, `identity_kind`, `identity_key`, `hostname`, `mac`,
   `last_address`, `interface` (`{id, identifier, description, user_label}` or null),
   `unstable_identity`, `owner` (`{id, display_name}` or null), `owner_assigned_at`,
@@ -901,32 +682,21 @@ with `user_label_empty`, `purpose_not_in_vocabulary` or `malformed_body`, `404` 
 
 ## Settings API
 
-Every figure and every action of the Go-rendered pages had a JSON equivalent (C5 of
-`specs/SPEC-backend-completion-plugins.md`), and step 7 replaced the pages with the front's views
-on these routes and removed them: their paths are now routes of the shell, so a bookmark still
-lands on the same view (`specs/SPEC-step-7-frontend.md`, *Page-removal list*). Each JSON route
-lives in its surface and kept **the page's validation** -- the functions the page saved with --
-**the page's access level and the page's CSRF rule**: an authenticated route answers `401` with
-no session, and a write is a JSON write as above. A test enumerates the routes of the five
-surfaces and holds them to the table below, whose left column names the removed page route each
-JSON route replaced.
+Every figure and action of the removed Go-rendered pages has a JSON route (C5 of
+`specs/SPEC-backend-completion-plugins.md`; step 7 removed the pages, whose paths are now routes of
+the shell). Each kept **the page's validation, access level and CSRF rule**, and a test holds the
+routes of the five surfaces to the table below, whose left column names the removed page route.
 
-**Without a session.** The setup, the sign-in and the reset are reached with no session, as their
-pages are. Their form token is the one in the browser's own cookie, as a page's form compares it:
-`GET /api/session` sets that cookie when there is none and answers the token, and the write
-carries it in `X-CSRF-Token`. The reset is authorised by the key file, presented as the body's
-`key_file` member, and refused `403` with `key_file_refused` without it. A JSON setup after an
-account exists is `403` with `setup_closed`.
+**Without a session**, the setup, the sign-in and the reset take the form token of the browser's own
+cookie, which `GET /api/session` sets and answers. The reset is authorised by the key file (the body's
+`key_file`, else `403` `key_file_refused`); a setup after an account exists is `403` `setup_closed`.
 
-**Answers.** A save answers `200` with every figure of its page as it then stands, and a refusal
-`400` (or the page's status) with `{"condition", "field"}`: the condition is the page's refusal as
-a closed code -- its catalogue key's last segment, `error.firewall_url_invalid` being
-`firewall_url_invalid` -- and `field` the body member it is about. A body that is not one JSON
-object is `malformed_body`. A state the page draws is answered as the same kind of code
-(`ready`, `not_attempted`, `healthy`, `selection_auto`...), an instant as epoch seconds, a duration
-in seconds, and a figure the page replaces by a named state as `null` beside that state. No answer
-carries a secret, a ciphertext or a session token; the form token travels in the answer of
-`GET /api/session`, a setup and a sign-in only.
+**Answers.** A save answers `200` with every figure of its view as it then stands; a refusal `400` (or
+the page's status) with `{"condition", "field"}`, the condition the closed code of the refusal
+(`firewall_url_invalid`) and `field` the body member; a body that is not one object `malformed_body`.
+A state is a code (`ready`, `healthy`, `selection_auto`...), an instant epoch seconds, a duration
+seconds. No answer carries a secret, a ciphertext or a session token; the form token travels only in
+the answers of `GET /api/session`, a setup and a sign-in.
 
 | Page route | JSON route |
 |---|---|
@@ -938,7 +708,7 @@ carries a secret, a ciphertext or a session token; the form token travels in the
 | `GET /recover` | `GET /api/session` |
 | `POST /recover` | `POST /api/account/recover` |
 | `GET /settings` | `GET /api/settings` |
-| `POST /settings` | `POST /api/settings/firewall`, `POST /api/settings/firewall/certificate`, `POST /api/plugins/{name}/settings` (MaxMind, `name` `maxmind`; the Public Suffix List, `name` `publicsuffix`) |
+| `POST /settings` | `POST /api/settings/firewall`, `POST /api/settings/firewall/certificate`, `POST /api/plugins/{name}/settings` |
 | `GET /collection` | `GET /api/collection` |
 | `POST /collection` | `POST /api/collection/kinds/{kind}` |
 | `POST /collection/settings` | `POST /api/collection/kinds/{kind}` (a polled kind), `POST /api/collection/settings/{card}` |
@@ -959,15 +729,10 @@ carries a secret, a ciphertext or a session token; the form token travels in the
   setup is, and `key_file_refused` (`400`) for a login that does not exist; it answers
   `{signed_in: false}`.
 
-**Settings.** `GET /api/settings` answers `{firewall}`:
-
-- `firewall`: `url`, `api_key`, `certificate_fingerprint` (each `null` when not set),
-  `credential_state` (`absent`, `ready`, `undecryptable`) and `verification`.
-
-The appearance is the front's: `GET` and `POST /api/appearance` (*Front*, below).
-
-A plugin's settings -- MaxMind's account ID and licence key, the Public Suffix List's -- are the
-plugin's own: `GET` and `POST /api/plugins/{name}/settings` (*Plugins*, below).
+**Settings.** `GET /api/settings` answers `{firewall}`: `url`, `api_key`, `certificate_fingerprint`
+(each `null` when not set), `credential_state` (`absent`, `ready`, `undecryptable`) and
+`verification`. The appearance is the front's (`docs/front-api.md`); a plugin's settings are the
+plugin's own, with the pages it declares (*Plugins*, below).
 
 | Route | Body | Refusals |
 |---|---|---|
@@ -996,8 +761,6 @@ plugin's own: `GET` and `POST /api/plugins/{name}/settings` (*Plugins*, below).
 | `POST /api/collection/kinds/{kind}` | `{interval_seconds, page_size, selections: {provider_key: "auto" \| "on" \| "off"}}`; `page_size` only where `page_size_adjustable`, and a selection the body leaves out is left as it is | `collection_value_invalid`, `collection_interval_too_large`, `collection_kind_unknown` |
 | `POST /api/collection/settings/{card}` | a member per setting of the card, a whole number of seconds or the mode's word, and `confirm` | the setting's own refusal, `collection_kind_unknown` for an unknown card; a save shortening the retention horizon without `confirm` equal to the new horizon stores nothing and answers `409` `{condition: "retention_confirmation_required", in_force_retention_seconds, requested_retention_seconds, changes: [{key, in_force, requested}]}` |
 
-The page's fill and cancel controls store nothing and have no JSON route: the suggestion is in the
-answer.
 
 **Interfaces.** `GET /api/interface-networks` answers `{interfaces}`, each `{id, description,
 identifier, device, upstream, link_local, networks, overlaps}`, a network being `{network, origin,
@@ -1024,148 +787,24 @@ indicator. A gap is `{kind, provider_key, reason, start_at, end_at, missed_secon
 ## Plugins
 
 - **`GET /api/plugins`**, authenticated, lists every plugin discovered, built-ins first
-  (`docs/plugins.md`): `{"plugins": [...]}`, each with `name`, `version`, `api_version`,
-  `display_name`, `description`, `origin` (`builtin` or `data_directory`), `state` (`loaded`
-  or `refused`), `reason` (`{code, detail}`, for a refused plugin), `providers` (each
-  `kind`, `key`, `display_name`, `form`, `read_strategy`, cadence and `endpoints`),
-  `destinations`, `tables` (each with its row count), `aside_tables`, `widgets`, `settings`
-  (each declaration with its `value` and whether it is `set`; a secret's value is always
-  `null`) and `events` (`schema_rebuilt`, with the aside table and its row count). It
-  carries no credential, ciphertext, session token or CSRF token.
-- **`POST /api/plugins/{name}/settings`**, a write, takes one JSON object of setting keys and
-  values. Every key must be declared and every value within its declaration, or nothing is
-  written: `400` with `{"condition", "key"}`, the condition one of `unknown_setting`,
-  `invalid_setting_value`, `setting_out_of_range`, or `no_key_file` for a secret when the key
-  file is lost; `{"condition": "malformed_body"}` for a body that is not one object;
-  `404` with `{"condition": "unknown_plugin"}`. It answers `200` with
-  `{"plugin", "settings"}`, the settings as they now stand.
+  (`docs/plugins.md`): `{plugins, firewall_version}`, each plugin with `name`, `version`,
+  `api_version`, `display_name`, `description`, `origin` (`builtin` or `data_directory`), `state`
+  (`loaded` or `refused`), `reason` (`{code, detail}`), `providers`, `destinations`, `tables`,
+  `aside_tables`, `widgets`, `settings` (each declaration with its `value` and whether it is `set`; a
+  secret's value is always `null`), `pages` (the sections its manifest groups its settings in),
+  `measures` (the measures it declares), `endpoints`, `push` and `events`. It carries no credential,
+  ciphertext, session token or CSRF token.
+- **`GET /api/plugins/{name}/settings`** answers `{plugin, settings, pages}`, and
+  **`POST /api/plugins/{name}/settings`**, a write, takes one object of setting keys and values: every
+  key declared and every value within its declaration, or nothing is written -- `400`
+  `{"condition", "key"}` with `unknown_setting`, `invalid_setting_value`, `setting_out_of_range` or
+  `no_key_file`, `malformed_body`, `404` `unknown_plugin`. It answers as the `GET`.
 
 ## Front API
 
-The routes the front -- the interface a browser draws (`docs/front-plugins.md`) -- reads beside the
-widget routes: its registry, its strings, the appearance, the widget registry, the reference
-candidates and the dashboards (`specs/SPEC-step-7-frontend.md`, A4 to A8). Every answer is JSON;
-every write is a JSON write (*Write endpoints*).
-
-### The shell, the assets and the front's registry
-
-- **The shell.** `GET` on every path no other route answers -- `/`, `/canvas/{dashboard}/{canvas}`,
-  `/settings`, `/collection`, `/interfaces`, `/sources`, `/people`, `/blocklists`, `/setup`,
-  `/sign-in`, `/recover` among them -- answers the one shell document. It is public and carries no
-  data; the front reads the session and routes itself.
-- **`GET /front/{path}`**, public, answers an asset the front's index declares: the core's scripts
-  and stylesheet, the generated palette stylesheet `palettes.css`, each theme file, the shape
-  renderers, each widget's renderer entry, the basemap. Any other path answers `404`
-  `{"condition": "unknown_asset"}`. The shell and every asset carry the policy of
-  `docs/front-plugins.md`, *What the browser is served*, `nosniff`, `Cache-Control: no-cache` and a
-  content `ETag`.
-- **`GET /api/{anything}`** that no route answers is `404` `{"condition": "unknown_route"}`, never
-  the shell.
-- **`GET /api/front`**, public: `{themes, languages, assets}`. Each theme is `{id, name, url,
-  origin}`, `name` keyed by language code with English always present, `url` the theme file's
-  asset; each language `{code, name, origin}`, `name` the language's name in itself; `assets` is
-  `{scripts, stylesheets}`, the URLs the shell loads, in order. `origin` is `builtin` or
-  `data_directory`.
-
-### Strings
-
-**`GET /api/strings/{language}`**, public, answers `{language, strings}`: the merged catalogue of
-the core, the surfaces, every loaded plugin, every widget directory and, for a language of the data
-directory, its file. It carries an `ETag`. A key an installed language leaves out is not filled
-from English here: the front falls back to English itself, then to the key marked as missing. A
-language not installed is `404` `{"condition": "language_unknown"}`.
-
-### Appearance
-
-The appearance replaces the theme setting: `POST /api/settings/theme` and the `theme` member of
-`GET /api/settings` are gone.
-
-- **`GET /api/appearance`**, public: `{palette, mode, language, default_palette, palettes, modes,
-  languages}`. The first three are the stored values, each `null` while never set -- the
-  first-launch behaviour: the mode follows the operating system, the palette is `default_palette`
-  (`industrial`), and the language is the browser's first installed one, else English. `palettes`
-  are `{id, name}`, `modes` are `system`, `light` and `dark`, and `languages` are the entries of
-  `GET /api/front`: the language picker's options. The picker is shown only when two or more are
-  installed.
-- **`POST /api/appearance`**, authenticated, takes any of `palette`, `mode` and `language`; a
-  member set to `null` clears its value. A value not offered is refused `400` with
-  `{"condition", "field"}`, the condition `palette_unknown`, `mode_unknown` or `language_unknown`,
-  and nothing is written; any other member is `malformed_body`. It answers as the `GET`.
-
-### The widget registry
-
-**`GET /api/widgets`**, authenticated, answers `{widgets, shapes, themes, languages, refused}`:
-
-| Member | What it holds |
-|---|---|
-| `widgets` | every loaded widget, served types and front-only types alike: `{type, shape, origin, plugin, backend, windowed, providers, primary, parameters, references, renderer_url, title_key, question_key, missing_strings}`. `parameters` is exactly the manifest's, plus `volume_measure` on a type declaring `volumes`; `backend` is false for a front-only widget; `renderer_url` is the widget's own renderer, or `null` when its shape's renderer draws it; `title_key` and `question_key` are its catalogue keys; `missing_strings` lists the keys of its own namespace a widget of the data directory does not carry |
-| `shapes` | the core's shape renderers, `{shape, url}` |
-| `themes`, `languages` | every loaded theme `{id, origin, file}` and language `{code, origin, file, missing_strings}` |
-| `refused` | every widget and front part left out at start, `{part, id, code, path, detail}`, with the closed codes of `docs/front-plugins.md` and `docs/widget-authoring.md`, *Refusals* |
-
-A front-only type is never served: `GET /api/widget/{type}` answers it `404`
-`{"condition": "front_only_widget", "type": ...}`.
-
-### References
-
-- **`GET /api/references/{kind}`**, authenticated, lists the candidates of one reference kind of
-  `docs/dashboard-format.md`, *The reference object*: `{kind, by, q, limit, candidates,
-  remainder}`. `by` are the kind's accepted keys; each candidate carries `keys` -- every accepted
-  `by` key with the value a reference by it would carry, or `null` -- a display `label` (data,
-  never matched on), `id` for a kind naming a row, and `referenceable`. A client whose only
-  identity is its address in an interface is listed with `referenceable: false` and `reason:
-  "address_in_interface"`; a randomised MAC carries `unstable_identity`. The parameter `q`
-  filters; at most `limit` (200) candidates are answered and `remainder` counts the rest. A `site`
-  listing under `no_domains` answers `condition: "withheld_by_aggregate_mode"` and no candidate.
-  An unknown kind is `404` `{"condition": "unknown_kind", "kind"}`.
-- **`GET /api/references/resolve?references=<JSON array>`**, authenticated, resolves up to 200
-  reference objects by the widget API's own rules (*References*) and answers `{aggregate_mode,
-  references}`, one entry per object in order: `{index, kind, by, value, label, state}`, `state`
-  one of `resolved`, `no_match`, `ambiguous`, `unknown_kind`, `unknown_by`,
-  `withheld_by_aggregate_mode` or `not_a_reference_object`. Under `no_domains` a site's `value`
-  and `label` are left out. A parameter that is not one JSON array is `400`
-  `{"condition": "malformed_parameters", "reason"}` (`not_json`, `not_an_array`,
-  `trailing_data`); more than 200 objects is `too_many_references`. A widget's own parameters
-  are resolved through its envelope's `unresolved_references`; this route is the canvas scope's,
-  and there is no second resolver.
-
-### Dashboards
-
-A dashboard is one document of `docs/dashboard-format.md`, stored whole in the `dashboard` table:
-`id`, `position`, `document` (type `json`, so members keep their order and unknown keys their
-bytes), `revision`, `origin` (`created`, `imported` or `default`), `source_name` (the imported
-file's name, or `null`), `created_at` and `updated_at` (epoch seconds). Every route is
-authenticated; every write is a JSON write. A document is answered as the text it was stored with,
-byte for byte.
-
-| Route | Body | Answer |
-|---|---|---|
-| `GET /api/dashboards` | | `{dashboards: [{id, position, title, revision, origin, source_name, canvases: [{id, title}]}], format: {current: 1, minimum: 1}}`, in position order |
-| `GET /api/dashboards/{id}` | | `{id, revision, origin, source_name, document}` |
-| `POST /api/dashboards` | `{document, origin, source_name}`; `origin` defaults to `created` | the dashboard created: `{id, position, revision, origin, source_name, created_at, updated_at, document}` |
-| `POST /api/dashboards/{id}` | `{revision, document}` | the dashboard saved at the next revision; a `revision` that is not the stored one is `409` `{condition: "revision_conflict", revision}`, the stored one |
-| `POST /api/dashboards/{id}/delete` | `{}` | the whole deleted dashboard, for an undo |
-| `POST /api/dashboards/restore` | a deletion's answer, unchanged | the dashboard recreated at its own position, revision, origin and instants, under its own id when no dashboard holds it, else under a new one |
-| `POST /api/dashboards/order` | `{ids}`, every dashboard's id once | `{ids}`, the new order |
-| `POST /api/dashboards/default` | `{}` | `{created}`: whether this call stored the default dashboard |
-
-**Structural validation is fail-closed** and runs on every document written, following
-`docs/dashboard-format.md`, *Import validation*: a refusal is `400` `{condition, canvas_index,
-widget_index, field, path}` and nothing is written. The codes are `malformed_body`,
-`format_version_missing`, `format_version_too_new` and `format_version_too_old` (each with
-`file_version`, `current` and `minimum`), `canvases_missing`, `canvases_empty`,
-`canvas_id_missing`, `canvas_id_malformed`, `canvas_title_missing`, `widget_id_missing`,
-`widget_type_and_shape_missing`, `placement_missing`, `placement_not_integer`, `duplicate_id`,
-`nesting_too_deep` and `document_too_large` (above 1 MiB). An id naming no dashboard is `404`
-`unknown_dashboard`. **Referential validity is never checked on save**: an unknown type, an
-unresolved reference or an unknown key is stored as written.
-
-**The default dashboard is offered once, ever** (F7-28). The front asks
-`POST /api/dashboards/default` once a reader is signed in. The first ask ever claims a mark in the
-settings and, when no dashboard is stored, stores the built-in default
-(`front/dashboards/default.json`, portable references only) with origin `default`; every later ask
-stores nothing, so deleting every dashboard never brings the default back. It is a write because
-a read never changes anything.
+The routes the front reads beside the widget routes -- the shell and its assets, the front's
+registry, the strings, the appearance, the widget registry, the reference candidates and the
+dashboards -- are documented in `docs/front-api.md`.
 
 ## Coverage of the mockup
 
@@ -1183,25 +822,17 @@ The envelope member `state_details`, keyed by state name (for `netflow_not_cover
 (allowed, blocked, unknown) on the netflow Volumes of the two map types are built, and `best_available`
 judges "covered" from the stored direction states (*Volumes and the observation-point limit*).
 
-**Every row is re-examined with push sources available** (C6 as amended). The last column names the
-re-examination by one of these classes; a row whose figure exists only with an export names the
-export, the field, and what is served without it.
-
-| Class | Re-examination |
-|---|---|
-| `none` | The row reads nothing a push export carries: the samples of `traffic/top` and `traffic/interface`, the firewall's telemetry, discovery, the rule table, or `opnview`'s own records. No export changes it. |
-| `filter-log` | The filter log may arrive by remote syslog: the `pf` plugin's push entry `filter_log` receives program `filterlog` over TCP (survey, *Push sources*, S1 to S4) and replaces the poll of `/api/diagnostics/firewall/log` while it is alive (`docs/plugins.md`, *Replacing polling*). Its records equal the polled ones in every field of the contract but the identity, so the row's fields are unchanged; a decision series' `complete_until` then trails reception rather than the poll. Without the export: polled, the same answer. |
-| `netflow` | **Export-only second measure.** With a NetFlow v9 export to `opnview`'s `netflow/udp` listener (*Reporting > NetFlow*; 26.7.3 offers v5 or v9 and no IPFIX, S5), **every interface may be captured** (decision 15d): each record is joined from its own interface indexes and each direction of a connection counted once, and the row's Volumes answer in the `netflow` measure (`volume_measure` `netflow`, or `best_available` when every counted connection is covered: each direction `measured`, `in_progress`, `awaiting_export` or `missing`, as PS22 judges it): `measure: "netflow"`, `packets`, `coverage`. Served without it: the `logged` figures under `best_available`, or no figure (`data: null`) under `netflow`, with one named state: `netflow_not_configured` (no export, no active `flow_record` provider, or a capture naming no interface), `capture_configuration_unknown`, `netflow_not_covering_window` or `netflow_not_served_by_type`. A direction NetFlow cannot measure carries its named state in `coverage.direction_states` -- an egress-only interface's inbound traffic is `ingress_not_captured`, an interface the exporter cannot capture `interface_not_exported` -- and `best_available` then answers `logged`. Ingress is captured before pf and egress after it (S11): a packet pf blocks on ingress at the captured interface is exported, one it blocks on egress is not. |
-| `site-names` | Site names come **only from resolver lookups** (the `unbound` plugin: `search_queries`, the resolver cache). S13 is negative: Suricata's syslog output carries type `alert` only, so `tls.sni` and `http.hostname` cannot be received over syslog on 26.7.3, and no push source names a site. |
-| `unbound-log` | Unbound's query and reply lines (S8) reach a syslog target only with no program filter (S3) and carry **no verdict and no blocklist**. They are stored as the dataset `unbound.query_log` (provider kind `unbound_query_log`) and replace nothing: refusals, lists and lookups still come from the polled `search_queries`. |
-| `suricata` | Suricata can send **alerts only** to syslog, as eve JSON, program `suricata` (S7). Receiving them is deferred to step 6 (decision 15c); nothing is built. Without it: the polled `query_alerts`. |
+**Every row is re-examined with push sources available** (C6 as amended). The last column names
+the re-examination by its class, defined once in `docs/plugins.md`, *Push sources*, *What an export
+changes for a widget*; a row whose figure exists only with an export names the export, the field, and
+what is served without it.
 
 | # | Item | Served by (type and field), or why not | Push |
 |---|---|---|---|
 | 1 | canvas period 1 h / 24 h / 7 d / 30 d | **Served.** Every windowed type: `parameters.period`; envelope `window` (`requested`, `covered`, `coverage`, `flow_horizon_at`) | `none` |
 | 2 | current throughput, inbound / outbound / between interfaces | **Served** (C3). `traffic_composition`: `current_rates.by_direction[]` (`key`, `rate`), `current_rates.outbound_unsplit`; each rate `{state, measure: "sampled", in_bits_per_second, out_bits_per_second, sampled_at, span_seconds, cadence_seconds, lower_bound}` (*Live figures*) | `none`. NetFlow is no rate: a record is exported when its flow ends or at the active timeout (default 1800 s; inactive 15 s, S5) |
 | 3 | the same by interface or by client | **Served** (C3). `traffic_composition` with `group_by` `interface` or `client`: `current_rates.by_member[]` | `none`, as row 2 |
-| 4 | throughput by protocol or by service port | **Served.** Logged volume by protocol and by service, port and protocol together (C4): `traffic_composition` with `group_by` `protocol` or `service_port`, `slices[]` (`key` `port:<port>/<protocol>`, `protocol`, `port`), and `recent` with `window_seconds`. **The current rate by protocol and by port** (C4), from the pf state table, not from `traffic/top`, which runs iftop without `-P`: the `pf_states` plugin's dataset `pf_states.rate` (`GET /api/datasets/pf_states.rate/query`; `sampled_at`, `span_seconds`, `interface_device`, `direction`, `protocol`, `port`, `forward_bits_per_second`, `reverse_bits_per_second`, `bits_per_second`, `states`), filtered `direction` `eq` `in` so a forwarded connection counts once, split by `protocol` or by `port` with `protocol`: the `sampled` measure, a lower bound, over the provider's cadence (60 s by default) (*Live figures*, *Rate by port and protocol*; survey, *Live rate endpoints, read from source for C3*). **In the widget itself:** `traffic_composition` with `group_by` `protocol` or `service_port` fills `current_rates.by_member[]` from the latest pass of `pf_states.rate`, filtered `direction` `eq` `in` and read by its catalogue name through `host.datasets.latest` (`docs/plugins.md`, *The widget host*): one `{key, rate}` per member, `key` the slice's own (`protocol:<protocol>`, or `port:<port>/<protocol>` and `port:not_recorded`), `rate` a live figure as a client's or an interface's, `{state, measure, in_bits_per_second, out_bits_per_second, out_measured, sampled_at, span_seconds, cadence_seconds, lower_bound}`, summed over the pass's interfaces -- `out_bits_per_second` the forward counter, from the connection's initiator, `in_bits_per_second` the reverse one, back to it, `out_measured` true, `cadence_seconds` the pass's `span_seconds` (*Rate by port and protocol*) -- `current`, or `stale_sample` when the pass is older than twice its `span_seconds`. `current_rates.by_member_source` `{dataset, state, at, condition}` names where it was read: `unknown_dataset` (no `pf_states` plugin; the data catalogue API's refusal code for that name) or `no_rows` (no pass within the dataset's horizon) is the named absence, `by_member` then empty, never a rate of 0 | `netflow`: the same slices in the netflow measure (`slices[].volume`, `packets`); and the dataset `flow_record` (`GET /api/datasets/flow_record/query`, `split_by` `protocol` or `dst_port`, `octets` and `packets` per bucket; filter `join_state` `eq` `joined` so no copy counts a packet twice). Still not a current rate: a record is dated by its start, at one-second resolution (S10), and arrives after its flow ends or at the active timeout (S5). Without the export: the logged slices; `flow_record` holds no row |
+| 4 | throughput by protocol or by service port | **Served.** Logged volume by protocol and by service, port and protocol together (C4): `traffic_composition` with `group_by` `protocol` or `service_port`, `slices[]` (`key` `port:<port>/<protocol>`, `protocol`, `port`), and `recent` with `window_seconds`. **The current rate by protocol and by port** (C4), from the pf state table, not from `traffic/top`, which runs iftop without `-P`: the `pf_states` plugin's dataset `pf_states.rate` (`GET /api/datasets/pf_states.rate/query`; `sampled_at`, `span_seconds`, `interface_device`, `direction`, `protocol`, `port`, `forward_bits_per_second`, `reverse_bits_per_second`, `bits_per_second`, `states`), filtered `direction` `eq` `in` so a forwarded connection counts once, split by `protocol` or by `port` with `protocol`: the `sampled` measure, a lower bound, over the provider's cadence (60 s by default) (*Live figures*, *Rate by port and protocol*; survey, *Live rate endpoints, read from source for C3*). **In the widget itself:** `traffic_composition` with `group_by` `protocol` or `service_port` fills `current_rates.by_member[]` from the latest pass of `pf_states.rate`, filtered `direction` `eq` `in` and read by its catalogue name through `host.datasets.latest` (`docs/plugins.md`, *The widget host*): one `{key, rate}` per member, `key` the slice's own (`protocol:<protocol>`, or `port:<port>/<protocol>` and `port:not_recorded`), `rate` a live figure as a client's or an interface's, `{state, measure, in_bits_per_second, out_bits_per_second, out_measured, sampled_at, span_seconds, cadence_seconds, lower_bound}`, summed over the pass's interfaces -- `out_bits_per_second` the forward counter, from the connection's initiator, `in_bits_per_second` the reverse one, back to it, `out_measured` true, `cadence_seconds` the pass's `span_seconds` (*Rate by port and protocol*) -- `current`, or `stale_sample` when the pass is older than twice its `span_seconds`. `current_rates.by_member_source` `{dataset, state, at, condition}` names where it was read: `unknown_dataset` (no `pf_states` plugin; the data catalogue API's refusal code for that name) or `no_rows` (no pass within the dataset's horizon) is the named absence, `by_member` then empty, never a rate of 0 | `netflow`: the same slices in the netflow measure (`slices[].volume`, `packets`); and the dataset `netflow.flow_record` (`GET /api/datasets/netflow.flow_record/query`, `split_by` `protocol` or `dst_port`, `octets` and `packets` per bucket; filter `join_state` `eq` `joined` so no copy counts a packet twice). Still not a current rate: a record is dated by its start, at one-second resolution (S10), and arrives after its flow ends or at the active timeout (S5). Without the export: the logged slices; `netflow.flow_record` holds no row |
 | 5 | packets by blocking reason, per direction | **Served.** `traffic_composition` with `group_by` `blocking_reason` and `split_by` `direction`: `rings[]` (`direction`, `slices[]` keyed `decision:<decision>`, `other`, `total`), `aside[]`; `traffic_over_time_by_scope`: `series[].buckets[].volume` (allowed / blocked / unknown). The logged measure counts records, not packets | `filter-log`; `netflow`: a packet count is `slices[].volume.packets` in the netflow measure only, and its blocked part holds only what pf refused after an ingress capture (S11) |
 | 6 | refused lookups beside the rings | **Served.** `traffic_composition` (`blocking_reason`): `aside[]` (`dns_list`, `count`); `blocked_dns_lookups`: `total`; `blocked_traffic_world_map`: `dns_blocked_lookups` | `unbound-log` |
 | 7 | detection-engine figures | **Partly.** State: `source_availability` (`security_event`), `traffic_composition` `aside[]` (`security_engine`, `condition`). Refusals: `blocked_traffic_world_map.security_events`, `.security_unplaced`; `unified_blocked_feed` (`engine_kind` `security_engine`, `decided_by.kind` `signature`). Figures by signature, over time and by client: **step 6** -- `security_alerts_over_time`, `alerts_by_signature`, `alerts_by_client_and_interface` answer `unknown_widget_type`; the target interface is gap G7, the covered interfaces G8 (`docs/widget-catalogue.md`, *Gaps found*) | `suricata` |
@@ -1241,7 +872,7 @@ export, the field, and what is served without it.
 | 41 | swap; gateway latency and loss | **Served.** `firewall_health_overview`: metrics `swap`, `gateway_latency`, `gateway_loss` | `none` |
 | 42 | bit/s, bytes, packets | **Served.** `interface_throughput`: `series[]` (`interface`, `direction`, `measure` `interface_counter`, `unit`, `points`, `resets`) | `none`: NetFlow is never substituted for an interface counter |
 | 43 | errors | **Served.** `interface_throughput` with `measure` `errors` | `none` |
-| 44 | custom chart: throughput, volume and CPU per bucket | **Served.** `custom_chart`: `series[]` (`interface_throughput` `bits_per_second`, `traffic` `bytes`, `firewall_metric` `cpu`) | `netflow`: `traffic` measures `netflow_bytes`, `netflow_packets`; any dataset with a time column, `flow_record`, `unmatched_record` and `unbound.query_log` included (*Series of `custom_chart`*) |
+| 44 | custom chart: throughput, volume and CPU per bucket | **Served.** `custom_chart`: `series[]` (`interface_throughput` `bits_per_second`, `traffic` `bytes`, `firewall_metric` `cpu`) | `netflow`: `traffic` measures `netflow_bytes`, `netflow_packets`; any dataset with a time column, `netflow.flow_record`, `netflow.unmatched_record` and `unbound.query_log` included (*Series of `custom_chart`*) |
 | 45 | People page: owners, client counts, identity, unstable badge, assignment date | **Served** (C1). `GET /api/owners` (`client_count`), `GET /api/clients` (`identity_kind`, `identity_key`, `unstable_identity`, `owner`, `owner_assigned_at`, `interface`), and the writes of *People and machines* | `none` |
 
 **Outside the 45 rows.**

@@ -1,0 +1,39 @@
+{
+  "api_version": 2,
+  "name": "example_flows",
+  "version": "1.0.0",
+  "display_name": "Example flows",
+  "description": "Keeps the flow records a NetFlow exporter sends.",
+  "tables": [
+    {
+      "name": "records",
+      "columns": [
+        { "name": "started_at", "type": "instant" },
+        { "name": "source", "type": "ip" },
+        { "name": "destination", "type": "ip" },
+        { "name": "protocol", "type": "integer", "role": "dimension" },
+        { "name": "input_index", "type": "integer", "role": "dimension" },
+        { "name": "octets", "type": "integer", "role": "measure", "unit": "byte" }
+      ],
+      "retention": { "column": "started_at" }
+    }
+  ],
+  "kinds": [ { "kind": "example_flows", "push": true } ],
+  "providers": [ { "kind": "example_flows", "display_name": "Example flows", "source": "push" } ],
+  "push": [
+    {
+      "name": "records",
+      "protocol": "netflow",
+      "filter": { "require": ["octetDeltaCount", "flowStartMilliseconds", "ingressInterface"] },
+      "fields": {
+        "started_at": "flowStartMilliseconds",
+        "source": ["sourceIPv4Address", "sourceIPv6Address"],
+        "destination": ["destinationIPv4Address", "destinationIPv6Address"],
+        "protocol": "protocolIdentifier",
+        "input_index": "ingressInterface",
+        "octets": "octetDeltaCount"
+      },
+      "output_table": "records"
+    }
+  ]
+}

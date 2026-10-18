@@ -44,7 +44,7 @@ func TestTheFirstMeasurementPassWaitsForTheFirstDiscovery(t *testing.T) {
 	harness, fresh := freshCollector(t)
 	task := taskNamed(t, fresh, config.Defaults(), "measurement_sample")
 	detail := func() string {
-		return harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight)
+		return harness.DetailOf(t, "measurement_sample", "insight")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

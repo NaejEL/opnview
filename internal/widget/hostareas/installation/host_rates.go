@@ -6,6 +6,7 @@ import (
 	"github.com/dop251/goja"
 
 	"github.com/NaejEL/opnview/internal/store/samples"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/figures"
 	"github.com/NaejEL/opnview/internal/widget/script"
 )
@@ -33,6 +34,14 @@ import (
 //	                             read with to its rate, empty when it has none
 //	host.rates.none()            the named absence of a rate: what a subject with no current sample
 //	                             reads
+//	host.rates.series(window)    every sampling instant of [from, to), fine and baseline, oldest first,
+//	                             each split per direction as the current rates are: {span_seconds,
+//	                             instants: [{at, by_direction, outbound_unsplit}]}, by_direction a map
+//	                             from each direction read at that instant to {in_bits_per_second,
+//	                             out_bits_per_second}. A direction absent from an instant read nothing
+//	                             there, which is a measured 0 at a sampled instant, and an instant
+//	                             absent from the list was not sampled -- never a rate of 0. It renews
+//	                             no lease: it reads history
 
 func init() {
 	script.RegisterHostArea("rates", func(call *script.ScriptCall, area *goja.Object) {
@@ -79,10 +88,50 @@ func init() {
 			}
 			return call.Value(peerRates(rates.ByClientPeer[id], r.Now))
 		})
+		call.Function(area, "series", func(arguments goja.FunctionCall) goja.Value {
+			window := call.IntervalOf(arguments.Argument(0), "the window")
+			instants, err := r.Db.ReadRateSeries(r.Ctx, window.From, window.To)
+			if err != nil {
+				return call.Fail(err)
+			}
+			series := rateSeries{SpanSeconds: vocab.SampleSeconds, Instants: make([]rateInstant, 0, len(instants))}
+			for _, instant := range instants {
+				entry := rateInstant{At: instant.At, ByDirection: map[string]rateFigures{},
+					OutboundUnsplit: figuresOf(instant.Rates.OutboundUnsplit)}
+				for direction, rate := range instant.Rates.ByDirection {
+					entry.ByDirection[direction] = figuresOf(rate)
+				}
+				series.Instants = append(series.Instants, entry)
+			}
+			return call.Value(series)
+		})
 		call.Function(area, "none", func(goja.FunctionCall) goja.Value {
 			return call.Value(figures.SampledRate(samples.CurrentRate{}, false, r.Now))
 		})
 	})
+}
+
+// rateSeries is host.rates.series: the sampling instants of a window.
+type rateSeries struct {
+	SpanSeconds int64         `json:"span_seconds"`
+	Instants    []rateInstant `json:"instants"`
+}
+
+// rateInstant is one sampling instant, split per direction.
+type rateInstant struct {
+	At              int64                  `json:"at"`
+	ByDirection     map[string]rateFigures `json:"by_direction"`
+	OutboundUnsplit rateFigures            `json:"outbound_unsplit"`
+}
+
+// rateFigures are a rate's two figures, relative to the local addresses.
+type rateFigures struct {
+	In  float64 `json:"in_bits_per_second"`
+	Out float64 `json:"out_bits_per_second"`
+}
+
+func figuresOf(rate samples.CurrentRate) rateFigures {
+	return rateFigures{In: rate.InBitsPerSecond, Out: rate.OutBitsPerSecond}
 }
 
 // peerRates renders rates keyed by peer address, each a chip rate: a peer is in the map only

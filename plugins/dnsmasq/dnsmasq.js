@@ -74,6 +74,34 @@ function noReadProbe(host, state, absence) {
 var noCacheRead = "this resolver offers no cache read through the API";
 var noLocalDataRead = "this resolver offers no local-data read through the API";
 
+// decodeLease decodes one row of /api/dnsmasq/leases/search (survey, data source 4, "Response
+// shape": hwaddr, address, hostname, client_id, expire, is_reserved, mac_info, and the interface
+// under if_name, device and if_descr) into a dhcp_lease_record, or null for a row with no address,
+// which names no machine and keys nothing. Dnsmasq reports no lease state beside is_reserved, so a
+// lease that is not a reservation is `unknown` rather than a guess. The MAC is handed over as
+// Dnsmasq spells it: the core normalises it, because the identity cascade that keys on it is the
+// core's.
+function decodeLease(row) {
+  var address = d.string(row, "address");
+  if (address === null) {
+    return null;
+  }
+  return {
+    address: address,
+    mac: d.rawString(row, "hwaddr"),
+    hostname: d.string(row, "hostname"),
+    dhcp_client_id: d.string(row, "client_id"),
+    duid: d.string(row, "duid"),
+    iaid: d.string(row, "iaid"),
+    vendor_hint: d.string(row, "mac_info"),
+    lease_state: d.flag(row, "is_reserved") === true ? "reserved" : "unknown",
+    interface_identifier: d.rawString(row, "if_name"),
+    interface_device: d.rawString(row, "device"),
+    starts_at: null,
+    expires_at: d.epochPointer(row, "expire")
+  };
+}
+
 exports.dhcp_lease = {
   // probe reads the service state and then whether the backend serves any range. Only the
   // EMPTINESS of the ranges is read: the ranges themselves are the firewall's addressing
@@ -114,7 +142,7 @@ exports.dhcp_lease = {
     }
     var leases = [];
     for (var i = 0; i < read.rows.length; i++) {
-      var lease = opnview.dhcp_lease.decodeLease(read.rows[i]);
+      var lease = decodeLease(read.rows[i]);
       if (lease !== null) {
         leases.push(lease);
       }

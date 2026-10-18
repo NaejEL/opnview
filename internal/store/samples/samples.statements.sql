@@ -15,19 +15,25 @@
 -- statement: read_pair_rates
 -- The rates of both sampled subjects: the totals of each local address
 -- (interface_endpoint) and the per-peer figures (interface_endpoint_pair), fine
--- and baseline, each with the live cadence of a fine sample (null for a baseline one).
-SELECT subject_kind, subject_key, measure, value, sampled_at, live_cadence_seconds
+-- and baseline, each with the live cadence of a fine sample (null for a baseline one). A
+-- subject is read by its parts, the device and the addresses its provider reported, never by
+-- its key; a reading missing a part its kind has names no subject the rates can place.
+SELECT subject_kind, interface_device, local_address, coalesce(peer_address, ''), measure, value,
+       sampled_at, live_cadence_seconds
 FROM measurement_sample
 WHERE sampled_at >= :since
   AND sampled_at <= :now
   AND subject_kind IN ('interface_endpoint', 'interface_endpoint_pair')
-  AND measure IN ('rate_bits_in', 'rate_bits_out');
+  AND measure IN ('rate_bits_in', 'rate_bits_out')
+  AND interface_device IS NOT NULL
+  AND local_address IS NOT NULL
+  AND (subject_kind = 'interface_endpoint' OR peer_address IS NOT NULL);
 
 
 -- statement: read_sampled_pair_bytes
 -- The bytes seen in samples, per device, from the totals of each local address:
 -- a local address's outbound bytes exist only as that total.
-SELECT substr(subject_key, 1, strpos(subject_key, ' ') - 1),
+SELECT interface_device,
        sampled_at,
        sum(value)
 FROM measurement_sample
@@ -35,6 +41,7 @@ WHERE sampled_at >= :from
   AND sampled_at < :to
   AND subject_kind = 'interface_endpoint'
   AND measure IN ('cumulative_bytes_in', 'cumulative_bytes_out')
+  AND interface_device IS NOT NULL
 GROUP BY 1, 2;
 
 

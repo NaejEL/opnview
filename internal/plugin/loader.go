@@ -414,6 +414,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 	if refusal := checkMeasures(manifest); refusal != nil {
 		return nil, refusal
 	}
+	if refusal := checkSampleMetrics(manifest); refusal != nil {
+		return nil, refusal
+	}
 	if plugin.declaredDatasets, refusal = checkDatasets(manifest, directory); refusal != nil {
 		return nil, refusal
 	}
@@ -469,6 +472,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 	// registered for the process by the load that serves it, as it is registered in that load's store.
 	if options.Store != nil {
 		if refusal := registerMeasures(manifest); refusal != nil {
+			return nil, refusal
+		}
+		if refusal := registerSampleMetrics(manifest); refusal != nil {
 			return nil, refusal
 		}
 	}

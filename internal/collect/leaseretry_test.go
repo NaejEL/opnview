@@ -8,7 +8,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -29,7 +28,7 @@ func TestABackendThatCannotBeReadByDesignDoesNotHoldTheHostNameRetry(t *testing.
 	t.Parallel()
 	harness := collecttest.LeaseRetryHarness(t, "example-key-unsupported", "example-host-unsupported")
 	ctx := context.Background()
-	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", collecttest.ProviderDnsmasq, collecttest.ProviderISC); err != nil {
+	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", "dnsmasq", "isc"); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
 
@@ -42,7 +41,7 @@ func TestABackendThatCannotBeReadByDesignDoesNotHoldTheHostNameRetry(t *testing.
 			done, resolution)
 	}
 	// The backend that cannot be read keeps its own reason, as before.
-	if detail := harness.DetailOf(t, "dhcp_lease", collecttest.ProviderISC); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, "dhcp_lease", "isc"); !strings.Contains(detail,
 		"field contract is unverified") {
 		t.Errorf("the unreadable backend's detail is %q, which has lost its reason", detail)
 	}
@@ -55,10 +54,10 @@ func TestTheLimitIsAValidatedSettingOfTheLeasePass(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.LeaseRetryHarness(t, "example-key-configured", "example-host-configured")
 	ctx := context.Background()
-	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
+	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", "dnsmasq", "kea"); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
-	harness.Fake.Answer(collecttest.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
+	harness.Fake.Answer(collecttest.Declared("kea", "leases"), http.StatusInternalServerError, []byte(`{}`))
 	settings := config.Defaults()
 	settings.LeaseBackendFailurePassLimit = 1
 	harness.Collector.Configure(settings)
@@ -71,14 +70,13 @@ func TestTheLimitIsAValidatedSettingOfTheLeasePass(t *testing.T) {
 	}
 }
 
-// TestANeighbourAtAnAddressThisFirewallHoldsCreatesNoClient is AC6's first point. The
-// neighbour tables list the firewall's own interface entries; an entry at an address
-// the firewall holds at that instant, in either family, is this firewall and never a
-// client, while the other neighbours are still clients.
+// TestANeighbourAtAnAddressThisFirewallHoldsCreatesNoClient is AC6's first point, against the
+// neighbours plugin (PA-AC20). The neighbour tables list the firewall's own interface entries; an
+// entry at an address the firewall holds at that instant, in either family, is this firewall and
+// never a client, while the other neighbours are still clients.
 func TestANeighbourAtAnAddressThisFirewallHoldsCreatesNoClient(t *testing.T) {
 	t.Parallel()
-	harness := collecttest.NewProbeHarness(t)
-	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
+	harness := collecttest.ArrangeNeighbourCollection(t)
 	ctx := context.Background()
 	held := stringColumn(t, harness.Store, `SELECT DISTINCT a.address FROM interface_address AS a
 		JOIN interface AS i ON i.id = a.interface_id
@@ -99,17 +97,17 @@ func TestANeighbourAtAnAddressThisFirewallHoldsCreatesNoClient(t *testing.T) {
 	device := stringColumn(t, harness.Store, `SELECT device FROM interface WHERE NOT is_upstream
 		ORDER BY id LIMIT 1`)[0]
 
-	harness.Fake.AnswerJSON(opnsense.ARPTable, []any{
+	harness.Fake.AnswerJSON(collecttest.Declared("neighbours", "arp"), []any{
 		map[string]any{"mac": "0a:11:22:33:44:f1", "ip": heldV4, "intf": device,
 			"manufacturer": "example vendor string", "expired": false, "permanent": true},
 		map[string]any{"mac": "0a:11:22:33:44:f2", "ip": "198.51.100.77", "intf": device,
 			"manufacturer": "example vendor string", "expired": false, "permanent": false},
 	})
-	harness.Fake.AnswerJSON(opnsense.NDPTable, []any{
+	harness.Fake.AnswerJSON(collecttest.Declared("neighbours", "ndp"), []any{
 		map[string]any{"mac": "0a:11:22:33:44:f3", "ip": heldV6, "intf": device,
 			"manufacturer": "example vendor string", "expired": false, "permanent": true},
 	})
-	if err := harness.Collector.CollectDHCPLease(ctx); err != nil {
+	if err := harness.Collector.CollectNeighbour(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
 

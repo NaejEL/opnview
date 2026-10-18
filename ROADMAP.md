@@ -126,7 +126,8 @@ so and amend this roadmap rather than quietly working around it.
   deliberately, and the reason is recorded next to it.
 
   **This rule exists because it was broken silently and nobody noticed for
-  three steps.** `segment` was invented in the very first commit, before any
+  three steps.** A term of its own was invented in the very first commit (`CLAUDE.md`,
+  *Vocabulary*, names it), before any
   research existed, and was never reconciled with what OPNsense calls the
   thing: an **interface**. The table gave itself away — `interface_identifier`,
   `device_name`, `discovered_description`, three columns describing an
@@ -880,9 +881,9 @@ Correction of 2026-09-23, applied directly by the maintainer rather than
 through a cycle, after inspection found the schema naming an OPNsense object
 with a word OPNsense does not use:
 
-- **`segment` is replaced by `interface`, everywhere.** The entity, its
+- **The invented term is replaced by `interface`, everywhere.** The entity, its
   columns, the queries, the seed, the purge, the schema checks and every
-  document. `segment` was invented before any research existed; OPNsense calls
+  document. It was invented before any research existed; OPNsense calls
   the thing an interface and always did.
 - **`device` now means only the network device**, as OPNsense means it. The
   machine on the network is a `client`, the word Kea, Dnsmasq and Unbound all

@@ -59,7 +59,7 @@
             : h("span", { "class": "muted" }, t("state.source.no_detail")),
           (provider.opnsense_pages || []).map(function (page) {
             return h("a", { key: "page-" + page.page, href: page.url, rel: "noreferrer", "class": "opnsense-page" },
-              tk("opnsense_page.", page.page));
+              td(page.label));
           })
         ])
       ]);

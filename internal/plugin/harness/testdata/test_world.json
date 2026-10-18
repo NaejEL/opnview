@@ -2,7 +2,7 @@
   "__provenance__": {
     "synthesised_from": "RFC 5737",
     "captured_from_a_firewall": false,
-    "statement": "The plugin test world's own fixture, not installation data. sender is the address a push message delivered by t.deliverSyslog or t.deliverNetflow comes from when the test names none, and the one sender the test world accepts as the firewall's. It is the first address of TEST-NET-1, a documentation block reserved by RFC 5737, so it can never be anybody's firewall."
+    "statement": "The plugin test world's own fixture, not installation data. sender is the address a push message delivered by t.deliverSyslog or t.deliverPackets comes from when the test names none, and the one sender the test world accepts as the firewall's. It is the first address of TEST-NET-1, a documentation block reserved by RFC 5737, so it can never be anybody's firewall."
   },
   "body": {
     "sender": "192.0.2.1"

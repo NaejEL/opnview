@@ -23,8 +23,8 @@ func TestAStoreFailureInTheRecordPassIsRecorded(t *testing.T) {
 		kind     string
 		collect  func(*collect.Collector, context.Context) error
 	}{
-		{collecttest.UnboundDumpCache, "resolver_cache", (*collect.Collector).CollectResolverCache},
-		{collecttest.UnboundListLocalData, "resolver_local_data", (*collect.Collector).CollectResolverLocalData},
+		{collecttest.Declared("unbound", "dump_cache"), "resolver_cache", (*collect.Collector).CollectResolverCache},
+		{collecttest.Declared("unbound", "list_local_data"), "resolver_local_data", (*collect.Collector).CollectResolverLocalData},
 	} {
 		harness := collecttest.ArrangeRecordCollection(t)
 		ctx := context.Background()
@@ -36,14 +36,14 @@ func TestAStoreFailureInTheRecordPassIsRecorded(t *testing.T) {
 		if err := read.collect(harness.Collector, ctx); err == nil {
 			t.Errorf("%s: a read whose records could not be stored reported no failure", read.kind)
 		}
-		state, _, _ := harness.AvailabilityOf(t, read.kind, collecttest.ProviderUnbound)
+		state, _, _ := harness.AvailabilityOf(t, read.kind, "unbound")
 		if state != vocab.StateUnavailable {
 			t.Errorf("%s: the resolver whose records could not be stored reads %q", read.kind, state)
 		}
-		if got := harness.OutcomeOf(t, read.kind, collecttest.ProviderUnbound); got != vocab.OutcomeStoreFailure {
+		if got := harness.OutcomeOf(t, read.kind, "unbound"); got != vocab.OutcomeStoreFailure {
 			t.Errorf("%s: the outcome is %q, not %q", read.kind, got, vocab.OutcomeStoreFailure)
 		}
-		providerID, err := harness.Store.ProviderID(ctx, read.kind, collecttest.ProviderUnbound)
+		providerID, err := harness.Store.ProviderID(ctx, read.kind, "unbound")
 		if err != nil {
 			t.Fatal(err)
 		}

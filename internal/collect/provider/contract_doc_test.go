@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The contract tables of docs/plugins.md are the contracts of the kind files (kinds/<kind>.json), rendered. A13 of the
+// The contract tables of docs/plugin-kinds.md (cited by docs/plugins.md, *Kinds*) are the contracts of the kind files (kinds/<kind>.json), rendered. A13 of the
 // backend-completion cycle: the document a third party writes a plugin from cannot drift from the
 // code that reads the plugin. Each kind's tables sit between <!-- contract:<kind> --> and
 // <!-- /contract:<kind> -->, and the shared result between <!-- contract:shared --> and
@@ -62,12 +62,12 @@ func renderContract(contract Contract) string {
 	return out.String()
 }
 
-// documentedBlocks reads every marked block of docs/plugins.md by its name.
+// documentedBlocks reads every marked block of docs/plugin-kinds.md by its name.
 func documentedBlocks(t *testing.T) map[string]string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugins.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugin-kinds.md"))
 	if err != nil {
-		t.Fatalf("reading docs/plugins.md: %v", err)
+		t.Fatalf("reading docs/plugin-kinds.md: %v", err)
 	}
 	blocks := map[string]string{}
 	pattern := regexp.MustCompile(`(?s)<!-- contract:([a-z_]+) -->\n(.*?)<!-- /contract:([a-z_]+) -->`)
@@ -90,18 +90,18 @@ func TestTheDocumentedContractsAreTheContracts(t *testing.T) {
 	for name, want := range expected {
 		got, present := documented[name]
 		if !present {
-			t.Errorf("docs/plugins.md has no block for %s; it is:\n<!-- contract:%s -->\n%s\n<!-- /contract:%s -->",
+			t.Errorf("docs/plugin-kinds.md has no block for %s; it is:\n<!-- contract:%s -->\n%s\n<!-- /contract:%s -->",
 				name, name, want, name)
 			continue
 		}
 		if got != want {
-			t.Errorf("docs/plugins.md's block for %s differs from its kind file; it is:\n<!-- contract:%s -->\n%s\n"+
+			t.Errorf("docs/plugin-kinds.md's block for %s differs from its kind file; it is:\n<!-- contract:%s -->\n%s\n"+
 				"<!-- /contract:%s -->", name, name, want, name)
 		}
 	}
 	for name := range documented {
 		if _, known := expected[name]; !known {
-			t.Errorf("docs/plugins.md documents %s, which no kind file defines", name)
+			t.Errorf("docs/plugin-kinds.md documents %s, which no kind file defines", name)
 		}
 	}
 }

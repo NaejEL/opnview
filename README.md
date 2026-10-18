@@ -334,7 +334,7 @@ Two consequences follow, and neither is a defect:
 PostgreSQL reclaims it, and that is said rather than glossed over.** A credential is
 stored as one row, replaced in place, so no live row holds the previous value. But
 PostgreSQL keeps the replaced row version until a vacuum reclaims its space, and its
-write-ahead log holds it until the log segment is recycled, so for a while the
+write-ahead log holds it until its write-ahead log file is recycled, so for a while the
 database's files hold the previous ciphertext as well as the current one. It is encrypted under the same key file, so
 it discloses nothing to anyone who does not hold that file, and only a
 **superseded** secret to anyone who holds both — the same people the limitation

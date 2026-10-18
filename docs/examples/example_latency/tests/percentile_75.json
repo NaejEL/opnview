@@ -1,0 +1,46 @@
+{
+  "type": "example_latency_percentile",
+  "parameters": {
+    "compact": false,
+    "limit": 1,
+    "percentile": 75,
+    "period": "24h"
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789914000,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789914000,
+      "to": 1790000400
+    },
+    "coverage": "covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [],
+  "condition": "reachable",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "percentile": 75,
+    "bars": [
+      {
+        "target": "beta",
+        "samples": 1,
+        "value": 75
+      }
+    ],
+    "remainder": {
+      "members": 1,
+      "samples": 4
+    }
+  }
+}

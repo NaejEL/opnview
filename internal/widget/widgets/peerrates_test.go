@@ -54,13 +54,13 @@ func TestAThirdPartyWidgetServesThePerPeerRateFromFilesAlone(t *testing.T) {
 	clientID := f.scalar(t, "SELECT id FROM client WHERE last_address = $1 AND identity_kind = 'mac' ORDER BY id LIMIT 1", client.address)
 	at := f.now - 20
 	peers := []string{f.peers[0], f.peers[1]}
-	f.sampleAt(t, at, vocab.SubjectInterfaceEndpoint, vocab.InterfaceEndpointKey(client.iface.device, client.address),
+	f.sampleAt(t, at, vocab.SubjectInterfaceEndpoint, endpointKey(client.iface.device, client.address),
 		vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, 900)
 	f.sampleAt(t, at, vocab.SubjectInterfaceEndpointPair,
-		vocab.InterfaceEndpointPairKey(client.iface.device, client.address, peers[0]),
+		pairKey(client.iface.device, client.address, peers[0]),
 		vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, 600)
 	f.sampleAt(t, at, vocab.SubjectInterfaceEndpointPair,
-		vocab.InterfaceEndpointPairKey(client.iface.device, client.address, peers[1]),
+		pairKey(client.iface.device, client.address, peers[1]),
 		vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, 300)
 
 	dataDir := t.TempDir()

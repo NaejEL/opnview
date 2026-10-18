@@ -20,7 +20,40 @@
 // in the availability detail.
 
 var d = opnview.decode;
-var samples = opnview.measurement_sample;
+
+// SAMPLE_SECONDS is how long one traffic/top snapshot covers: the endpoint runs iftop with `-s 2`,
+// printing one text output after two seconds (opnsense/core 26.7.3,
+// src/opnsense/scripts/interfaces/traffic_top.py), so its rates and its bytes describe those two
+// seconds and nothing longer.
+var SAMPLE_SECONDS = 2;
+
+// The subjects this implementation reads on one interface carry their parts as fields
+// (interface_device, local_address, peer_address), which is what the host reads of them; the
+// subject_key is this plugin's own name for the subject -- the device and the addresses joined by
+// spaces, local end first, because the order carries the direction -- and the host never composes
+// or parses it.
+function endpointSubject(device, localAddress) {
+  return { subject_key: device + " " + localAddress, interface_device: device, local_address: localAddress };
+}
+
+function pairSubject(device, localAddress, peerAddress) {
+  return { subject_key: device + " " + localAddress + " " + peerAddress, interface_device: device,
+    local_address: localAddress, peer_address: peerAddress };
+}
+
+// subjectReading is one reading of a subject read on one interface.
+function subjectReading(kind, subject, measure, unit, value, at) {
+  var reading = { subject_kind: kind, subject_key: subject.subject_key, interface_device: subject.interface_device,
+    local_address: subject.local_address };
+  if (subject.peer_address !== undefined) {
+    reading.peer_address = subject.peer_address;
+  }
+  reading.measure = measure;
+  reading.unit = unit;
+  reading.value = value;
+  reading.sampled_at = at;
+  return reading;
+}
 
 // The candidate field names of the telemetry endpoints. UNVERIFIED: every list below. The survey
 // establishes that these endpoints answer on a live firewall and does NOT establish their field
@@ -266,7 +299,7 @@ function samplePairVolume(host, discovery, now) {
       }
       // The record's own totals, over every peer of the local address: the local address's sending
       // is reported only here, so these are what a client's outbound figures come from.
-      var endpointKey = samples.interfaceEndpointKey(device, localAddress);
+      var endpoint = endpointSubject(device, localAddress);
       var totals = [
         ["rate_bits_in", "rate_bits_in", "bit_per_second"],
         ["rate_bits_out", "rate_bits_out", "bit_per_second"],
@@ -278,8 +311,7 @@ function samplePairVolume(host, discovery, now) {
         if (total === null) {
           continue;
         }
-        readings.push({ subject_kind: "interface_endpoint", subject_key: endpointKey, measure: totals[t][1],
-          unit: totals[t][2], value: total, sampled_at: at });
+        readings.push(subjectReading("interface_endpoint", endpoint, totals[t][1], totals[t][2], total, at));
       }
       var details = d.objects(record.details);
       for (var p = 0; p < details.length; p++) {
@@ -288,7 +320,7 @@ function samplePairVolume(host, discovery, now) {
         if (peerAddress === null || peerAddress === localAddress) {
           continue;
         }
-        var subjectKey = samples.interfaceEndpointPairKey(device, localAddress, peerAddress);
+        var pair = pairSubject(device, localAddress, peerAddress);
         // A details entry is the peer's half of one iftop line pair: what the PEER sent to the
         // local address, so its figures are the pair's inbound figures relative to the local end.
         var values = [
@@ -308,8 +340,7 @@ function samplePairVolume(host, discovery, now) {
           if (value === null) {
             continue;
           }
-          readings.push({ subject_kind: "interface_endpoint_pair", subject_key: subjectKey,
-            measure: values[v][2], unit: values[v][3], value: value, sampled_at: at });
+          readings.push(subjectReading("interface_endpoint_pair", pair, values[v][2], values[v][3], value, at));
           wrote = true;
         }
         if (wrote) {
@@ -324,7 +355,7 @@ function samplePairVolume(host, discovery, now) {
       failed: false };
   }
   return { readings: readings, detail: "sampled " + pairs + " endpoint pairs from a live snapshot of " +
-    samples.sampleSeconds + " seconds; no endpoint exposes a per-pair aggregate over a past window, so this " +
+    SAMPLE_SECONDS + " seconds; no endpoint exposes a per-pair aggregate over a past window, so this " +
     "history is opnview's own", outcome: "healthy", failed: false };
 }
 

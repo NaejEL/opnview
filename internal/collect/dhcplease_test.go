@@ -8,7 +8,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 
-	"github.com/NaejEL/opnview/internal/opnsense"
 )
 
 // The lease and neighbour collector tests.
@@ -113,12 +112,9 @@ func TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsStoreNone(t
 	// Kea, where the figure is real.
 	keaHarness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, keaHarness.Fake, keaHarness.Collector)
-	keaHarness.Fake.AnswerFixture(collecttest.KeaStatus, "kea_status_running.json")
-	keaHarness.Fake.AnswerFixture(collecttest.KeaDHCPv4, "kea_dhcpv4_get.json")
-	keaHarness.Fake.AnswerFixture(collecttest.KeaLeases, "kea_leases.json")
-	// The neighbour tables are read on every lease pass, whichever backend is active.
-	keaHarness.Fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
-	keaHarness.Fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
+	keaHarness.Fake.AnswerFixture(collecttest.Declared("kea", "status"), "kea_status_running.json")
+	keaHarness.Fake.AnswerFixture(collecttest.Declared("kea", "dhcpv4"), "kea_dhcpv4_get.json")
+	keaHarness.Fake.AnswerFixture(collecttest.Declared("kea", "leases"), "kea_leases.json")
 	if err := keaHarness.Collector.ProbeKind(ctx, "dhcp_lease"); err != nil {
 		t.Fatalf("probing: %v", err)
 	}
@@ -172,18 +168,17 @@ func TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsStoreNone(t
 	}
 }
 
-// TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs is decision 12.
+// TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs is decision 12, against the neighbours plugin
+// (PA-AC20 of the plugin-API amendment).
 //
 // get_arp and get_ndp carry a MAC, an address, the interface and a vendor string, and the
 // survey's inferred text named neither. On a firewall whose DHCP is unreadable they are the
-// only client identity there is, so they are read unconditionally — and this test proves it
-// by reading them with no lease backend active at all.
+// only client identity there is, so they are a kind of their own, read whatever the lease kind
+// does -- and this test proves it by reading them with no lease backend active at all: every
+// neighbour is a client at the MAC level.
 func TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs(t *testing.T) {
 	t.Parallel()
-	harness := collecttest.NewProbeHarness(t)
-	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	harness.Fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
-	harness.Fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
+	harness := collecttest.ArrangeNeighbourCollection(t)
 	// No lease backend is arranged, so every lease probe answers 404 and no provider of the
 	// kind is active.
 	if err := harness.Collector.ProbeKind(context.Background(), "dhcp_lease"); err != nil {
@@ -194,7 +189,10 @@ func TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs(t *testing.T) {
 	}
 
 	if err := harness.Collector.CollectDHCPLease(context.Background()); err != nil {
-		t.Fatalf("collecting: %v", err)
+		t.Fatalf("collecting the leases: %v", err)
+	}
+	if err := harness.Collector.CollectNeighbour(context.Background()); err != nil {
+		t.Fatalf("collecting the neighbours: %v", err)
 	}
 
 	neighbours := len(fixtureRecords(t, "get_arp.json")) + len(fixtureRecords(t, "get_ndp.json"))
@@ -252,10 +250,10 @@ func TestTwoDHCPServersBothServingAreBothActivated(t *testing.T) {
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 
 	// Both servers running and serving a range.
-	harness.Fake.AnswerFixture(collecttest.KeaStatus, "kea_status_running.json")
-	harness.Fake.AnswerFixture(collecttest.KeaDHCPv4, "kea_dhcpv4_get.json")
-	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("kea", "status"), "kea_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("kea", "dhcpv4"), "kea_dhcpv4_get.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("dnsmasq", "status"), "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.Declared("dnsmasq", "settings"), "dnsmasq_settings.json")
 
 	if err := harness.Collector.ProbeKind(ctx, "dhcp_lease"); err != nil {
 		t.Logf("the lease probe reported: %v", err)

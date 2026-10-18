@@ -45,10 +45,10 @@ func TestLiveFieldsEveryLiveFigureCarriesItsMeasureSpanCadenceAndBound(t *testin
 	cadence := int64(10)
 	// A fine sample 25 s old at a 10 s cadence: older than its cadence allows.
 	for _, measure := range []vocab.Measure{vocab.MeasureRateBitsIn, vocab.MeasureRateBitsOut} {
-		if err := f.db.InsertMeasurementSample(t.Context(), vocab.MeasurementSample{
+		if err := f.db.InsertMeasurementSample(t.Context(), withParts(vocab.MeasurementSample{
 			SubjectKind: vocab.SubjectInterfaceEndpoint,
-			SubjectKey:  vocab.InterfaceEndpointKey(client.iface.device, client.address), Measure: measure,
-			Unit: "bit_per_second", Value: 4000, SampledAt: f.now - 25, LiveCadenceSeconds: &cadence}); err != nil {
+			SubjectKey:  endpointKey(client.iface.device, client.address), Measure: measure,
+			Unit: "bit_per_second", Value: 4000, SampledAt: f.now - 25, LiveCadenceSeconds: &cadence})); err != nil {
 			t.Fatal(err)
 		}
 	}

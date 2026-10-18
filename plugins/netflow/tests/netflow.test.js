@@ -157,7 +157,7 @@ test("an unreadable interfaces_info leaves every export unknown and says so", fu
 });
 
 test("a v9 record is stored from its Information Elements with no script, beside its delivery", function (t) {
-  t.deliverNetflow(t.fixture("netflow_v9.json"));
+  t.deliverPackets("netflow", t.fixture("netflow_v9.json"));
   var records = t.pushed("flow_records");
   t.equal(records.length, 1, "records");
   var record = records[0];
@@ -182,8 +182,8 @@ test("a v9 record is stored from its Information Elements with no script, beside
 });
 
 test("a datagram delivered twice names one delivery", function (t) {
-  t.deliverNetflow(t.fixture("netflow_v9.json"));
-  t.deliverNetflow(t.fixture("netflow_v9.json"));
+  t.deliverPackets("netflow", t.fixture("netflow_v9.json"));
+  t.deliverPackets("netflow", t.fixture("netflow_v9.json"));
   var records = t.pushed("flow_records");
   t.equal(records.length, 2, "records handed on: the table keeps one row per delivery and position");
   t.equal(records[0].delivery, records[1].delivery, "the deliveries of one datagram delivered twice");

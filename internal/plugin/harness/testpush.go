@@ -21,13 +21,13 @@ import (
 )
 
 // The push half of a plugin's test world (PS15 of the push amendment): recorded syslog lines and
-// NetFlow packets are delivered THROUGH THE CORE'S REAL DECODER AND ROUTER -- the same hub, decoders,
+// datagrams of a binary protocol are delivered THROUGH THE CORE'S REAL DECODER AND ROUTER -- the same hub, decoders,
 // header filter, regular expression, field mapping and parse function the service runs -- and the
 // test reads what reached the entry's table or kind. A test never calls its parse function directly
 // to prove ingestion.
 //
 //	t.deliverSyslog(lines, {transport: "tcp", sender: "<address>"})  each line one syslog message
-//	t.deliverNetflow(packets, {sender: "<address>"})                  each packet hexadecimal text
+//	t.deliverPackets("<protocol>", packets, {sender: "<address>"})   each packet hexadecimal text, UDP
 //	t.pushed("<entry>")       the rows (or core-kind records) the entry stored, instants as epoch seconds
 //	t.pushCounters("<entry>") the entry's counters: admitted, skipped, push_value_invalid, script_calls...
 //	t.listenerCounters("<protocol>", "<transport>") the listener's: header_unparseable, no_subscriber...
@@ -168,15 +168,11 @@ func (discardKinds) ObservePushCondition(context.Context, string, string, provid
 
 // pushAPI adds the push functions to a test's API.
 func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.FunctionCall) goja.Value)) {
-	deliver := func(protocol string, decodeHex bool) func(goja.FunctionCall) goja.Value {
+	deliver := func(protocol, transport string, decodeHex bool) func(goja.FunctionCall) goja.Value {
 		return func(call goja.FunctionCall) goja.Value {
 			world, err := w.pushWorldOf()
 			if err != nil {
 				scripthost.Throw(vm, "%v", err)
-			}
-			transport := push.TransportUDP
-			if protocol != "netflow" {
-				transport = push.TransportTCP
 			}
 			address := world.sender
 			if options, isObject := call.Argument(1).Export().(map[string]any); isObject {
@@ -203,7 +199,7 @@ func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.Functio
 				if decodeHex {
 					payload, err = hex.DecodeString(strings.Join(strings.Fields(text), ""))
 					if err != nil {
-						scripthost.Throw(vm, "a NetFlow packet is hexadecimal text: %v", err)
+						scripthost.Throw(vm, "a packet is hexadecimal text: %v", err)
 					}
 				}
 				if err := world.hub.Deliver(ctx, protocol, transport, payload, address); err != nil {
@@ -225,8 +221,15 @@ func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.Functio
 		}
 		return vm.ToValue(body)
 	})
-	set("deliverSyslog", deliver("syslog", false))
-	set("deliverNetflow", deliver("netflow", true))
+	set("deliverSyslog", deliver("syslog", push.TransportTCP, false))
+	// A binary protocol's datagrams: the protocol is named by the test, as its entry names it.
+	set("deliverPackets", func(call goja.FunctionCall) goja.Value {
+		rest := goja.FunctionCall{This: call.This}
+		if len(call.Arguments) > 1 {
+			rest.Arguments = call.Arguments[1:]
+		}
+		return deliver(call.Argument(0).String(), push.TransportUDP, true)(rest)
+	})
 	set("acceptSender", func(call goja.FunctionCall) goja.Value {
 		world, err := w.pushWorldOf()
 		if err != nil {
