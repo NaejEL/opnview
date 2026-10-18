@@ -28,7 +28,8 @@ change validated on the maintainer's firewall. There are no specifications.
 | [0014](0014-opnsense-version-variants.md) | A plugin supports several OPNsense versions by declared ranges | Proposed |
 | [0015](0015-streams.md) | A stream is opened once and shared | Proposed |
 | [0016](0016-the-front.md) | Named canvases, widgets as plugins, themes and languages as files | Accepted |
-| [0017](0017-core-audit.md) | The package-by-package verdict on the existing Go | Proposed |
+| [0017](0017-core-audit.md) | The package-by-package verdict on the existing Go | Accepted |
+| [0018](0018-the-write-primitive.md) | The write primitive: a plugin owns its tables, views and writes in SQL | Proposed |
 
 ## Template
 
