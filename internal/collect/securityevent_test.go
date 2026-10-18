@@ -21,7 +21,7 @@ import (
 // arrangeAlertCollection stands up a harness whose alert feed is the active source.
 func arrangeAlertCollection(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	harness.Fake.AnswerFixture(collecttest.Declared("suricata", "status"), "ids_status_running.json")
 	harness.Fake.AnswerFixture(collecttest.Declared("suricata", "alert_logs"), "get_alert_logs.json")

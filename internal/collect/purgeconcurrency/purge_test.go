@@ -285,7 +285,7 @@ func slotBytesAt(t *testing.T, database *store.Store, period vocab.Period, insta
 // retention of 600 s.
 func arrangeProbeRecord(t *testing.T) (*collecttest.ProbeHarness, int64) {
 	t.Helper()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	observed := collecttest.ReferenceEpoch() - 1000
 	probe := pageRecord{digest: "exampledigest0000000000000000301", observedAt: observed, device: "exdev0",
@@ -477,7 +477,7 @@ func TestAPurgeBeforeTheFirstDerivationPlacesWhatItRemoves(t *testing.T) {
 // resolver are all active.
 func arrangeEveryStoringSource(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	for endpoint, fixture := range map[opnsense.Endpoint]string{
 		opnsense.FirewallLog:                              "firewall_log.json",

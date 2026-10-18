@@ -280,7 +280,7 @@ func TestAnUnresolvedLookupStoredBeforeARestartIsResolvedByTheFirstLeasePassAfte
 // logged on two interfaces is paired by the collector's own derivation.
 func TestTheFilterLogStoresTheTwoPairingFieldsAndPairsTheTwoLegs(t *testing.T) {
 	t.Parallel()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	rows := []any{
 		map[string]any{"__digest__": "exampledigestpair0000000000000001", "__timestamp__": "2026-09-26T23:58:01",

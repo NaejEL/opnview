@@ -57,7 +57,7 @@ func upstreamByIdentifier(t *testing.T, database *store.Store) map[string]bool {
 // TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway is AC8.
 func TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway(t *testing.T) {
 	t.Parallel()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	expected := func(body map[string]any) map[string]bool {
 		result := map[string]bool{}
@@ -178,7 +178,7 @@ func TestTheClassificationDoesNotDependOnTheOrderRecordsArrive(t *testing.T) {
 
 	results := []map[string]flowClassification{}
 	for _, page := range [][]any{records, reversed} {
-		harness := collecttest.NewProbeHarness(t)
+		harness := collecttest.NewDiscoveredProbeHarness(t)
 		collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 		harness.Fake.AnswerJSON(opnsense.FirewallLog, page)
 		if err := harness.Collector.ProbeKind(context.Background(), "firewall_log"); err != nil {
@@ -213,7 +213,7 @@ func TestTheClassificationDoesNotDependOnTheOrderRecordsArrive(t *testing.T) {
 // TestNonLoggingRulesPerInterfaceEqualADirectCountOverTheFixture is AC13.
 func TestNonLoggingRulesPerInterfaceEqualADirectCountOverTheFixture(t *testing.T) {
 	t.Parallel()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	if stored := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM rule WHERE interface IS NOT NULL"); stored == 0 {
 		t.Fatal("no rule's interface was stored")

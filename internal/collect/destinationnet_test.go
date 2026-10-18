@@ -13,7 +13,7 @@ import (
 // does not report the field stores NULL -- not reported -- rather than an empty value.
 func TestRuleDestinationNetIsStoredVerbatimFromSearchRule(t *testing.T) {
 	t.Parallel()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 
 	reported := 0

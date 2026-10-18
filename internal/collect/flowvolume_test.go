@@ -24,7 +24,7 @@ import (
 // telemetry answers.
 func arrangeMeasurementCollection(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	harness.Fake.AnswerFixture(collecttest.Declared("insight", "netflow_is_enabled"), "netflow_is_enabled_local.json")
 	harness.Fake.AnswerFixture(collecttest.Declared("insight", "traffic_top"), "traffic_top.json")

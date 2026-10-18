@@ -26,7 +26,7 @@ import (
 // arrangeResolverCollection stands up a harness whose resolver is the active source.
 func arrangeResolverCollection(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	harness.Fake.AnswerFixture(collecttest.Declared("unbound", "status"), "unbound_status_running.json")
 	harness.Fake.AnswerFixture(collecttest.Declared("unbound", "settings"), "unbound_settings.json")

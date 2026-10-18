@@ -31,7 +31,7 @@ func interfaceIDOf(t *testing.T, database *store.Store, identifier string) int64
 // stored before the failure -- is placed, with its scope, and in its slots.
 func TestAFilterLogPassThatFailsPartWayStillPlacesWhatItStored(t *testing.T) {
 	t.Parallel()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	page := []any{
 		map[string]any{"__digest__": "exampledigest0000000000000000201", "__timestamp__": "2026-09-26T23:50:01",
@@ -81,7 +81,7 @@ func TestAFilterLogPassThatFailsPartWayStillPlacesWhatItStored(t *testing.T) {
 // the networks they cover are proposed as detected, a link-local one never.
 func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing.T) {
 	t.Parallel()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	body := interfacesBody(t)
 	for _, row := range body["rows"].([]any) {

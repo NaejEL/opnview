@@ -2,6 +2,9 @@ package collecttest
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"path"
 	"runtime"
 	"sync"
 	"testing"
@@ -191,7 +194,7 @@ func AnswerArranged(t *testing.T, fake *providertest.Firewall, name string) Arra
 // firewall reported active (testdata/arrangements/lease_collection.json).
 func ArrangeLeaseCollection(t *testing.T) *ProbeHarness {
 	t.Helper()
-	harness := NewProbeHarness(t)
+	harness := NewDiscoveredProbeHarness(t)
 	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	harness.Arrange(t, "lease_collection")
 	return harness
@@ -201,7 +204,7 @@ func ArrangeLeaseCollection(t *testing.T) *ProbeHarness {
 // source (testdata/arrangements/neighbour_collection.json).
 func ArrangeNeighbourCollection(t *testing.T) *ProbeHarness {
 	t.Helper()
-	harness := NewProbeHarness(t)
+	harness := NewDiscoveredProbeHarness(t)
 	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	harness.Arrange(t, "neighbour_collection")
 	return harness
@@ -214,7 +217,7 @@ func StringPointer(value string) *string { return &value }
 // ArrangeFilterLogCollection stands up a harness whose filter log is the active source.
 func ArrangeFilterLogCollection(t *testing.T) *ProbeHarness {
 	t.Helper()
-	harness := NewProbeHarness(t)
+	harness := NewDiscoveredProbeHarness(t)
 	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	harness.Fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
 	if err := harness.Collector.ProbeKind(context.Background(), filterlog.Kind); err != nil {
@@ -248,7 +251,7 @@ func (h *ProbeHarness) AvailabilityInstant(t *testing.T, kind, providerKey strin
 // names: the lookup is resolved by the first lease pass that examines it.
 func LeaseRetryHarness(t *testing.T, key, hostname string) *ProbeHarness {
 	t.Helper()
-	harness := NewProbeHarness(t)
+	harness := NewDiscoveredProbeHarness(t)
 	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	arrangement := harness.Arrange(t, "lease_collection")
 	ctx := context.Background()
@@ -522,7 +525,7 @@ func MustFirewallLogSource(t *testing.T, key string) provider.Registration {
 // local data (testdata/arrangements/record_collection.json).
 func ArrangeRecordCollection(t *testing.T) *ProbeHarness {
 	t.Helper()
-	harness := NewProbeHarness(t)
+	harness := NewDiscoveredProbeHarness(t)
 	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	harness.Arrange(t, "record_collection")
 	return harness
@@ -563,4 +566,65 @@ func NewTestCollectorWithSources(t *testing.T, client *opnsense.Client, database
 	collector.Configure(ZeroMaxAges(config.Defaults()))
 	t.Cleanup(collector.Broker().Close)
 	return collector
+}
+
+// NewDiscoveredProbeHarness is NewProbeHarness over a database the discoverable firewall was already
+// discovered into, at ReferenceInstant, from the answers ArrangeDiscoverableFirewall gives: written once
+// into a derived template (decision 5 of the plugin-API amendment's first verification), so the
+// interfaces, their addresses and the mirror tables of their answers are cloned rather than written again
+// in every database. The harness still runs ArrangeDiscoverableFirewall, as every collector test does;
+// over a database that already holds the same firewall that discovery is the no-op upsert a second one is.
+func NewDiscoveredProbeHarness(t *testing.T) *ProbeHarness {
+	t.Helper()
+	revision := "discoverable_firewall at " + ReferenceInstant().UTC().Format(time.RFC3339) + ": " +
+		arrangementDigest(t, "discoverable_firewall")
+	dsn := storetest.DatabasePrepared(t, revision, func(ctx context.Context, dsn string) error {
+		database, err := store.Open(ctx, dsn)
+		if err != nil {
+			return err
+		}
+		fake := providertest.NewFirewall(t)
+		AnswerArranged(t, fake, "discoverable_firewall")
+		collector := collect.NewWithSources(providertest.NewClient(t, fake), database, NewFixedClock(ReferenceInstant()),
+			nil)
+		collector.Broker().Scheduler().SetSettings(schedule.Settings{MaxInFlight: 64, MaxPerSecond: 1e6})
+		collector.Configure(ZeroMaxAges(config.Defaults()))
+		discovered := collector.RefreshDiscovery(ctx)
+		collector.Broker().Close()
+		if discovered != nil {
+			_ = database.Close()
+			return discovered
+		}
+		return database.Close()
+	})
+	database, err := store.Open(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("opening the test database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("closing the test database: %v", err)
+		}
+	})
+	fake := providertest.NewFirewall(t)
+	clock := NewFixedClock(ReferenceInstant())
+	return &ProbeHarness{Fake: fake, Store: database, Collector: NewTestCollector(t, providertest.NewClient(t, fake),
+		database, clock), Clock: clock}
+}
+
+// arrangementDigest is a digest of an arranged world's file and of every fixture it answers with: what a
+// template prepared from that world reads.
+func arrangementDigest(t *testing.T, name string) string {
+	t.Helper()
+	digest := sha256.New()
+	raw, err := arrangementFiles.ReadFile(path.Join("testdata", "arrangements", name+".json"))
+	if err != nil {
+		t.Fatalf("reading the arrangement %s: %v", name, err)
+	}
+	digest.Write(raw)
+	for _, answer := range ReadArrangement(t, name).Answers {
+		digest.Write([]byte(answer.Fixture))
+		digest.Write(providertest.FixtureBody(t, answer.Fixture))
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }

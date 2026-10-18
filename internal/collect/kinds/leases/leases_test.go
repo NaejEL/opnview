@@ -116,7 +116,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 	} {
 		t.Run(shape.name, func(t *testing.T) {
 			t.Parallel()
-			harness := collecttest.NewProbeHarness(t)
+			harness := collecttest.NewDiscoveredProbeHarness(t)
 			collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 
 			first, err := harness.Store.ProviderID(ctx, "dhcp_lease", "kea")
@@ -248,7 +248,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	harness := collecttest.NewProbeHarness(t)
+	harness := collecttest.NewDiscoveredProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 
 	first, err := harness.Store.ProviderID(ctx, "dhcp_lease", "kea")

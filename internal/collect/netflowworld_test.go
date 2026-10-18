@@ -2,7 +2,9 @@ package collect_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -10,11 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/broker/schedule"
+	"github.com/NaejEL/opnview/internal/collect"
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/push"
@@ -84,7 +89,7 @@ func newNetflowWorld(t *testing.T, interfacesInfo map[string]any, offered []stri
 	t.Helper()
 	ctx := context.Background()
 	fake := providertest.NewFirewall(t)
-	database := collecttest.NewPluginStore(t)
+	database := discoveredPluginStore(t, interfacesInfo)
 	clock := collecttest.NewFixedClock(time.Unix(CaptureStartAt, 0).UTC())
 	loaded, err := plugin.Load(ctx, plugin.Options{DataDir: t.TempDir(), Store: database})
 	if err != nil {
@@ -104,13 +109,7 @@ func newNetflowWorld(t *testing.T, interfacesInfo map[string]any, offered []stri
 	if h.Join == nil {
 		t.Fatal("the netflow plugin declares no derivation join")
 	}
-	fake.AnswerJSON(opnsense.InterfacesInfo, interfacesInfo)
-	fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")
-	fake.AnswerFixture(opnsense.SearchRule, "search_rule.json")
-	// The firewall's clock reads the harness's: a firewall on UTC, so its measured offset is zero.
-	fake.AnswerJSON(opnsense.SystemTime, map[string]any{"uptime": "11 days, 10:17:36",
-		"datetime": time.Unix(CaptureStartAt, 0).UTC().Format("Mon Jan _2 15:04:05 UTC 2006"),
-		"boottime": "Tue Sep 15 13:42:24 UTC 2026", "loadavg": "0.42, 0.31, 0.25"})
+	answerDiscovery(fake, interfacesInfo)
 	if err := collector.RefreshDiscovery(ctx); err != nil {
 		t.Fatalf("runtime discovery: %v", err)
 	}
@@ -168,6 +167,50 @@ func newNetflowWorld(t *testing.T, interfacesInfo map[string]any, offered []stri
 		}
 	})
 	return h
+}
+
+// answerDiscovery answers what a world's discovery reads: the fixture's interfaces, their names, the rules, and
+// the firewall's clock, which reads the harness's -- a firewall on UTC, so its measured offset is zero.
+func answerDiscovery(fake *providertest.Firewall, interfacesInfo map[string]any) {
+	fake.AnswerJSON(opnsense.InterfacesInfo, interfacesInfo)
+	fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")
+	fake.AnswerFixture(opnsense.SearchRule, "search_rule.json")
+	fake.AnswerJSON(opnsense.SystemTime, map[string]any{"uptime": "11 days, 10:17:36",
+		"datetime": time.Unix(CaptureStartAt, 0).UTC().Format("Mon Jan _2 15:04:05 UTC 2006"),
+		"boottime": "Tue Sep 15 13:42:24 UTC 2026", "loadavg": "0.42, 0.31, 0.25"})
+}
+
+// discoveredPluginStore is a world's store: the built-ins loaded, and one discovery of the fixture's firewall
+// already run into it at CaptureStartAt, from the answers the world gives its own -- written once into a
+// derived template per set of answers (collecttest.NewPluginStorePrepared). The world still runs its own
+// discovery, as the service does at start; over a database that already holds the same firewall it is the
+// no-op upsert a second discovery is, and the mirror tables its answers need already exist.
+func discoveredPluginStore(t *testing.T, interfacesInfo map[string]any) *store.Store {
+	t.Helper()
+	answers, err := json.Marshal(interfacesInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.New()
+	digest.Write(answers)
+	for _, name := range []string{"get_interface_names.json", "search_rule.json"} {
+		digest.Write(providertest.FixtureBody(t, name))
+	}
+	revision := fmt.Sprintf("netflow world discovered at %d: %x", CaptureStartAt, digest.Sum(nil))
+	return collecttest.NewPluginStorePrepared(t, revision, func(ctx context.Context, database *store.Store) error {
+		fake := providertest.NewFirewall(t)
+		answerDiscovery(fake, interfacesInfo)
+		loaded, err := plugin.Load(ctx, plugin.Options{DataDir: t.TempDir(), Store: database})
+		if err != nil {
+			return err
+		}
+		collector := collect.NewWithSources(providertest.NewClient(t, fake), database,
+			collecttest.NewFixedClock(time.Unix(CaptureStartAt, 0).UTC()), loaded.Set)
+		defer collector.Broker().Close()
+		collector.Broker().Scheduler().SetSettings(schedule.Settings{MaxInFlight: 64, MaxPerSecond: 1e6})
+		collector.Configure(collecttest.ZeroMaxAges(config.Defaults()))
+		return collector.RefreshDiscovery(ctx)
+	})
 }
 
 // At moves the world's clock to an instant.

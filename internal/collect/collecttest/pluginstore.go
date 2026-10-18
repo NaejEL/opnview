@@ -83,3 +83,44 @@ func NewPluginStore(t *testing.T) *store.Store {
 	})
 	return database
 }
+
+// NewPluginStorePrepared is NewPluginStore with a further preparation written once into the derived
+// template, over the built-ins as they load: a test world that would otherwise repeat the same first
+// writes in every database it creates -- the first discovery of one firewall, the mirror tables its
+// answers create among them -- clones them instead (decision 5 of the plugin-API amendment's first
+// verification). revision names everything prepare reads, so a changed answer builds a new template.
+// prepare is handed an open store, which it must not close; every connection it opens beside it is
+// closed before it returns.
+func NewPluginStorePrepared(t *testing.T, revision string,
+	prepare func(ctx context.Context, database *store.Store) error) *store.Store {
+	t.Helper()
+	plugins, err := builtinPluginsRevision()
+	if err != nil {
+		t.Fatalf("reading the built-in plugins: %v", err)
+	}
+	dsn := storetest.DatabasePrepared(t, plugins+"\x00"+revision, func(ctx context.Context, dsn string) error {
+		database, err := store.Open(ctx, dsn)
+		if err != nil {
+			return err
+		}
+		if _, err := plugin.Load(ctx, plugin.Options{Store: database}); err != nil {
+			_ = database.Close()
+			return err
+		}
+		if err := prepare(ctx, database); err != nil {
+			_ = database.Close()
+			return err
+		}
+		return database.Close()
+	})
+	database, err := store.Open(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("opening the test database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("closing the test database: %v", err)
+		}
+	})
+	return database
+}
