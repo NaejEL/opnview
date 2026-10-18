@@ -500,6 +500,7 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/web/surfaces/collection` — the collection surface.
 - `internal/web/surfaces/dashboards` — the API of the stored dashboards.
 - `internal/web/surfaces/datasets` — the data catalogue's API.
+- `internal/web/surfaces/events` — the event stream (Server-Sent Events) announcing what was stored, which the front re-asks widgets on.
 - `internal/web/surfaces/firewallcatalogue` — the learned API catalogue's API.
 - `internal/web/surfaces/frontend` — the shell, the front's assets, the string catalogue, the appearance and the widget registry.
 - `internal/web/surfaces/interfaces` — the interfaces surface.
