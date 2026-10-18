@@ -42,16 +42,6 @@ const shutdownDeadline = 20 * time.Second
 const httpGrace = 5 * time.Second
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "measure-cost" {
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-		err := runMeasureCost(ctx, os.Args[2:], os.Stdout, os.Stderr)
-		stop()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", buildinfo.AppName, err)
-			os.Exit(1)
-		}
-		return
-	}
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
 		if err := runPluginCommand(context.Background(), os.Args[2:], os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", buildinfo.AppName, err)
@@ -324,20 +314,13 @@ func run() (err error) {
 			extraSenders.String())
 	}
 
-	// The handler served: the server itself, or, in a review build only, the server behind the recorded
-	// widget answers (review.go).
-	handler, err := reviewHandler(server)
-	if err != nil {
-		return err
-	}
-
 	// The long-running things, stopped by the one cancellation above.
 	var running sync.WaitGroup
 	var serveErr error
 	running.Add(1)
 	go func() {
 		defer running.Done()
-		serveErr = server.ListenAndServeHandler(ctx, *listen, httpGrace, handler)
+		serveErr = server.ListenAndServeHandler(ctx, *listen, httpGrace, server)
 	}()
 
 	fmt.Printf("%s: the interface is listening on %s\n", buildinfo.AppName, *listen)

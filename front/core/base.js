@@ -3,7 +3,7 @@
  *
  * EVERY FRONT FILE IS A CLASSIC SCRIPT. No import, no export, no module syntax: the same file runs
  * unchanged in the browser, loaded by the shell's <script> elements, and in the interpreter the Go
- * tests run the front in (internal/front/frontjs). Each file is one function called with the
+ * tests run the front in . Each file is one function called with the
  * global object, and hangs what it defines on the one global the front owns, `opnview`.
  *
  * NO USER-VISIBLE STRING IS A LITERAL in any front file: every word a reader sees comes from the

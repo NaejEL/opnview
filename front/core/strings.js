@@ -6,7 +6,7 @@
  * (A4). The catalogues come from GET /api/strings/{language}, which merges the core's, the
  * surfaces', the plugins', the widgets' and the language file's strings on the server.
  *
- * FOUR WAYS TO ASK, so a test can read which keys a front file uses (internal/front/frontjs):
+ * FOUR WAYS TO ASK, so a test can read which keys a front file uses :
  *
  *   t("a.key", {name: value})    a literal key, its placeholders {name} filled;
  *   tp("a.key", count, {...})    a literal key with a plural form, a.key.one or a.key.other by the

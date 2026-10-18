@@ -65,13 +65,10 @@ var productTokenAllowed = map[string]allowedToken{
 		"protocols imports each protocol's directory, the NetFlow decoder's among them, by its path", false},
 	"internal/web/surfaces/settings/verify.go": {[]string{"interfaces_info"}, "the credential check calls " +
 		"discovery's first endpoint once, the one every installation answers whatever its plugins", false},
-	"cmd/opnview/measurecmd.go": {[]string{"interfaces_info"}, "the cost-measuring command lists the interface " +
-		"names through discovery's endpoint, as discovery reads them", false},
 	"internal/web/surfaces/": {[]string{apiPathToken}, "opnview's own HTTP API routes, which share the /api/ " +
 		"prefix with OPNsense's: none is a firewall path", false},
 	"internal/web/webtest/":      {[]string{apiPathToken}, "the web test support calls opnview's own HTTP API routes", false},
 	"internal/widget/service.go": {[]string{apiPathToken}, "the route prefix of opnview's own widget API", false},
-	"cmd/opnview/review.go":      {[]string{apiPathToken}, "the review command reads opnview's own widget API", false},
 }
 
 // TestNoGoFileNamesAProduct is PA-AC28: the token test of PA20 passes over the tree.

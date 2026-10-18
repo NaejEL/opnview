@@ -188,8 +188,15 @@ to 2 300 lines of Go.
    pf first, each validated live; (d) the widget semantics to a JS library;
    (e) the surfaces.
 
+## Progress of the cut
+
+| Date | Step | Done |
+|---|---|---|
+| 18 October 2026 | (a) DELETE, first part | `measure-cost` command and `internal/measurecost`, the `review` build, `internal/front/frontjs`, `internal/testtiming` and the store's timing seam, `internal/layout`, the settings reader of the deleted command; the modularity allow-list shrunk by two entries. Suite green in 7 s. |
+| | (a) DELETE, remaining | `widget/shapes` and `widget/loader.go` (needs `host.mapfilters` and `host.matrixplacement` moved to JavaScript first: 10 plugin uses); the script flat/hostobject/json machinery (changes JSON formatting, the plugins' golden tests must be re-recorded); `plugin/declarative.go` (used by three worked examples under `docs/examples/`, which go with it); `surfaces/collection` and `sizing` (with the Go collectors, step c). |
+
 ## Consequences
 
-Once accepted, each line of this record becomes one change on a `wip/` branch,
+Each line of this record becomes one change on a `wip/` branch,
 validated on the maintainer's firewall before `main`. The host-function table
 above is the regression list for every move.
