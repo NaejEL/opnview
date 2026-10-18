@@ -2,6 +2,7 @@ package script
 
 import (
 	"bytes"
+	"encoding/json"
 	"math"
 	"reflect"
 	"sort"
@@ -47,6 +48,11 @@ type hostObject struct {
 	// members are the object members already built, by field index: rows, nested objects, lists
 	// and members crossed through JSON, each built once so the script reads the same object each time.
 	members []goja.Value
+	// encoded are the members crossed through JSON, as encoding/json wrote them, by field index: read by
+	// the script's JSON.parse semantics when the script first reads one (encodedValue), and written as
+	// they are when the object is written unread and the bytes are what writing the read object would
+	// write (verbatimJSON).
+	encoded [][]byte
 	// own is every member once the script changed one, by key; nil until then. order is their keys in
 	// the order they were added.
 	own   map[string]goja.Value
@@ -84,7 +90,19 @@ func (c *ScriptCall) newHostObject(layout *flatLayout, value reflect.Value) goja
 			if host.members == nil {
 				host.members = make([]goja.Value, len(layout.fields))
 			}
-			host.members[index] = c.memberValue(member)
+			if crossed, flat := c.flatValue(member); flat {
+				host.members[index] = crossed
+				continue
+			}
+			// Written now, so a member JSON cannot write is refused now; read when the script reads it.
+			encoded, err := json.Marshal(member.Interface())
+			if err != nil {
+				return c.jsonValue(member.Interface())
+			}
+			if host.encoded == nil {
+				host.encoded = make([][]byte, len(layout.fields))
+			}
+			host.encoded[index] = encoded
 		}
 	}
 	return c.VM.NewDynamicObject(host)
@@ -118,6 +136,10 @@ func (h *hostObject) memberAt(index int) goja.Value {
 		return nil
 	}
 	if h.members != nil && h.members[index] != nil {
+		return h.members[index]
+	}
+	if h.encoded != nil && h.encoded[index] != nil {
+		h.members[index] = h.call.encodedValue(h.encoded[index])
 		return h.members[index]
 	}
 	vm := h.call.VM
@@ -529,6 +551,11 @@ func (c *ScriptCall) encodeHostObject(buffer *bytes.Buffer, host *hostObject, de
 		case flatFloat:
 			err = encodeScalar(buffer, floatNumber(member.Float()))
 		default:
+			if host.encoded != nil && host.encoded[index] != nil && host.members[index] == nil &&
+				verbatimJSON(host.encoded[index], depth+1) {
+				buffer.Write(host.encoded[index])
+				continue
+			}
 			err = c.encodeValue(buffer, host.memberAt(index), depth+1)
 		}
 		if err != nil {
@@ -547,4 +574,45 @@ func isMapKeys(keys []string) bool {
 		}
 	}
 	return false
+}
+
+// verbatimJSON reports whether JSON encoding/json wrote is, byte for byte, what the data writer writes
+// for the value JSON.parse reads from it -- so a member never read can be written as it was encoded.
+// It holds for compact JSON whose strings are printable ASCII with no escape, in which no key looks
+// like an array index (JSON.parse lists those first, and the writer would sort the object as a map)
+// and no number has 16 digits or more (a whole number past 2^53 does not survive the script's
+// number), and which nests no deeper than the writer allows from the depth it is written at. Anything
+// else is read and written as the script's view of it.
+func verbatimJSON(encoded []byte, depth int) bool {
+	digits, nesting := 0, depth
+	inText := false
+	keyStart := -1
+	for index, character := range encoded {
+		switch {
+		case character >= 0x7f || character < 0x20 || character == '\\':
+			return false
+		case character == '"':
+			if !inText {
+				keyStart = index + 1
+			} else if index+1 < len(encoded) && encoded[index+1] == ':' && isIndexKey(string(encoded[keyStart:index])) {
+				return false
+			}
+			inText = !inText
+		case !inText && (character == '{' || character == '['):
+			nesting++
+			if nesting > maxDataDepth {
+				return false
+			}
+		case !inText && (character == '}' || character == ']'):
+			nesting--
+		case !inText && character >= '0' && character <= '9':
+			digits++
+			if digits >= 16 {
+				return false
+			}
+			continue
+		}
+		digits = 0
+	}
+	return true
 }

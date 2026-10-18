@@ -252,30 +252,67 @@ type destinationRow struct {
 // placed (request.Place), so their geolocations are read together at the first a script asks for.
 //
 // THE LOGGED ROWS ARE READ ONCE. A measured twin reads, beside the measure's bytes, the logged bytes of
-// the same rows -- the same flows, grouped the same way -- and the request keeps them: when
-// best_available does not serve the measured attempt and the logged answer follows it
-// (request/measure.go), that run is handed the rows already read instead of reading the window a
+// the same rows -- the same flows, grouped the same way. Once a measured attempt is made, every run of
+// the request reads the window through that one read (request.SharedRead): the attempt takes its
+// measured rows, and the logged run best_available falls back to -- after the attempt, or beside it
+// (request/speculation.go) -- takes the logged rows of the same read instead of reading the window a
 // second time (PA18.2 of the open-plugin-API amendment).
 func DestinationRows(r *request.Request) ([]destinationRow, error) {
 	name := "widget_flow_destinations"
 	if r.NoDomains() {
 		name = "widget_flow_destinations_no_domains"
 	}
-	kept := "traffic.destinations:" + name + ":" + strconv.FormatInt(r.Window.From, 10) + ":" +
-		strconv.FormatInt(r.Window.To, 10)
-	measure := r.MeasureRead()
-	if held, found := r.Kept(kept); found && measure == "" {
-		rows := append([]destinationRow{}, held.([]destinationRow)...)
-		for _, row := range rows {
-			if row.PeerAddress != nil {
-				r.Place(*row.PeerAddress)
-			}
-		}
-		return rows, nil
+	measure, attempted := r.MeasureRead(), r.AttemptedMeasure()
+	if measure == "" && attempted == "" {
+		rows, _, err := readDestinations(r, name, "")
+		return rows, err
 	}
-	rows := []destinationRow{}
-	var logged []destinationRow
-	err := r.Db.WidgetRows(r.Ctx, r.InMeasure(name), vocab.Period{}, r.WithMeasure(r.WindowParameters()), func(row reads.RowScanner) error {
+	if attempted == "" {
+		attempted = measure
+	}
+	key := "traffic.destinations:" + name + ":" + strconv.FormatInt(r.Window.From, 10) + ":" +
+		strconv.FormatInt(r.Window.To, 10) + ":" + attempted
+	shared, err := r.SharedRead(key, func() (any, error) {
+		measured, logged, err := readDestinations(r, name, attempted)
+		return destinationReads{measured: measured, logged: logged}, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	held := shared.(destinationReads).logged
+	if measure != "" {
+		held = shared.(destinationReads).measured
+	}
+	rows := append([]destinationRow{}, held...)
+	for _, row := range rows {
+		if row.PeerAddress != nil {
+			r.Place(*row.PeerAddress)
+		}
+	}
+	return rows, nil
+}
+
+// destinationReads is one read of the destinations in a measure: its rows in the measure, and the same
+// rows' logged figures.
+type destinationReads struct {
+	measured, logged []destinationRow
+}
+
+// readDestinations reads the window's destinations: in the logged measure when measure is "", and in a
+// declared measure otherwise, with the same rows' logged figures beside.
+func readDestinations(r *request.Request, name, measure string) (rows, logged []destinationRow, err error) {
+	statement, parameters := name, r.WindowParameters()
+	if measure != "" {
+		statement = name + request.MeasuredStatementSuffix
+		bound := make(map[string]any, len(parameters)+1)
+		for key, value := range parameters {
+			bound[key] = value
+		}
+		bound[request.MeasureParameter] = measure
+		parameters = bound
+	}
+	rows = []destinationRow{}
+	err = r.Db.WidgetRows(r.Ctx, statement, vocab.Period{}, parameters, func(row reads.RowScanner) error {
 		var (
 			item                                        destinationRow
 			iface, client, owner, asn, port, bytes, blk reads.NullInt64
@@ -301,14 +338,8 @@ func DestinationRows(r *request.Request) ([]destinationRow, error) {
 			logged = append(logged, plain)
 		}
 		item.MeasureMembers = Summable(measured).MeasureMembers
-		if item.PeerAddress != nil {
-			r.Place(*item.PeerAddress)
-		}
 		rows = append(rows, item)
 		return nil
 	})
-	if err == nil && measure != "" {
-		r.Keep(kept, append([]destinationRow{}, logged...))
-	}
-	return rows, err
+	return rows, logged, err
 }

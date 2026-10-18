@@ -145,6 +145,11 @@ func (c *ScriptCall) jsonValue(v any) goja.Value {
 	if err != nil {
 		c.Throw("a host value cannot be handed to the script: %v", err)
 	}
+	return c.encodedValue(encoded)
+}
+
+// encodedValue is JSON encoding/json wrote, as the script's JSON.parse reads it.
+func (c *ScriptCall) encodedValue(encoded []byte) goja.Value {
 	if c.parse == nil {
 		return c.VM.ToValue(string(encoded))
 	}

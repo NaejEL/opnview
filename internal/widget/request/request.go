@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync"
 
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/dataset"
@@ -138,9 +139,14 @@ type Request struct {
 	Measure measureRun
 	// measureWindows are what the window says of each declared measure, once read (measure.go).
 	measureWindows map[string]measureWindow
-	// kept is what a host function read once and hands again within the request, whichever measure the
-	// run is answered under (Keep).
-	kept map[string]any
+	// attempted is the measure a measured run of the request was attempted in (ServeMeasured), and shared
+	// the reads made in it that every run of the request shares (SharedRead): the request and a fork of it
+	// hold the same one.
+	attempted string
+	shared    *sharedReads
+	// held is non-nil in a speculative run (speculation.go): the lines its script logged, written when its
+	// answer is the one served.
+	held *[]heldLine
 }
 
 // Prepare reads what every response carries: the aggregate mode, the window, the
@@ -320,22 +326,47 @@ func (r *Request) WindowParameters() map[string]any {
 	return map[string]any{"from": r.Window.From, "to": r.Window.To}
 }
 
-// Keep holds a value a host function read for the request, under a key of its own, so a later run of
-// the same request -- the logged answer that follows a measured attempt best_available did not serve
-// (measure.go) -- hands it again rather than reading it a second time. What is kept must be what the
-// later run would read: a host function keeps a reading of the request's window and mode, never of
-// what a run built.
-func (r *Request) Keep(key string, value any) {
-	if r.kept == nil {
-		r.kept = map[string]any{}
-	}
-	r.kept[key] = value
+// AttemptedMeasure is the measure a measured run of the request was attempted in, "" when none was.
+func (r *Request) AttemptedMeasure() string { return r.attempted }
+
+// sharedReads are the reads every run of a request shares, by key; a fork of the request shares them.
+type sharedReads struct {
+	mu    sync.Mutex
+	reads map[string]*sharedRead
 }
 
-// Kept is a value Keep holds, and whether one is held.
-func (r *Request) Kept(key string) (any, bool) {
-	value, held := r.kept[key]
-	return value, held
+// sharedRead is one shared read: done is closed once it is made.
+type sharedRead struct {
+	done  chan struct{}
+	value any
+	err   error
+}
+
+// SharedRead hands a read every run of the request shares, under a key of its own: the first run to ask
+// for it reads it, and every other run -- the logged answer that follows a measured attempt
+// best_available did not serve, or that runs beside it (measure.go, speculation.go) -- is handed what it
+// read, waiting for it while it is read. What is shared must be what every run would read: a reading of
+// the request's window, mode and attempted measure, never of what a run built.
+func (r *Request) SharedRead(key string, read func() (any, error)) (any, error) {
+	if r.shared == nil {
+		r.shared = &sharedReads{}
+	}
+	shared := r.shared
+	shared.mu.Lock()
+	if held, found := shared.reads[key]; found {
+		shared.mu.Unlock()
+		<-held.done
+		return held.value, held.err
+	}
+	if shared.reads == nil {
+		shared.reads = map[string]*sharedRead{}
+	}
+	held := &sharedRead{done: make(chan struct{})}
+	shared.reads[key] = held
+	shared.mu.Unlock()
+	defer close(held.done)
+	held.value, held.err = read()
+	return held.value, held.err
 }
 
 // Cover records the covered part of the window.

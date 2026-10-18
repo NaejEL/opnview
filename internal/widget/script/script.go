@@ -97,8 +97,13 @@ func CompileWidgetScript(file, source string) (*goja.Program, error) {
 }
 
 // newWidgetRuntime creates a runtime with the globals a widget script sees: exports, module and
-// console.
+// console, whose lines go to ScriptLogger.
 func newWidgetRuntime(plugin string) (*goja.Runtime, *goja.Object) {
+	return newLoggingRuntime(plugin, func(plugin, message string) { ScriptLogger(plugin, message) })
+}
+
+// newLoggingRuntime creates a widget script's runtime whose console lines go to log.
+func newLoggingRuntime(plugin string, log func(plugin, message string)) (*goja.Runtime, *goja.Object) {
 	vm := goja.New()
 	exports := vm.NewObject()
 	module := vm.NewObject()
@@ -111,7 +116,7 @@ func newWidgetRuntime(plugin string) (*goja.Runtime, *goja.Object) {
 		for _, argument := range call.Arguments {
 			parts = append(parts, argument.String())
 		}
-		ScriptLogger(plugin, strings.Join(parts, " "))
+		log(plugin, strings.Join(parts, " "))
 		return goja.Undefined()
 	})
 	_ = vm.Set("console", console)
@@ -137,7 +142,10 @@ func (w *ScriptWidget) Serve(r *request.Request) (data any, hasRows bool, err er
 	r.Ctx = ctx
 	defer func() { r.Ctx = requestCtx }()
 
-	vm, exports := newWidgetRuntime(w.Plugin)
+	vm, exports := newLoggingRuntime(w.Plugin, func(plugin, message string) {
+		// A speculative run holds its lines until its answer is the one served (request.ScriptLog).
+		r.ScriptLog(plugin, message, func(plugin, message string) { ScriptLogger(plugin, message) })
+	})
 	call := newScriptCall(r, vm, w)
 	finished := make(chan struct{})
 	defer close(finished)

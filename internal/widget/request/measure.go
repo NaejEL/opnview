@@ -202,6 +202,14 @@ func (r *Request) ServeMeasured(serve ServeFunc) (any, bool, error) {
 		coverage bool
 		set      bool
 	}
+	// The logged run, started beside the first measured run under best_available (speculation.go).
+	var logged *speculativeRun
+	defer func() {
+		if logged != nil {
+			// A request that failed: the logged run is stopped and waited for.
+			logged.wait(true)
+		}
+	}()
 	for _, measure := range candidates {
 		state, err := r.MeasureWindowState(measure)
 		if err != nil {
@@ -211,6 +219,10 @@ func (r *Request) ServeMeasured(serve ServeFunc) (any, bool, error) {
 		// throughout, and a connection the answer counts is not.
 		coverage := false
 		if state == "" {
+			r.attempted = measure.Name
+			if logged == nil && requested == params.VolumeMeasureBestAvailable {
+				logged = r.speculate(serve)
+			}
 			before := r.snapshot()
 			r.Measure = measureRun{Name: measure.Name}
 			data, hasRows, err := serve(r)
@@ -229,6 +241,10 @@ func (r *Request) ServeMeasured(serve ServeFunc) (any, bool, error) {
 			}
 			switch {
 			case !run.LoggedFigure && !run.uncovered:
+				if logged != nil {
+					logged.wait(false)
+					logged = nil
+				}
 				return data, hasRows, nil
 			case !run.LoggedFigure && requested == measure.Name:
 				// Asked for the measure, and it covered only some of the answer: its figures, each with
@@ -248,7 +264,17 @@ func (r *Request) ServeMeasured(serve ServeFunc) (any, bool, error) {
 		}
 	}
 	r.Measure = measureRun{}
-	data, hasRows, err := serve(r)
+	var (
+		data    any
+		hasRows bool
+		err     error
+	)
+	if logged != nil {
+		data, hasRows, err = logged.adopt(r)
+		logged = nil
+	} else {
+		data, hasRows, err = serve(r)
+	}
 	if err != nil {
 		return data, hasRows, err
 	}
