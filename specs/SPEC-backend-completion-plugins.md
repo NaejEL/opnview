@@ -5478,3 +5478,14 @@ These findings are decided by the orchestrator under the maintainer's instructio
    - Broadcast and multicast destinations (255.255.255.255, 224.0.0.0/4, ff00::/8) delivered to the firewall are local delivery. They are classified `this_firewall`, never `north_south`.
 7. **LV-SND on Docker Desktop.** The extra-sender setting (Q10(b), `--push-extra-senders`) is the documented answer for port proxies that rewrite the source. The README states the host-filtering requirement. The production target (Proxmox LXC with Docker Engine) keeps the source address, and needs no extra sender.
 8. **Accepted figures.** The NJ2-4 shortfall (77.0 % / 84.8 %) is explained by the 16:19–16:36 downtime. Without it the shares are 81.4 % / 98.0 %. The orchestrator accepts it, pending the maintainer's own review of the live figures.
+
+## Lot 2 hand-back: the orchestrator's decisions (18 October 2026)
+
+These were decided by the orchestrator under the maintainer's instruction to deliver end to end. They are not the maintainer's decisions.
+
+1. **X3's three new `/sources` rows are accepted.** The rows are "Flow records / NetFlow export", "pf state table" and "Unbound query log over syslog". They are built-in providers that the template now registers and the old DDL seed never did.
+2. **Two stored-key and route changes are accepted:**
+   - the stored key becomes `netflow_retention_flow_record_seconds`, following plugin settings' `<plugin>_<key>` rule (pre-POC, no migration);
+   - `/api/netflow/settings` now answers like any unknown path.
+3. **The test-suite budget is the next lot's first task.** `collect` and `store` take about 25 s each alone and more than 60 s together, so the shared test database's CPU is the limit. Before Lot 3 adds tests, each heavy package gets its own test instance, or fewer databases per test, so that `checks` holds 60 s.
+4. **Before Lot 3, `live-next` and `fix-live-n1-n4-n5` are merged into this branch.** They hold the step-7 frontend, the SSE events, and the live fixes D0–D6 and N1/N4/N5. Lot 3 builds on everything that is deployed.
