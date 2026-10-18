@@ -1817,6 +1817,32 @@ that correctly as a state rather than as emptiness; the point is that the
 affected population is larger than it looks, and the interface copy for it
 carries weight.
 
+### Rule metadata, read from source for step 6
+
+Read at `opnsense/core` tag **26.7.3** on 18 October 2026, for the Suricata plugin's alert widgets: the category and the text of a
+signature, which the alert records do not carry (gap 3 under *Gaps and alternatives*). The path this document named for that purpose,
+`/api/ids/settings/get_rule_info/<sid>`, is wrong on the live firewall (*Wrong paths*); the installed-rules grid is the read that exists.
+
+| Path | Method | Parameters | Citation |
+|---|---|---|---|
+| `/api/ids/settings/search_installed_rules` | POST (read-only) | `rowCount` (default 9999), `current` (default 1), `searchPhrase`, `sort`; every other POST key, `sid` among them, becomes a `key/"value"` filter | https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/IDS/Api/SettingsController.php |
+| `/api/ids/settings/get_rule_info/<sid>` | GET | `sid` positional | same file |
+
+**The controller.** `SettingsController::searchInstalledRulesAction` returns an empty array unless the request is a POST, then runs the
+configd action `ids query rules` with the limit, the offset `(current - 1) * rowCount`, the combined filter string and the sort string,
+and overrides each row's `enabled` and `action` with the model's values. It writes nothing; the mutating actions of the same controller
+are `setRulesetproperties`, `setRuleset`, `toggleRuleset`, `toggleRule`, `setRule` and the user-rule and policy writers, none of which the
+plugin names. `getRuleInfoAction` runs the same action with `sid/<sid>`, limit 1, and rewrites `url,` and `cve,` references into HTML
+links; the grid returns the references as text, which is why the plugin reads the grid and not this action.
+
+**The rows.** `RuleCache.search` (`scripts/suricata/lib/rulecache.py`,
+https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/suricata/lib/rulecache.py) selects `sid`, `rev`, `gid`, `msg`,
+`reference`, `source`, the effective `enabled` and `action`, `status`, `enabled_default`, `action_default` and `matched_policy`, then merges
+every `rule_properties` row of the rule: `classtype` is written for every rule, and every other `metadata:` tag of the rule file is stored
+as a key and value, so the key set depends on the rulesets installed. The rules table is `sid INTEGER, msg TEXT, rev INTEGER, gid INTEGER,
+reference TEXT, enabled BOOLEAN, action text, source TEXT`. **No field carries the rule's priority**, Suricata's severity: the policy
+priority exists only in an internal sort key the search does not return.
+
 ## Gaps and alternatives
 
 Not everything the roadmap assumed is reachable. Each gap is followed by an alternative that stays inside the project rules. **No

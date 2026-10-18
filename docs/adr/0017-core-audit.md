@@ -1,7 +1,19 @@
 # 0017 — The package-by-package verdict on the existing Go
 
-Status: Proposed, awaiting the maintainer's verdicts
-Proposed by the orchestrator, 18 October 2026, from five read-only audits of the code (no document was read)
+Status: Accepted
+Proposed by the orchestrator, 18 October 2026, from five read-only audits of the code (no document was read); the three questions at the end decided by the maintainer the same day
+
+**The maintainer's decisions of 18 October 2026:**
+
+1. **The learned mirror stays, as ADR 0004 decides it.** In his words: it is a
+   central feature, so that an API is not spammed for information already held.
+   The broker rows marked DECIDE below are KEEP.
+2. **The write primitive is built first**: declared write statements, views and
+   SQL functions, shared tables (see the store section).
+3. **The order of the cut** is the proposed one: the DELETE column, then the
+   write primitive, then one source at a time starting with pf, then the widget
+   semantics to a JavaScript library, then the surfaces. Each step on a `wip/`
+   branch, validated on his firewall before `main`.
 
 ## Context
 
@@ -48,7 +60,7 @@ No plugin references any opnview HTTP route; only the front does.
 |---|---|---|---|
 | broker.go, readonly.go, gate.go, versions.go, settings.go, pages.go, streams.go (subscription) | 2 300 | KEEP | The broker proper: one call per datum, read-only rule, served_from/age, SSE fan-out. |
 | schedule/schedule.go | 706 | KEEP | The scheduler of ADR 0005, already as specified: deadlines, 70 % reserve, 2 in flight, 5/s, backoff. |
-| mirror/, infer/, answer/, recording.go, datasets.go, catalogue.go, and `observed.go` + the rerun loop in scripthost | 5 100 | **DECIDE** | The learned mirror of ADR 0004, as built: a second storage engine inside the broker (learned tables per endpoint, JSONB promotion, per-field read tracking, 8 reruns of a script when a field is missing). The maintainer decided the mirror on 11 October; the audit's finding is that its cost is 5 100 lines and 26 % of the two core packages. **Option A**: keep it as decided. **Option B**: supersede ADR 0004's mirror by a last-answer cache per datum with an age (served_from and age_seconds kept, a few hundred lines), and let plugins store what they read in their own tables. |
+| mirror/, infer/, answer/, recording.go, datasets.go, catalogue.go, and `observed.go` + the rerun loop in scripthost | 5 100 | KEEP (maintainer, 18 October 2026) | The learned mirror of ADR 0004, as built: learned tables per endpoint, JSONB promotion, per-field read tracking, reruns of a script when a field is missing. The audit noted its cost (26 % of the two core packages); the maintainer confirmed it is a central feature: an API is not called again for information already held. |
 
 ## Loader and host (`internal/plugin`, 11 498)
 
@@ -165,18 +177,16 @@ to 2 300 lines of Go.
 | cmd/opnview: serve, `plugin test`, push wiring | 770 | KEEP | |
 | cmd/opnview: measurecmd.go, review.go | 377 | DELETE | Development tooling. |
 
-## The three questions only the maintainer can answer
+## The three questions, as put to the maintainer and answered (see the top)
 
-1. **The learned mirror** (5 100 lines): keep as decided in ADR 0004, or
-   supersede it by a last-answer cache? Everything else in this record holds
-   either way.
+1. **The learned mirror** (5 100 lines): kept.
 2. **The write primitive** for plugins: declared write statements, views and
-   functions, and shared tables. Without it the store, collection and the three
-   CRUD surfaces cannot move, and the Go stays at about 45 000 lines.
-3. **Order of the cut.** Proposed: (a) the DELETE column first (about 6 000
-   lines, no plugin loses anything); (b) the write primitive; (c) one source at
-   a time, pf first, each validated live; (d) the widget semantics to a JS
-   library; (e) the surfaces.
+   functions, and shared tables. Built first; without it the store, collection
+   and the three CRUD surfaces cannot move.
+3. **Order of the cut:** (a) the DELETE column first (about 6 000 lines, no
+   plugin loses anything); (b) the write primitive; (c) one source at a time,
+   pf first, each validated live; (d) the widget semantics to a JS library;
+   (e) the surfaces.
 
 ## Consequences
 
