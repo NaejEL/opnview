@@ -1440,19 +1440,35 @@ function legsByIds(host, ids, now) {
   return legs;
 }
 
-// legsBetween reads every leg logged in [from, to] that a filter keeps, a page at a time.
-function legsBetween(host, from, to, filters) {
+// legPages reads every leg a filter keeps logged in [from, to], however many: the dataset answers at most one
+// read's rows, ordered by its time column first, so a read that was truncated is followed by one from the last
+// instant it held -- its legs at that instant read again and kept once. More legs at one instant than one read
+// holds cannot be paged, and fail the run rather than lose any.
+function legPages(host, filters, from, to, columns) {
   var legs = [];
-  var after = -1;
+  var seen = {};
   for (;;) {
-    var read = host.datasets.rows("leg", { filters: [{ column: "flow_id", op: "gt", value: after }].concat(filters),
-      from: from, to: to + 1, columns: LEG_COLUMNS });
-    legs = legs.concat(read.rows);
+    var read = host.datasets.rows("leg", { filters: filters, from: from, to: to + 1, columns: columns });
+    var last = read.rows.length > 0 ? read.rows[read.rows.length - 1].observed_at : null;
+    read.rows.forEach(function (leg) {
+      if (!seen[leg.flow_id]) {
+        seen[leg.flow_id] = true;
+        legs.push(leg);
+      }
+    });
     if (!read.truncated || read.rows.length === 0) {
       return legs;
     }
-    after = read.rows[read.rows.length - 1].flow_id;
+    if (last === from) {
+      throw new Error("more legs were logged at " + from + " than one read of the dataset leg holds");
+    }
+    from = last;
   }
+}
+
+// legsBetween reads every leg logged in [from, to] that a filter keeps.
+function legsBetween(host, from, to, filters) {
+  return legPages(host, filters, from, to, LEG_COLUMNS);
 }
 
 // joinPending decides the records of the groups holding one still pending that started before the filter log's
@@ -1996,22 +2012,10 @@ function newLegs(host, progress, now) {
     progress.legs_ingested_through.text.split(",").map(Number) : [];
   var seen = {};
   seenAt.forEach(function (id) { seen[id] = true; });
-  var legs = [];
-  var after = -1;
-  for (;;) {
-    var read = host.datasets.rows("leg", { filters: [{ column: "ingested_at", op: "ge", value: through },
-      { column: "flow_id", op: "gt", value: after }], to: now + 1,
-      columns: ["flow_id", "observed_at", "ingested_at"] });
-    read.rows.forEach(function (leg) {
-      if (!(leg.ingested_at === through && seen[leg.flow_id])) {
-        legs.push(leg);
-      }
+  var legs = legPages(host, [{ column: "ingested_at", op: "ge", value: through }], 0, now,
+    ["flow_id", "observed_at", "ingested_at"]).filter(function (leg) {
+      return !(leg.ingested_at === through && seen[leg.flow_id]);
     });
-    if (!read.truncated || read.rows.length === 0) {
-      break;
-    }
-    after = read.rows[read.rows.length - 1].flow_id;
-  }
   var newest = through;
   legs.forEach(function (leg) { newest = Math.max(newest, leg.ingested_at); });
   var atNewest = newest === through ? seenAt.slice() : [];

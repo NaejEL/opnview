@@ -267,7 +267,13 @@ func (l measureLayout) toRecorded(row map[string]any, raw any) {
 // loadRecording reads one recorded file as its relations.
 func loadRecording(t *testing.T, name string) map[string][]map[string]any {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(recordingDirectory, name))
+	return readRecording(t, filepath.Join(recordingDirectory, name))
+}
+
+// readRecording reads a recorded file, by its path, as its relations.
+func readRecording(t *testing.T, path string) map[string][]map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +288,7 @@ func loadRecording(t *testing.T, name string) map[string][]map[string]any {
 		}
 		var decoded []map[string]any
 		if err := json.Unmarshal(rows, &decoded); err != nil {
-			t.Fatalf("%s %s: %v", name, relation, err)
+			t.Fatalf("%s %s: %v", path, relation, err)
 		}
 		relations[relation] = decoded
 	}
@@ -305,7 +311,7 @@ type recordingExpectation struct {
 // rows' ids, which number rows and decide nothing (the aggregate refresh numbers them per statement, budget
 // item 1 of Lot 3), and the unmatched slots' updated_at, the computation's instant, which a table of counters
 // does not carry (it adds every column but its key).
-func comparable(relation string, row map[string]any) string {
+func comparable(relation string, row map[string]any, changedStates map[string]bool) string {
 	copied := map[string]any{}
 	for key, value := range row {
 		copied[key] = value
@@ -313,6 +319,21 @@ func comparable(relation string, row map[string]any) string {
 	if strings.Contains(relation, "_aggregate_") {
 		delete(copied, "id")
 		delete(copied, "updated_at")
+		// The count of connections in a state an expectation moved directions out of or into follows from those
+		// directions, and the aggregation that counts it is tested on its own (PA-AC8): it is left aside here.
+		if parts, isObject := copied["netflow_parts"].(map[string]any); isObject && len(changedStates) > 0 {
+			kept := map[string]any{}
+			for key, value := range parts {
+				drop := false
+				for state := range changedStates {
+					drop = drop || strings.HasSuffix(key, "_direction_"+state+"_connections")
+				}
+				if !drop {
+					kept[key] = value
+				}
+			}
+			copied["netflow_parts"] = kept
+		}
 	}
 	encoded, _ := json.Marshal(copied)
 	return string(encoded)
@@ -329,20 +350,29 @@ func compareRecording(t *testing.T, label string, recorded, got map[string][]map
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	// The expected changes first, every relation's, so the states they move are known before any aggregate is
+	// compared.
+	changedStates := map[string]bool{}
 	for _, name := range names {
-		want := map[string]int{}
 		for _, row := range recorded[name] {
 			for _, expectation := range expectations {
 				if expectation.relation == name && expectation.match(row) {
+					changedStates[fmt.Sprint(row["state"])] = true
 					expectation.becomes(row)
+					changedStates[fmt.Sprint(row["state"])] = true
 					changed[expectation.decision+": "+expectation.class]++
 				}
 			}
-			want[comparable(name, row)]++
+		}
+	}
+	for _, name := range names {
+		want := map[string]int{}
+		for _, row := range recorded[name] {
+			want[comparable(name, row, changedStates)]++
 		}
 		have := map[string]int{}
 		for _, row := range got[name] {
-			have[comparable(name, row)]++
+			have[comparable(name, row, changedStates)]++
 		}
 		var missing, extra []string
 		for text, count := range want {
@@ -390,7 +420,7 @@ func TestTheJoinInJavaScriptReproducesTheGoRecording(t *testing.T) {
 		t.Parallel()
 		h := runJoinWorld(t, world, fixtures, orderForwardFirst, nil)
 		changed := compareRecording(t, "fixtures.json", loadRecording(t, "fixtures.json"), recordingRelations(t, h),
-			recordingExpectations())
+			recordingExpectations(t, h))
 		for class, count := range changed {
 			t.Logf("expected change, %s: %d rows", class, count)
 		}
@@ -399,13 +429,8 @@ func TestTheJoinInJavaScriptReproducesTheGoRecording(t *testing.T) {
 		t.Parallel()
 		h := runJoinWorld(t, world, upstreamIngress, orderForwardFirst, nil)
 		compareRecording(t, "f17_upstream_ingress_captured.json", loadRecording(t, "f17_upstream_ingress_captured.json"),
-			recordingRelations(t, h), recordingExpectations())
+			recordingRelations(t, h), recordingExpectations(t, h))
 	})
-}
-
-// recordingExpectations are the outcomes of the recording the orchestrator's decisions change on purpose.
-func recordingExpectations() []recordingExpectation {
-	return nil
 }
 
 // recordedStates are the direction states the recording knows: the twelve the netflow measure declared when it
@@ -477,20 +502,145 @@ func TestTheJoinInJavaScriptReproducesTheGoRecordingOfF16(t *testing.T) {
 	}
 	_ = rows.Close()
 	compareRecording(t, "f16_interleaved_counters.json", loadRecording(t, "f16_interleaved_counters.json"), got,
-		recordingExpectations())
+		recordingExpectations(t, h))
 }
 
 // loadRecordingFile reads a recording kept outside the repository -- the capture's, which is never committed
 // (PA-AC16) -- as its relations.
 func loadRecordingFile(t *testing.T, path string) map[string][]map[string]any {
 	t.Helper()
-	absolute, err := filepath.Abs(path)
+	return readRecording(t, path)
+}
+
+// recordingExpectations are the outcomes of the recording the orchestrator's decisions of the live validation of
+// 17 October 2026 change on purpose, each class found in the world by a reading of its own -- the legs and the
+// records as stored, never the plugin's code:
+//   - D5: the reverse direction of a connection pf refused -- its first or second leg blocked or rejected -- is
+//     not forwarding_export_unsettled: no reply is expected, and it is not_expected_when_refused, covered;
+//   - N3: a direction counted by one exporter, with no record joined and settled missing, whose records the join
+//     found but left ambiguous between two legs -- an ambiguous record with the first leg's tuple in the
+//     direction's orientation, started within the leg's export bound -- is ambiguous_records, not covered.
+//
+// N2 (filter_log_gap) changes no outcome the recording holds: neither the fixtures nor the capture record a gap of
+// the filter log. TestAFlowRecordWhoseLegFellInAFilterLogGapIsNotNoLoggedLeg shows it on a fixture of its own.
+func recordingExpectations(t *testing.T, h *netflowWorld) []recordingExpectation {
+	t.Helper()
+	refused, ambiguous := refusedConnections(t, h), ambiguousDirections(t, h)
+	measure := "connection_measured_volume"
+	return []recordingExpectation{
+		{decision: "D5", class: "the reverse of a refused connection, once forwarding_export_unsettled", relation: measure,
+			match: func(row map[string]any) bool {
+				return row["state"] == "forwarding_export_unsettled" && row["direction"] == "reverse" &&
+					refused[fmt.Sprint(row["connection_leg"])]
+			},
+			becomes: func(row map[string]any) { row["state"] = "not_expected_when_refused" }},
+		{decision: "N3", class: "a direction whose only records were ambiguous, once missing", relation: measure,
+			match: func(row map[string]any) bool {
+				return row["state"] == "missing" && row["counted_copy"] == float64(0) &&
+					ambiguous[fmt.Sprint(row["connection_leg"])+"|"+fmt.Sprint(row["direction"])]
+			},
+			becomes: func(row map[string]any) { row["state"] = "ambiguous_records" }},
+	}
+}
+
+// refusedConnections are the connections pf refused, by their first (or single) leg's digest.
+func refusedConnections(t *testing.T, h *netflowWorld) map[string]bool {
+	t.Helper()
+	rows, err := h.Store.DB().QueryContext(context.Background(),
+		`SELECT f.log_digest FROM flow AS f
+		 LEFT JOIN flow AS s ON f.pair_outcome = 'first_leg' AND s.id = f.paired_flow_id
+		 WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
+		   AND (f.action IN ('block', 'reject') OR s.action IN ('block', 'reject'))`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	relative, err := filepath.Rel(recordingDirectory, absolute)
+	defer func() { _ = rows.Close() }()
+	refused := map[string]bool{}
+	for rows.Next() {
+		var digest string
+		if err := rows.Scan(&digest); err != nil {
+			t.Fatal(err)
+		}
+		refused[digest] = true
+	}
+	return refused
+}
+
+// ambiguousDirections are the directions of connections, "<first leg digest>|<direction>", that an ambiguous record
+// belongs to: the record's tuple is the first leg's logged tuple, forward, or its swap, reverse -- the ports set
+// aside for ICMP, ICMPv6 and a record with no port -- and it started no earlier than the leg's instant minus the
+// join tolerance and no later than the leg's export bound, the configuration's active timeout plus the tolerance.
+func ambiguousDirections(t *testing.T, h *netflowWorld) map[string]bool {
+	t.Helper()
+	ctx := context.Background()
+	const tolerance = 3
+	var active int64
+	if err := h.Store.DB().QueryRowContext(ctx, `SELECT coalesce(max(active_timeout_seconds), 0)
+		FROM plugin_netflow.capture_configuration`).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	type tuple struct {
+		src, dst         string
+		srcPort, dstPort int64
+		protocol         int64
+	}
+	records := map[tuple][]int64{}
+	rows, err := h.Store.DB().QueryContext(ctx, `SELECT canonical_address(src_address), canonical_address(dst_address),
+		    coalesce(src_port, -1), coalesce(dst_port, -1), protocol, start_at
+		FROM plugin_netflow.flow_record WHERE join_state = 'unmatched' AND unmatched_reason = 'ambiguous'`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return loadRecording(t, relative)
+	for rows.Next() {
+		var key tuple
+		var start int64
+		if err := rows.Scan(&key.src, &key.dst, &key.srcPort, &key.dstPort, &key.protocol, &start); err != nil {
+			t.Fatal(err)
+		}
+		if key.protocol == 1 || key.protocol == 58 || key.srcPort < 0 || key.dstPort < 0 ||
+			(key.srcPort == 0 && key.dstPort == 0) {
+			key.srcPort, key.dstPort = 0, 0
+		}
+		records[key] = append(records[key], start)
+	}
+	_ = rows.Close()
+	directions := map[string]bool{}
+	if len(records) == 0 {
+		return directions
+	}
+	legs, err := h.Store.DB().QueryContext(ctx, `SELECT log_digest, canonical_address(src_address),
+		    canonical_address(dst_address), coalesce(src_port, -1), coalesce(dst_port, -1), protocol, observed_at
+		FROM flow WHERE pair_outcome IS DISTINCT FROM 'second_leg'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = legs.Close() }()
+	numbers := map[string]int64{"tcp": 6, "udp": 17, "icmp": 1, "ipv6-icmp": 58}
+	for legs.Next() {
+		var digest, src, dst, name string
+		var srcPort, dstPort, at int64
+		if err := legs.Scan(&digest, &src, &dst, &srcPort, &dstPort, &name, &at); err != nil {
+			t.Fatal(err)
+		}
+		protocol, known := numbers[name]
+		if !known {
+			continue
+		}
+		for _, direction := range []string{"forward", "reverse"} {
+			key := tuple{src: src, dst: dst, srcPort: srcPort, dstPort: dstPort, protocol: protocol}
+			if direction == "reverse" {
+				key = tuple{src: dst, dst: src, srcPort: dstPort, dstPort: srcPort, protocol: protocol}
+			}
+			if protocol == 1 || protocol == 58 || key.srcPort < 0 || key.dstPort < 0 ||
+				(key.srcPort == 0 && key.dstPort == 0) {
+				key.srcPort, key.dstPort = 0, 0
+			}
+			for _, start := range records[key] {
+				if start >= at-tolerance && start <= at+active+tolerance {
+					directions[digest+"|"+direction] = true
+				}
+			}
+		}
+	}
+	return directions
 }

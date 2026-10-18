@@ -87,7 +87,9 @@ func (s *PluginTableStore) WriteDerivation(ctx context.Context, write Derivation
 		if !found {
 			return DerivationWritten{}, fmt.Errorf("store: the plugin %s wrote into %q, which it does not own", write.Plugin, name)
 		}
-		if !table.Counters {
+		if table.Counters {
+			rows = plugindecl.SumPerKey(table, rows)
+		} else {
 			rows = plugindecl.LastPerKey(table, rows)
 		}
 		perStatement := max(1, maxBoundParameters/len(table.Columns))

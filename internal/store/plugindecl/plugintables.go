@@ -558,6 +558,46 @@ func LastPerKey(table PluginTable, rows []map[string]any) []map[string]any {
 	return kept
 }
 
+// SumPerKey adds up, for a table of counters, the rows sharing a primary key, so a statement writes each key
+// once -- as a sequence of single writes would have added them -- and PostgreSQL never meets one key twice in one
+// INSERT. The figures are whole numbers or reals, as a counter table's columns are.
+func SumPerKey(table PluginTable, rows []map[string]any) []map[string]any {
+	position := map[string]int{}
+	var summed []map[string]any
+	for _, row := range rows {
+		parts := make([]string, 0, len(table.PrimaryKey))
+		for _, name := range table.PrimaryKey {
+			parts = append(parts, fmt.Sprintf("%T:%v", row[name], row[name]))
+		}
+		key := strings.Join(parts, "\x00")
+		index, seen := position[key]
+		if !seen {
+			position[key] = len(summed)
+			copied := make(map[string]any, len(row))
+			for name, value := range row {
+				copied[name] = value
+			}
+			summed = append(summed, copied)
+			continue
+		}
+		held := summed[index]
+		for _, column := range table.Columns {
+			if Contains(table.PrimaryKey, column.Name) {
+				continue
+			}
+			switch value := row[column.Name].(type) {
+			case int64:
+				total, _ := held[column.Name].(int64)
+				held[column.Name] = total + value
+			case float64:
+				total, _ := held[column.Name].(float64)
+				held[column.Name] = total + value
+			}
+		}
+	}
+	return summed
+}
+
 // Contains reports whether a list holds a value.
 func Contains(list []string, value string) bool {
 	for _, held := range list {

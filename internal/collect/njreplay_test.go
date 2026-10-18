@@ -166,7 +166,7 @@ func TestReplayACapture(t *testing.T) {
 		collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM flow"), len(legs),
 		collecttest.ScalarCount(t, h.Store, "SELECT coalesce(min(observed_at), 0) FROM flow"),
 		collecttest.ScalarCount(t, h.Store, "SELECT coalesce(max(observed_at), 0) FROM flow"),
-		collecttest.ScalarCount(t, h.Store, "SELECT coalesce(min(start_at), 0) FROM flow_record"),
+		collecttest.ScalarCount(t, h.Store, "SELECT coalesce(min(start_at), 0) FROM plugin_netflow.flow_record"),
 		collecttest.ScalarCount(t, h.Store, "SELECT coalesce(max(start_at), 0) FROM plugin_netflow.flow_record"))
 
 	type outcome struct{ records, octets int64 }
@@ -277,7 +277,7 @@ func TestReplayACapture(t *testing.T) {
 	// change on purpose.
 	if goOutcomes := os.Getenv("OPNVIEW_NJ_REPLAY_GO_OUTCOMES"); goOutcomes != "" {
 		recorded := loadRecordingFile(t, goOutcomes)
-		changed := compareRecording(t, goOutcomes, recorded, got, recordingExpectations())
+		changed := compareRecording(t, goOutcomes, recorded, got, recordingExpectations(t, h))
 		for class, count := range changed {
 			t.Logf("expected change, %s: %d rows", class, count)
 		}

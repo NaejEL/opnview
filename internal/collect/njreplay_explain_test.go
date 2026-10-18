@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/collect/collecttest"
 )
 
 // explainUnmatched compares the records the join left unmatched with the analysis's Rule B as its own
