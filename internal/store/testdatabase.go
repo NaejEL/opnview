@@ -65,7 +65,7 @@ func cloneStrategy() (string, error) {
 
 // testTemplateRevision is raised when what Open writes into a fresh database changes for a reason
 // the schema's digest does not see.
-const testTemplateRevision = "4"
+const testTemplateRevision = "5"
 
 var (
 	templateOnce sync.Once
@@ -218,6 +218,10 @@ func ensureDerivedTemplate(ctx context.Context, admin, revision string,
 		_, _ = db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{building}.Sanitize()+" WITH (FORCE)")
 		return "", fmt.Errorf("store: preparing a derived test template: %w", err)
 	}
+	if err := markTemplate(ctx, db, building, templateName); err != nil {
+		_, _ = db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{building}.Sanitize()+" WITH (FORCE)")
+		return "", err
+	}
 	if _, err := db.ExecContext(ctx, "ALTER DATABASE "+pgx.Identifier{building}.Sanitize()+" RENAME TO "+
 		pgx.Identifier{name}.Sanitize()); err != nil {
 		_, _ = db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{building}.Sanitize()+" WITH (FORCE)")
@@ -259,8 +263,9 @@ func (d *TestDatabase) Drop(ctx context.Context) error {
 	return nil
 }
 
-// ensureTemplate returns the template holding this schema, building it when the instance has none.
-func ensureTemplate(ctx context.Context, admin string) (string, error) {
+// baseTemplateName is the name of the template holding this schema: a digest of the schema, the
+// template revision and the built-ins' declarations.
+func baseTemplateName() (string, error) {
 	schema, err := sqlFiles.ReadFile("schema.sql")
 	if err != nil {
 		return "", err
@@ -271,7 +276,90 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 		return "", err
 	}
 	digest := sha256.Sum256(append(append(schema, []byte(testTemplateRevision)...), declarations...))
-	name := "opnview_template_" + hex.EncodeToString(digest[:])[:16]
+	return "opnview_template_" + hex.EncodeToString(digest[:])[:16], nil
+}
+
+// TEMPLATES ARE MARKED WITH THE BASE THEY WERE BUILT FROM (decision 6 of the performance cycle, 18
+// October 2026). Every base template and every derived template carries a comment naming the base
+// template it holds the schema of, written before it is renamed to its own name. A template whose
+// base is not this build's is stale -- another schema, revision or set of declarations built it --
+// and RemoveStaleTestTemplates drops it by its exact name. A comment is not copied into a clone, so no
+// test database carries one.
+const templateMarker = "opnview test template of "
+
+// markTemplate writes the comment naming the base template a template under construction holds.
+func markTemplate(ctx context.Context, db *sql.DB, building, base string) error {
+	if _, err := db.ExecContext(ctx, "COMMENT ON DATABASE "+pgx.Identifier{building}.Sanitize()+" IS "+
+		quoteLiteral(templateMarker+base)); err != nil {
+		return fmt.Errorf("store: marking a test template: %w", err)
+	}
+	return nil
+}
+
+// quoteLiteral quotes a text as an SQL string literal.
+func quoteLiteral(text string) string {
+	return "'" + strings.ReplaceAll(text, "'", "''") + "'"
+}
+
+// RemoveStaleTestTemplates drops, each by its exact name, every test template of the instance admin
+// names whose comment says it holds another base template than this build's, and that base's read role
+// once none of its templates is left. A template another session holds is left for a later run, and
+// so is its role. It returns the databases it dropped.
+func RemoveStaleTestTemplates(ctx context.Context, admin string) ([]string, error) {
+	current, err := baseTemplateName()
+	if err != nil {
+		return nil, err
+	}
+	db, err := adminPool(admin)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT d.datname, substr(c.description, length($1) + 1)
+		FROM pg_database AS d
+		JOIN pg_shdescription AS c ON c.objoid = d.oid AND c.classoid = CAST('pg_database' AS regclass)
+		WHERE left(c.description, length($1)) = $1
+		ORDER BY d.datname`, templateMarker)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing the test templates: %w", err)
+	}
+	type marked struct{ name, base string }
+	var stale []marked
+	for rows.Next() {
+		var template marked
+		if err := rows.Scan(&template.name, &template.base); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("store: listing the test templates: %w", err)
+		}
+		if template.base != current {
+			stale = append(stale, template)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("store: listing the test templates: %w", err)
+	}
+	var dropped []string
+	bases := map[string]bool{}
+	for _, template := range stale {
+		bases[template.base] = true
+		if _, err := db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{template.name}.Sanitize()); err != nil {
+			// Held by another session: a later run drops it.
+			continue
+		}
+		dropped = append(dropped, template.name)
+	}
+	for base := range bases {
+		// Refused while a database still grants it something: a later run drops it.
+		_, _ = db.ExecContext(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{sqldb.ReadRoleName(base)}.Sanitize())
+	}
+	return dropped, nil
+}
+
+// ensureTemplate returns the template holding this schema, building it when the instance has none.
+func ensureTemplate(ctx context.Context, admin string) (string, error) {
+	name, err := baseTemplateName()
+	if err != nil {
+		return "", err
+	}
 	db, err := adminPool(admin)
 	if err != nil {
 		return "", err
@@ -308,6 +396,9 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 		return "", fmt.Errorf("store: registering the built-ins in the test template: %w", err)
 	}
 	if err := store.Close(); err != nil {
+		return "", err
+	}
+	if err := markTemplate(ctx, db, building, name); err != nil {
 		return "", err
 	}
 	// Another process may have finished the same template meanwhile: the rename then fails, the

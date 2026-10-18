@@ -17,6 +17,36 @@ function withSiteNames(row, names) {
   return grouped;
 }
 
+// firstRanked is the first `limit` rows of a list in the order `rank` gives them, a total order: what
+// sorting the list and keeping its head gives, with each row compared with the rows kept so far rather
+// than the whole list sorted.
+function firstRanked(rows, limit, rank) {
+  var kept = [];
+  if (limit <= 0) {
+    return kept;
+  }
+  rows.forEach(function (row) {
+    if (kept.length === limit && rank(row, kept[limit - 1]) >= 0) {
+      return;
+    }
+    var low = 0;
+    var high = kept.length;
+    while (low < high) {
+      var middle = (low + high) >> 1;
+      if (rank(row, kept[middle]) < 0) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    kept.splice(low, 0, row);
+    if (kept.length > limit) {
+      kept.pop();
+    }
+  });
+  return kept;
+}
+
 exports.widget = {
   serve: function (host) {
     var compare = host.figures.compare;
@@ -77,7 +107,7 @@ exports.widget = {
     });
     // A site row and an address row are told apart by kind; within a kind, names and addresses are
     // distinct, so no two rows tie.
-    list.sort(function (a, b) {
+    var rank = function (a, b) {
       if (a.flows.value !== b.flows.value) {
         return a.flows.value > b.flows.value ? -1 : 1;
       }
@@ -85,24 +115,29 @@ exports.widget = {
         return a.kind === "site" ? -1 : 1;
       }
       return a.kind === "site" ? compare(a.name, b.name) : compare(a.address, b.address);
-    });
+    };
     var minimum = host.params.integer("min_flows");
     var limit = host.params.integer("limit");
-    var shown = [];
     var belowMembers = 0;
     var below = 0;
-    var restMembers = 0;
-    var rest = 0;
+    var eligible = [];
+    var eligibleFlows = 0;
     list.forEach(function (row) {
       if (row.flows.value < minimum) {
         belowMembers++;
         below += row.flows.value;
-      } else if (shown.length < limit) {
-        shown.push(row);
       } else {
-        restMembers++;
-        rest += row.flows.value;
+        eligible.push(row);
+        eligibleFlows += row.flows.value;
       }
+    });
+    // The rows shown are the first `limit` of the eligible ones in rank order: only they are ranked
+    // among themselves, so the window's thousands of names are never sorted whole.
+    var shown = firstRanked(eligible, limit, rank);
+    var restMembers = eligible.length - shown.length;
+    var rest = eligibleFlows;
+    shown.forEach(function (row) {
+      rest -= row.flows.value;
     });
     var window = host.attribution.window();
     // The members in the order the table has always been written in.

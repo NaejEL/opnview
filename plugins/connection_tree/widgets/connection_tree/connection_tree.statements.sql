@@ -29,6 +29,12 @@
 -- geolocations of the addresses drawn are read together (host.query).
 
 -- statement: widget_tree_nodes
+-- plan-with: include_blocked=true
+-- plan-with: root=interface
+-- plan-with: depth=2
+-- plan-with: sort=volume
+-- plan-with: value_by=bytes
+-- plan-with: limit=10
 WITH flows AS (
     SELECT f.local_interface_id AS interface_id,
            f.local_client_id AS client_id,
@@ -189,6 +195,12 @@ FROM keyed AS c;
 -- The same under aggregate_mode = no_domains: the site name is not read at all, so every destination
 -- below its operator is its address, as the database would give it with no attribution stored.
 -- statement: widget_tree_nodes_no_domains
+-- plan-with: include_blocked=true
+-- plan-with: root=interface
+-- plan-with: depth=2
+-- plan-with: sort=volume
+-- plan-with: value_by=bytes
+-- plan-with: limit=10
 WITH flows AS (
     SELECT f.local_interface_id AS interface_id,
            f.local_client_id AS client_id,
@@ -351,6 +363,12 @@ FROM keyed AS c;
 -- measure's parts of every connection the tree counts, measure_parts, which the script hands
 -- host.figures.cover.
 -- statement: widget_tree_nodes_measured
+-- plan-with: include_blocked=true
+-- plan-with: root=interface
+-- plan-with: depth=2
+-- plan-with: sort=volume
+-- plan-with: value_by=bytes
+-- plan-with: limit=10
 WITH flows AS (
     SELECT f.local_interface_id AS interface_id,
            f.local_client_id AS client_id,
@@ -517,6 +535,12 @@ FROM keyed AS c;
 
 
 -- statement: widget_tree_nodes_no_domains_measured
+-- plan-with: include_blocked=true
+-- plan-with: root=interface
+-- plan-with: depth=2
+-- plan-with: sort=volume
+-- plan-with: value_by=bytes
+-- plan-with: limit=10
 WITH flows AS (
     SELECT f.local_interface_id AS interface_id,
            f.local_client_id AS client_id,

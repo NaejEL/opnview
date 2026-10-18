@@ -5332,7 +5332,7 @@ Every test runs on the PostgreSQL test instance, under a fake clock where time m
 - [ ] **PA-AC26. Budgets.**
   - `checks`: `go test` ≤ 45 s, median of three consecutive runs, none above 50 s, exit 0, printed with the CPU count.
   - `internal/collect` and `internal/store` ≤ 25 s each alone.
-  - `pre-deployment` ≤ 150 s with seeds reused, and the cold seed build printed apart.
+  - `pre-deployment` ≤ 180 s, the script's own budget (decision 7 of the performance cycle, 18 October 2026), with seeds reused, and the cold seed build printed apart.
   - E6's rules hold for the whole diff.
 - [ ] **PA-AC27. Third-party proof.** PA20's fixture test passes with the fixture holding no Go, and with no shipped file edited (the test compares a digest of the shipped tree before and after).
 - [ ] **PA-AC28. Modularity test.** PA20's token test passes. Adding a fixture Go file containing `netflow` outside the allow-list makes it fail.

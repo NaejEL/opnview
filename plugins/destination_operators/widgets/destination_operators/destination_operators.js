@@ -26,6 +26,36 @@ function groupOf(group, geo) {
   return { key: "operator:" + name, asn: null, operator: geo.operator };
 }
 
+// firstRanked is the first `limit` rows of a list in the order `rank` gives them, a total order: what
+// sorting the list and keeping its head gives, with each row compared with the rows kept so far rather
+// than the whole list sorted.
+function firstRanked(rows, limit, rank) {
+  var kept = [];
+  if (limit <= 0) {
+    return kept;
+  }
+  rows.forEach(function (row) {
+    if (kept.length === limit && rank(row, kept[limit - 1]) >= 0) {
+      return;
+    }
+    var low = 0;
+    var high = kept.length;
+    while (low < high) {
+      var middle = (low + high) >> 1;
+      if (rank(row, kept[middle]) < 0) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    kept.splice(low, 0, row);
+    if (kept.length > limit) {
+      kept.pop();
+    }
+  });
+  return kept;
+}
+
 exports.widget = {
   serve: function (host) {
     var group = host.params.text("group");
@@ -65,8 +95,22 @@ exports.widget = {
 
     var allowed = host.params.has("series", "allowed");
     var blocked = host.params.has("series", "blocked");
-    var rows = groupList.map(function (entry) {
+    // Every group's figures, and its bytes, which rank it; only the groups shown are written as rows.
+    groupList.forEach(function (entry) {
       entry.figures = host.figures.sum(entry.members);
+    });
+    // The most bytes first; equal bytes by key, in byte order. The rows shown are the first `limit` in
+    // that order, and only they are ranked among themselves: the window's groups are never sorted whole.
+    var rank = function (a, b) {
+      return b.figures.bytes - a.figures.bytes || host.figures.compare(a.named.key, b.named.key);
+    };
+    var limit = host.params.integer("limit");
+    var first = firstRanked(groupList, limit, rank);
+    var isShown = new Map();
+    first.forEach(function (entry) {
+      isShown.set(entry, true);
+    });
+    var shown = first.map(function (entry) {
       var row = { key: entry.named.key };
       if (entry.named.asn !== null) {
         row.asn = entry.named.asn;
@@ -84,22 +128,13 @@ exports.widget = {
       row.peers = entry.peers;
       row.interfaces = entry.interfaces.sort(numeric);
       row.dataset_build_at = entry.build;
-      return { row: row, figures: entry.figures };
+      return row;
     });
-    // The most bytes first; equal bytes by key, in byte order.
-    rows.sort(function (a, b) {
-      return b.row.bytes.value - a.row.bytes.value || host.figures.compare(a.row.key, b.row.key);
-    });
-
-    var limit = host.params.integer("limit");
-    var shown = [];
     var dropped = [];
-    rows.forEach(function (entry, index) {
-      if (index < limit) {
-        shown.push(entry.row);
-        return;
+    groupList.forEach(function (entry) {
+      if (!isShown.has(entry)) {
+        dropped.push(entry.figures);
       }
-      dropped.push(entry.figures);
     });
     var rest = host.figures.sum(dropped);
     return {

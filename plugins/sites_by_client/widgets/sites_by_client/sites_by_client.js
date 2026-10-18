@@ -20,6 +20,45 @@ function bySiteRank(host) {
   };
 }
 
+// flowsOf is the flows a list of site or address rows sums to: the flows of the cell they make.
+function flowsOf(rows) {
+  var flows = 0;
+  rows.forEach(function (row) {
+    flows += row.flows;
+  });
+  return flows;
+}
+
+// firstRanked is the first `limit` rows of a list in the order `rank` gives them, a total order: what
+// sorting the list and keeping its head gives, with each row compared with the rows kept so far rather
+// than the whole list sorted.
+function firstRanked(rows, limit, rank) {
+  var kept = [];
+  if (limit <= 0) {
+    return kept;
+  }
+  rows.forEach(function (row) {
+    if (kept.length === limit && rank(row, kept[limit - 1]) >= 0) {
+      return;
+    }
+    var low = 0;
+    var high = kept.length;
+    while (low < high) {
+      var middle = (low + high) >> 1;
+      if (rank(row, kept[middle]) < 0) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    kept.splice(low, 0, row);
+    if (kept.length > limit) {
+      kept.pop();
+    }
+  });
+  return kept;
+}
+
 // totalFlows is a client row's eligible flows: those shown, those past the limit and those below
 // min_flows, named or by address.
 function totalFlows(row) {
@@ -81,6 +120,8 @@ exports.widget = {
     var perRow = host.params.integer("sites_per_client");
     var minimum = host.params.integer("min_flows");
     var showRate = host.params.flag("show_attribution_rate");
+    var rank = bySiteRank(host);
+    var measured = host.figures.measure !== host.figures.measures.logged;
     var answer = [];
     ids.forEach(function (id) {
       var info = host.installation.client(id);
@@ -88,30 +129,53 @@ exports.widget = {
         (interfaces !== null && (info.interface_id === null || interfaces.indexOf(info.interface_id) < 0))) {
         return;
       }
+      // Each site and address of the client, ranked by its flows -- the sum of its rows' -- before any
+      // is summed into the cell it is written as: only the cells shown are (host.sites.accumulate).
       var sites = [];
       var named = perClient.get(id).size;
       perClient.get(id).forEach(function (siteRows, name) {
-        sites.push(host.sites.accumulate(name, siteRows));
+        sites.push({ kind: "site", name: name, rows: siteRows, flows: { value: flowsOf(siteRows) } });
       });
       (addressesPerClient.get(id) || new Map()).forEach(function (addressRows, address) {
-        sites.push(host.sites.accumulateAddress(address, addressRows));
+        sites.push({ kind: "address", address: address, rows: addressRows, flows: { value: flowsOf(addressRows) } });
       });
-      sites.sort(bySiteRank(host));
-      var shown = [];
       var belowMembers = 0;
       var below = 0;
-      var restMembers = 0;
-      var rest = 0;
+      var eligible = [];
+      var eligibleFlows = 0;
       sites.forEach(function (site) {
         if (site.flows.value < minimum) {
           belowMembers++;
           below += site.flows.value;
-        } else if (shown.length < perRow) {
-          shown.push(site);
         } else {
-          restMembers++;
-          rest += site.flows.value;
+          eligible.push(site);
+          eligibleFlows += site.flows.value;
         }
+      });
+      // The cells shown are the first sites_per_client of the eligible ones in rank order: only they are
+      // ranked among themselves, so a client's sites are never sorted whole.
+      var first = firstRanked(eligible, perRow, rank);
+      var isShown = new Map();
+      first.forEach(function (site) {
+        isShown.set(site, true);
+      });
+      var shown = first.map(function (site) {
+        return site.kind === "site" ? host.sites.accumulate(site.name, site.rows) :
+          host.sites.accumulateAddress(site.address, site.rows);
+      });
+      // The rows of every cell not shown are judged as the cells shown are (host.figures.cover): their
+      // flows are counted in the remainders. A logged answer has nothing to judge.
+      if (measured) {
+        sites.forEach(function (site) {
+          if (!isShown.has(site)) {
+            host.figures.cover(site.rows);
+          }
+        });
+      }
+      var restMembers = eligible.length - shown.length;
+      var rest = eligibleFlows;
+      shown.forEach(function (site) {
+        rest -= site.flows.value;
       });
       // The members in the order the matrix's rows have always been written in.
       var entry = {

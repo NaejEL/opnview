@@ -139,6 +139,17 @@ if [ -z "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
   report 'go build ./...' "$?"
 fi
 
+# THE STALE TEST TEMPLATES, dropped before go test, each by its exact name (decision 6 of the performance
+# cycle, 18 October 2026): every test template names the base template it was built from, and one built
+# by another schema, template revision or set of declarations is never cloned again, but held the
+# everyday instance's tmpfs -- its memory -- until something dropped it (ci/testtemplates). The budget
+# self-test's run creates no test database and skips it.
+if [ -z "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
+  printf -- '== go run ./ci/testtemplates (the everyday test instance)\n'
+  go run ./ci/testtemplates "${OPNVIEW_TEST_DATABASE:-}"
+  report 'go run ./ci/testtemplates' "$?"
+fi
+
 test_packages=(./...)
 if [ -n "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
   test_packages=(./ci/budgetprobe)

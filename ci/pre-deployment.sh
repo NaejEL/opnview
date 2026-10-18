@@ -13,6 +13,8 @@
 #                    "Development and test environment"); every package of ./... is
 #                    printed, selected or excluded, with the clause that decided it,
 #                    and the two sets together must be exactly go list ./...;
+#   test templates   ci/testtemplates drops, each by its exact name, the test templates of both go test
+#                    instances that another schema, template revision or set of declarations built;
 #   go vet           with the `predeployment`, `reclassifycost` and `brokerbudget`
 #                    build tags, so the tests out of the everyday suite are vetted too;
 #   go test -race    the selected packages, with the `predeployment` tag, against the
@@ -267,6 +269,11 @@ printf -- '  %d packages selected for -race, %d excluded, %d in go list ./...\n'
   "${#plain_packages[@]}" "$(wc -l < "$STEPS_DIR/listed.txt")"
 record 'race selection' "$selection_status" $(( ( $(date +%s%N) - selection_begun ) / 1000000 ))
 
+# THE STALE TEST TEMPLATES OF BOTH GO TEST INSTANCES, dropped each by its exact name before any test runs
+# (decision 6 of the performance cycle, 18 October 2026; ci/testtemplates, which ci/checks.sh runs too).
+run_step 'go run ./ci/testtemplates (the two go test instances)' \
+  go run ./ci/testtemplates "${OPNVIEW_TEST_DATABASE:-}" "${OPNVIEW_RACE_TEST_DATABASE:-}"
+
 # THE BROKER BUDGETS FIRST, on a quiet machine. They measure medians of a few milliseconds, which every
 # other step of this command -- the two go test runs, the schema checks, the fuzz targets -- would
 # measure instead while it runs: they start before any of them, and take a few seconds.
@@ -279,8 +286,9 @@ run_step 'broker budgets (go test -tags brokerbudget -run Budget)' broker_budget
 
 # THE PROGRAMS UNDER ci/ THE SCHEMA CHECKS AND THE ANSWER DRIFT RUN, BUILT NOW, also on a quiet machine:
 # the schema checks build theirs first thing, and beside the two go test runs that build took half a
-# minute of their critical path (18 October 2026); built here, theirs is a hit in the shared build
-# cache. The answer drift's program is kept, so what runs after the schema checks is the program alone.
+# minute of their critical path (18 October 2026). The schema checks take the programs built here, from
+# the directory OPNVIEW_SCHEMA_CHECKS_PROGRAMS names, rather than link them again; the answer drift's is
+# kept too, so what runs after the schema checks is the program alone.
 run_step 'go build the programs of the schema checks and the answer drift' \
   go build -o "$STEPS_DIR/" ./ci/planjson ./ci/statementfiles ./ci/plugintables ./ci/widgetbudget ./ci/answerdrift
 
@@ -295,7 +303,8 @@ if [ -z "$schema_test_database" ]; then
   record 'OPNVIEW_SCHEMA_CHECKS_DATABASE' 1 0
 else
   start_step schema 'sql/schema-checks.sh (on the schema checks'"'"' instance)' \
-    env OPNVIEW_TEST_DATABASE="$schema_test_database" bash "$REPO_ROOT/sql/schema-checks.sh"
+    env OPNVIEW_TEST_DATABASE="$schema_test_database" OPNVIEW_SCHEMA_CHECKS_PROGRAMS="$STEPS_DIR" \
+    bash "$REPO_ROOT/sql/schema-checks.sh"
 fi
 start_step selftest 'ci/budget-self-test.sh' bash "$REPO_ROOT/ci/budget-self-test.sh"
 fuzz_ids=()

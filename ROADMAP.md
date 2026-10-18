@@ -244,8 +244,10 @@ maintainer's test budget of 7 October 2026,
   - **`sql/schema-checks.sh`** -- the schema, the seeds at 100 000 and 1 000 000
     flow rows, the screen queries and every statement's plan at both seeds, the
     widget and data catalogue budgets at both seeds (100 000 rows at 250 ms for
-    24 h and 500 ms for 30 days, 1 000 000 at 1 s and 2 s), the live budget and the
-    backup round trip. The wall time of `ReclassifyEverything` on a copy of the
+    24 h and 500 ms for 30 days, 1 000 000 at 1 s and 2 s), timed one seed after the
+    other so that neither is the other's load (decision 3 of the performance cycle,
+    18 October 2026), the live budget and the backup round trip, on a copy of the
+    100 000-row seed of its own. The wall time of `ReclassifyEverything` on a copy of the
     large seed is out of this command since 16 October 2026: it places one address
     at a time and took 1.5 to 2 minutes alone, which the budget cannot hold; it runs
     on request, `docker compose run --rm -e OPNVIEW_RECLASSIFY_COST=1 schema-checks`.
@@ -265,7 +267,11 @@ maintainer's test budget of 7 October 2026,
   a clone of it where a check writes, and prints the digest it reused; a run whose
   digest differs builds it cold, prints the build's breakdown -- the schema apply,
   each table's generation, `VACUUM (ANALYZE)` -- and its time apart from the
-  budgeted run, and announces at its start that it does. **After a change to what
+  budgeted run, and announces at its start that it does. A build also checks the
+  core's foreign keys, once per digest, and records the schema's `applied_schema`
+  row, so a store opening a kept seed writes nothing; a run checks the plugin
+  tables' keys, which it creates again (decisions 4 and 5 of the performance
+  cycle). **After a change to what
   the seeds are built from, `docker compose run --rm schema-checks` builds them**:
   run on its own it has no hard limit, where the pre-deployment command would stop
   a cold build at its own. The kept seeds live on **`db-schema-checks`**, the
@@ -290,7 +296,10 @@ maintainer's test budget of 7 October 2026,
   tag `brokerbudget`) are timings the race detector would distort. **The everyday
   suite fits its budget by its shared helpers, never by a list of tests**: a clone
   of the test template skips the schema apply when the database already records the
-  digest of `schema.sql` (`applied_schema`); a wait for the database is a reported
+  digest of `schema.sql` (`applied_schema`); a template carries the name of the base
+  template it holds, and `ci/testtemplates` drops, before each `go test` of `checks`
+  and the pre-deployment command, every template another build left (decision 6 of
+  the performance cycle); a wait for the database is a reported
   event, not a silent sleep; and `OPNVIEW_TEST_BREAKDOWN=1` prints, per package,
   where the suite's time goes (`ci/testtiming`).
 
