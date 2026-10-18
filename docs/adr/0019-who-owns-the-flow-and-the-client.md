@@ -144,4 +144,10 @@ four other core-kind tables. Two ways forward, to be decided before the move:
    set-aside on change and the push writers all read the declaration, not the
    DDL, so a DDL table would be a second kind of table with fewer services.
 
-The orchestrator recommends the first.
+The orchestrator recommends the first. **The maintainer chose it the same
+day, and it is built:** `identity`, `generated`, `references` (own table, or a
+required plugin's), `checks`, and `where` on an index; a declaration's
+expression may hold no terminator, parameter, `SELECT` or writing word; a
+changed check or reference rebuilds the table as any declaration change does;
+rows written never carry an identity or a generated column. The move of
+`installation` and `pf.flow` is the next step.

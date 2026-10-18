@@ -296,7 +296,7 @@ func checkPushTable(plugin *Plugin, binding *pushBinding, tables map[string]plug
 	for column := range declaration.Fields {
 		filled[column] = true
 	}
-	for _, column := range table.Columns {
+	for _, column := range table.WrittenColumns() {
 		if !column.Nullable && !filled[column.Name] {
 			return contract.Refuse(name, contract.RefusalPushColumnUnfilled, "%s leaves the NOT NULL column %s of %s unfilled", entry,
 				column.Name, table.Table)

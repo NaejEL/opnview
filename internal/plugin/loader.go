@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -628,11 +629,39 @@ func declaredTables(manifest contract.Manifest) ([]plugindecl.PluginTable, *cont
 		table := plugindecl.PluginTable{Plugin: manifest.Name, Table: declaration.Name,
 			PrimaryKey: declaration.PrimaryKey, Counters: declaration.Counters}
 		for _, column := range declaration.Columns {
-			table.Columns = append(table.Columns, plugindecl.PluginColumn{Name: column.Name, Type: column.Type,
-				Nullable: column.Nullable, CarriesDomain: column.CarriesDomain, Role: column.Role, Unit: column.Unit})
+			converted := plugindecl.PluginColumn{Name: column.Name, Type: column.Type, Nullable: column.Nullable,
+				CarriesDomain: column.CarriesDomain, Role: column.Role, Unit: column.Unit, Identity: column.Identity,
+				Generated: column.Generated}
+			if column.Generated != "" {
+				if err := sqldb.CheckExpression(column.Generated); err != nil {
+					return nil, contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "the generated column %q of %s: %v",
+						column.Name, declaration.Name, err)
+				}
+			}
+			if column.References != "" {
+				referencedTable, referencedColumn, refusal := referencedBy(manifest, declaration.Name, column)
+				if refusal != nil {
+					return nil, refusal
+				}
+				converted.ReferencesTable, converted.ReferencesColumn = referencedTable, referencedColumn
+			}
+			table.Columns = append(table.Columns, converted)
 		}
 		for _, index := range declaration.Indexes {
-			table.Indexes = append(table.Indexes, plugindecl.PluginIndex{Columns: index.Columns, Unique: index.Unique})
+			if index.Where != "" {
+				if err := sqldb.CheckExpression(index.Where); err != nil {
+					return nil, contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "an index of %s: %v", declaration.Name, err)
+				}
+			}
+			table.Indexes = append(table.Indexes, plugindecl.PluginIndex{Columns: index.Columns, Unique: index.Unique,
+				Where: index.Where})
+		}
+		for _, check := range declaration.Checks {
+			if err := sqldb.CheckExpression(check.Expression); err != nil {
+				return nil, contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "the check %q of %s: %v", check.Name,
+					declaration.Name, err)
+			}
+			table.Checks = append(table.Checks, plugindecl.PluginCheck{Name: check.Name, Expression: check.Expression})
 		}
 		grantees := map[string]bool{}
 		for _, grant := range declaration.WritableBy {
@@ -670,6 +699,39 @@ func declaredTables(manifest contract.Manifest) ([]plugindecl.PluginTable, *cont
 		tables = append(tables, table)
 	}
 	return tables, nil
+}
+
+// referencePattern is what a column's references matches: table(column), or plugin.table(column).
+var referencePattern = regexp.MustCompile(`^(?:([a-z][a-z0-9_]*)\.)?([a-z][a-z0-9_]*)\(([a-z][a-z0-9_]*)\)$`)
+
+// referencedBy resolves a column's references to the qualified table and the column it names: a table of
+// the plugin's own, or of a plugin the manifest requires, which loads first (ADR 0019).
+func referencedBy(manifest contract.Manifest, tableName string, column contract.ColumnDeclaration) (string, string,
+	*contract.Refusal) {
+	match := referencePattern.FindStringSubmatch(column.References)
+	if match == nil {
+		return "", "", contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "the column %q of %s references %q, which is "+
+			"not table(column) or plugin.table(column)", column.Name, tableName, column.References)
+	}
+	owner, referencedTable, referencedColumn := match[1], match[2], match[3]
+	if owner == "" || owner == manifest.Name {
+		owner = manifest.Name
+		found := false
+		for _, declared := range manifest.Tables {
+			if declared.Name == referencedTable {
+				found = true
+			}
+		}
+		if !found {
+			return "", "", contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "the column %q of %s references the table "+
+				"%q, which the plugin does not declare", column.Name, tableName, referencedTable)
+		}
+	} else if !slices.Contains(manifest.Requires, owner) {
+		return "", "", contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "the column %q of %s references a table of "+
+			"the plugin %s, which the manifest does not require", column.Name, tableName, owner)
+	}
+	return plugindecl.QuoteIdentifier(plugindecl.PluginSchema(owner)) + "." + plugindecl.QuoteIdentifier(referencedTable),
+		referencedColumn, nil
 }
 
 // declaresIntegerSetting reports whether a manifest declares an integer setting of a key.

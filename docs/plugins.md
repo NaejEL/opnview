@@ -204,7 +204,17 @@ table of the same name; a query names it `plugin_<plugin>.<table>`.
 | `retention` | The column holding each row's instant -- an `instant`, or an `integer` of UTC epoch seconds -- and how long a row is kept after it; `seconds` 0 follows the installation's retention; `setting` names one of the plugin's integer settings which, when the operator set it above zero, is how long a row is kept instead. A push output table's is an `instant`. |
 | `nature` | `event` or `sample`: what a bucket of the data catalogue with no row means -- a true zero, or a gap. `sample` by default, which never draws a zero it did not read. |
 | `counters` | `true` makes it a table of counters, which only a derivation writes (*Derivations*): it has a primary key, every other column is a NOT NULL number, and a row written with a key already held adds its figures to the held row's, in one batched write, instead of replacing it; rows of one key written together are added first, and a row whose figures all come back to zero is removed. A counter outlives the purge of whatever it counts. |
+| `identity` (a column) | `true` on a NOT NULL integer column: the database numbers each row, and no row written carries it (ADR 0019). |
+| `generated` (a column) | An SQL expression over the row's other columns the column is computed from and stored; no row written carries it. Never the time column nor part of the primary key. |
+| `references` (a column) | A foreign key: `table(column)` of the plugin's own, or `plugin.table(column)` of a plugin the manifest `requires`, which loads first. A table with a time column may reference, and is never referenced. |
+| `checks` | The table's CHECK constraints, each `{"name", "expression"}`, named `<table>_<name>` in the database. |
+| `where` (an index) | The predicate of a partial index. |
 | `writable_by` | The other plugins that may write the table (ADR 0019), each `{"plugin", "columns"}`: with `columns`, UPDATE of those columns alone; without, INSERT, UPDATE and DELETE of the whole table. It is the owner's declaration, turned into PostgreSQL's own grants on the other plugin's role at every start, and what the owner no longer grants is revoked. The other plugin `requires` the owner and names the table by its qualified name; its statements are planned under its role when it loads, so one that writes a column it was not granted refuses it by name (`statement_refused`). |
+
+An expression a declaration carries -- a check, a generated column, a partial index's predicate --
+is one expression over the row: no statement terminator, no parameter, no `SELECT` and no word a
+statement that writes uses; PostgreSQL then refuses what does not parse, and the plugin with it
+(`table_invalid`).
 
 A table with a retention column is a TimescaleDB hypertable chunked by day on it, purged by whole
 chunks and then to the exact second. A hypertable cannot hold a unique key that leaves out its time

@@ -267,7 +267,7 @@ func (s *PluginTableStore) setAside(ctx context.Context, transaction *sql.Tx, ta
 	}
 	constraints, err := transaction.QueryContext(ctx,
 		`SELECT quote_ident(conname) FROM pg_constraint
-		 WHERE conrelid = CAST($1 AS regclass) AND contype IN ('p', 'u')`, table.Quoted())
+		 WHERE conrelid = CAST($1 AS regclass) AND contype IN ('p', 'u', 'c', 'f')`, table.Quoted())
 	if err != nil {
 		return nil, fmt.Errorf("store: listing the keys of %s: %w", table.SQLName(), err)
 	}

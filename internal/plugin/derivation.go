@@ -465,12 +465,17 @@ func (d *derivation) tableRows(value any, into map[string][]map[string]any) *pro
 			}
 			typed := make(map[string]any, len(table.Columns))
 			for column := range row {
-				if _, isColumn := tableColumn(table, column); !isColumn {
+				declared, isColumn := tableColumn(table, column)
+				if !isColumn {
 					return d.failed(vocab.OutcomeRecordsInvalid, "rows.%s[%d] holds %q, which is not a column", name, index,
 						column)
 				}
+				if !declared.Written() {
+					return d.failed(vocab.OutcomeRecordsInvalid, "rows.%s[%d] holds %q, which the database fills: an identity or "+
+						"a generated column is never written", name, index, column)
+				}
 			}
-			for _, column := range table.Columns {
+			for _, column := range table.WrittenColumns() {
 				converted, err := push.Convert(column.Type, row[column.Name])
 				if err != nil || (converted == nil && !column.Nullable) {
 					return d.failed(vocab.OutcomeRecordsInvalid, "rows.%s[%d].%s is not a(n) %s", name, index, column.Name,

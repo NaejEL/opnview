@@ -278,6 +278,8 @@ type TableDeclaration struct {
 	// WritableBy names the other plugins that may write the table, and on which columns (ADR 0019):
 	// the owner's declaration, turned into PostgreSQL's own grants on the other plugin's role.
 	WritableBy []WriteGrant `json:"writable_by,omitempty"`
+	// Checks are the table's CHECK constraints (ADR 0019).
+	Checks []CheckDeclaration `json:"checks,omitempty"`
 }
 
 // WriteGrant is one plugin allowed to write a table of another (ADR 0019): with Columns, UPDATE of
@@ -305,12 +307,30 @@ type ColumnDeclaration struct {
 	// Aggregations are the aggregations the data catalogue admits on the column; empty takes its
 	// role's defaults (docs/plugins.md, "Tables").
 	Aggregations []string `json:"aggregations,omitempty"`
+	// Identity makes an integer column a generated identity: the database numbers each row, and no
+	// row written carries it (ADR 0019).
+	Identity bool `json:"identity,omitempty"`
+	// Generated is an SQL expression over the row's other columns the column is computed from, stored;
+	// no row written carries it (ADR 0019).
+	Generated string `json:"generated,omitempty"`
+	// References makes the column a foreign key: "table(column)" of the plugin's own, or
+	// "plugin.table(column)" of a plugin the manifest requires (ADR 0019).
+	References string `json:"references,omitempty"`
+}
+
+// CheckDeclaration is one CHECK constraint of a table (ADR 0019): a name and an SQL expression over
+// the row.
+type CheckDeclaration struct {
+	Name       string `json:"name"`
+	Expression string `json:"expression"`
 }
 
 // IndexDeclaration is one index.
 type IndexDeclaration struct {
 	Columns []string `json:"columns"`
 	Unique  bool     `json:"unique,omitempty"`
+	// Where makes it a partial index, over the rows the expression admits (ADR 0019).
+	Where string `json:"where,omitempty"`
 }
 
 // RetentionDeclaration is a table's retention: the instant column the horizon reads, and how

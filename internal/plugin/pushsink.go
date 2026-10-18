@@ -243,7 +243,7 @@ func (s *tableSink) convert(values map[string]any, record push.Record, counts ma
 			return nil, false
 		}
 	}
-	for _, column := range table.Columns {
+	for _, column := range table.WrittenColumns() {
 		value := values[column.Name]
 		if value == nil && column.Name == table.TimeColumn && !record.Instant.IsZero() {
 			value = record.Instant

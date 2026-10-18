@@ -26,6 +26,9 @@ func writePlugin(t *testing.T, dataDir, name, manifest string, files map[string]
 		t.Fatal(err)
 	}
 	for file, text := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(directory, file)), 0o750); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(directory, file), []byte(text), 0o640); err != nil {
 			t.Fatal(err)
 		}
