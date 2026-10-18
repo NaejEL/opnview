@@ -117,10 +117,11 @@ exports.widget = {
     var pairs = {};
     var pairList = [];
     var nodes = {};
-    var total = host.figures.zero();
-    var other = host.figures.zero();
+    // Every flow's figures, summed in one call: host.figures.sum is add folded over a list. The Other
+    // band's figures are listed as they fall into it and summed once, below.
+    var total = host.figures.sum(flows.map(function (flow) { return flow.figures; }));
+    var otherList = [];
     flows.forEach(function (flow) {
-      total = host.figures.add(total, flow.figures);
       var rightKey;
       if (flow.direction === directions.to_this_firewall ||
         flow.direction === directions.from_this_firewall) {
@@ -145,7 +146,7 @@ exports.widget = {
         var geo = host.services.geolocation(flow.peer);
         if (geo.lookup_state !== "resolved") {
           unnamed.addAddress(host.peers.placementState(geo), flow.peer, flow.figures);
-          other = host.figures.add(other, flow.figures);
+          otherList.push(flow.figures);
           return;
         }
         if (right === "country") {
@@ -159,11 +160,11 @@ exports.widget = {
       var pairKey = flow.left + "\u0000" + rightKey;
       var entry = has(pairs, pairKey) ? pairs[pairKey] : null;
       if (entry === null) {
-        entry = { left: flow.left, right: rightKey, figures: host.figures.zero() };
+        entry = { left: flow.left, right: rightKey, members: [], figures: null };
         pairs[pairKey] = entry;
         pairList.push(entry);
       }
-      entry.figures = host.figures.add(entry.figures, flow.figures);
+      entry.members.push(flow.figures);
       if (!has(nodes, flow.left)) {
         var iface = null;
         if (flow.leftIface !== null && left === "interface") {
@@ -179,6 +180,7 @@ exports.widget = {
 
     var showBlocked = host.params.flag("show_blocked");
     var ribbons = pairList.map(function (entry) {
+      entry.figures = host.figures.sum(entry.members);
       var volume = host.figures.volume(entry.figures);
       var ribbon = {
         left: entry.left,
@@ -208,7 +210,7 @@ exports.widget = {
       var share = whole > 0 ? entry.ribbon.value / whole : 0;
       if (drawnRibbons.length >= maxNodes || share < minShare) {
         otherRibbons++;
-        other = host.figures.add(other, entry.figures);
+        otherList.push(entry.figures);
         return;
       }
       drawnRibbons.push(entry.ribbon);
@@ -226,6 +228,7 @@ exports.widget = {
         drawnNodes.push({ key: key });
       }
     });
+    var other = host.figures.sum(otherList);
     var otherVolume = host.figures.volume(other);
     return {
       data: {

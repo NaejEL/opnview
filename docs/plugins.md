@@ -831,9 +831,11 @@ figures declares `"volumes": true` in its manifest, and that is all:
 
 **What a script does to be answered in a declared measure.** It builds its figures through
 `host.figures` and keeps what the core read whole: it sums with `host.figures.add`, which keeps
-`measure` and `measure_parts`; it counts with `host.figures.count(n)` and `byteCount(figures)`
+`measure` and `measure_parts` -- or, for many figures at once, `host.figures.sum(list)`, the same sum in
+one call; it counts with `host.figures.count(n)` and `byteCount(figures)`
 (`loggedCount(n)` stays a count of logged records); a number drawn on its own -- a node of a tree --
-takes `host.figures.measure` as its measure, and its figures are handed to `host.figures.cover`. And:
+takes `host.figures.measure` as its measure, and its figures are handed to `host.figures.cover`, which
+also takes an array of figures and judges each. And:
 
 - a statement of the widget's own that reads volume columns declares ONE twin, `<name>_measured`,
   which serves every declared measure: the same parameters and the same columns, with the measure's

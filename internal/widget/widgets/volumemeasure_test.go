@@ -344,11 +344,13 @@ func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T
 	}
 }
 
-// TestTheLoggedTreeAfterAMeasuredAttemptReadsTheWindowOnce is PA18.2's shared read: a connection tree
-// best_available falls back from is handed the destination rows the measured attempt read beside its
-// own, and never reads the window's logged destinations again; it answers what the logged tree answers,
-// byte for byte apart from the admitted differences.
-func TestTheLoggedTreeAfterAMeasuredAttemptReadsTheWindowOnce(t *testing.T) {
+// TestTheLoggedTreeAfterAMeasuredAttemptIsTheLoggedRunBesideIt restates PA18.2's shared read for the
+// tree that groups its own levels (decision 1 of the performance cycle, 18 October 2026): the logged
+// tree best_available falls back from is the logged run started beside the measured attempt, which read
+// the window through the widget's own logged statement while the attempt read its measured twin; neither
+// reads the core's destination rows, which the tree no longer reads at all; and the fallback answers
+// what the logged tree answers, byte for byte apart from the admitted differences.
+func TestTheLoggedTreeAfterAMeasuredAttemptIsTheLoggedRunBesideIt(t *testing.T) {
 	t.Parallel()
 	f := newMeasureWorld(t)
 	f.configureNetflow(t, "example_if_a")
@@ -356,27 +358,30 @@ func TestTheLoggedTreeAfterAMeasuredAttemptReadsTheWindowOnce(t *testing.T) {
 	f.measured(t, measureFlowA, "reverse", "measured", 9000, 12)
 	f.measured(t, measureFlowB, "forward", "measured", 1500, 3)
 	f.measured(t, measureFlowB, "reverse", "ingress_not_captured", 0, 0)
-	// The logged destinations read is the one destinations read of the tree's statements without the
-	// measured twin's logged columns.
-	loggedRead := func() bool {
+	// read reports which of the tree's reads the read connections ran: its logged statement (the logged
+	// bytes, coalesce(f.packet_bytes, 0)), its measured twin (flow_measure), and the core's destination
+	// rows (widget_flow_destinations, the only read selecting AS blocked_bytes beside AS lookup_state).
+	read := func() (logged, measured, destinations bool) {
 		for _, text := range f.db.Reader.RunTexts() {
-			if strings.Contains(text, "AS lookup_state") && strings.Contains(text, "sum(f.packet_bytes) AS bytes") &&
-				!strings.Contains(text, "logged_bytes") {
-				return true
-			}
+			tree := strings.Contains(text, "AS inside_first")
+			logged = logged || (tree && strings.Contains(text, "coalesce(f.packet_bytes, 0) AS bytes"))
+			measured = measured || (tree && strings.Contains(text, "flow_measure("))
+			destinations = destinations || (strings.Contains(text, "AS lookup_state") &&
+				strings.Contains(text, "AS blocked_bytes"))
 		}
-		return false
+		return logged, measured, destinations
 	}
 	best := f.respond(t, "connection_tree", map[string]any{"period": "1h"})
 	if !params.Contains(best.States, stateNetflowNotCoveringWindow) {
 		t.Fatalf("best_available did not fall back to logged: states %v", best.States)
 	}
-	if loggedRead() {
-		t.Error("the logged tree after the measured attempt read the window's logged destinations again")
+	if logged, measured, destinations := read(); !logged || !measured || destinations {
+		t.Errorf("best_available's tree read its logged statement %v and its measured twin %v (want both), and the "+
+			"core's destination rows %v (want not)", logged, measured, destinations)
 	}
 	logged := f.respond(t, "connection_tree", map[string]any{"period": "1h", "volume_measure": "logged"})
-	if !loggedRead() {
-		t.Error("the logged tree did not read the logged destinations: the test's reading of the texts is wrong")
+	if _, _, destinations := read(); destinations {
+		t.Error("the logged tree read the core's destination rows rather than its own levels")
 	}
 	if string(withoutMeasureDifferences(t, best, stateNetflowNotCoveringWindow)) !=
 		string(withoutMeasureDifferences(t, logged, stateNetflowNotCoveringWindow)) {
@@ -660,6 +665,75 @@ func TestNoVolumeIsServedBuiltFromTwoMeasures(t *testing.T) {
 	explicit := f.respond(t, "example_mixing_total", map[string]any{"period": "1h", "volume_measure": "netflow"})
 	if explicit.Data != nil || !params.Contains(explicit.States, stateNetflowNotServedByType) {
 		t.Errorf("an explicit netflow answered %s", encoded(t, explicit))
+	}
+}
+
+// exampleBatchPlugin is a third party's widget summing the figures the core read with the batch helpers
+// of decision 2 of the performance cycle (18 October 2026): host.figures.sum beside add folded over the
+// same list, and host.figures.cover handed an array -- with, in its "mixing" mode, a logged figure of its
+// own in the array.
+var exampleBatchPlugin = map[string]string{
+	"plugin.json": `{"api_version": 2, "name": "example_batch", "version": "0.1.0",
+		"display_name": "Example batch", "widgets": ["example_batch_total"]}`,
+	"widgets/example_batch_total/manifest.json": `{
+		"manifest_version": 1, "type": "example_batch_total", "shape": "figure", "windowed": true,
+		"lower_bound": true, "volumes": true,
+		"parameters": [{"key": "period", "kind": "enum", "values": ["1h", "24h"], "default": "24h"},
+			{"key": "mode", "kind": "enum", "values": ["core", "mixing"], "default": "core"}],
+		"queries": ["batch.statements.sql"], "script": "batch.js"}`,
+	"widgets/example_batch_total/batch.statements.sql": `
+-- statement: widget_example_batch_logged
+SELECT coalesce(sum(packet_bytes), 0) AS bytes, count(*) AS allowed_connections
+FROM flow WHERE observed_at >= :from AND observed_at < :to;
+`,
+	"widgets/example_batch_total/batch.js": `
+exports.widget = {
+  serve: function (host) {
+    var rows = host.volume.window().rows;
+    var folded = rows.reduce(function (sum, row) { return host.figures.add(sum, row); }, host.figures.zero());
+    var covered = rows.slice();
+    if (host.params.text("mode") === "mixing") {
+      var window = host.request.window;
+      covered.push(host.query.row("widget_example_batch_logged", { from: window.from, to: window.to }));
+    }
+    host.figures.cover(covered);
+    return { data: { folded: host.figures.volume(folded), summed: host.figures.volume(host.figures.sum(rows)),
+      empty: host.figures.volume(host.figures.sum([])) }, has_rows: rows.length > 0 };
+  }
+};
+`,
+}
+
+// TestTheBatchFigureHelpersAnswerWhatTheirFoldsAnswer is decision 2 of the performance cycle: the sum of
+// a list is what add folded over it from zero() is, in the logged measure and in netflow, and the sum of
+// no figure is zero(); cover handed an array judges each member, so a logged figure among netflow ones
+// keeps the answer from being served in netflow, as cover handed that figure alone does.
+func TestTheBatchFigureHelpersAnswerWhatTheirFoldsAnswer(t *testing.T) {
+	t.Parallel()
+	f := newMeasureWorld(t)
+	f.configureNetflow(t, "example_if_a", "example_if_b")
+	f.measureEverything(t)
+	dataDir := t.TempDir()
+	writePlugin(t, dataDir, "example_batch", exampleBatchPlugin)
+	f.service = pluginService(t, f, dataDir)
+	for _, measure := range []string{envelope.MeasureLogged, measureNetflow} {
+		answer := f.respond(t, "example_batch_total", map[string]any{"period": "1h", "volume_measure": measure})
+		figures := data(t, answer)
+		folded, _ := json.Marshal(figures["folded"])
+		summed, _ := json.Marshal(figures["summed"])
+		empty, _ := figures["empty"].(map[string]any)
+		total, _ := figures["folded"].(map[string]any)
+		if string(folded) != string(summed) || total["measure"] != measure || total["bytes"] == float64(0) {
+			t.Errorf("%s: the sum is %s, the fold %s", measure, summed, folded)
+		}
+		if empty["measure"] != measure || empty["bytes"] != float64(0) || empty["connections"] != float64(0) {
+			t.Errorf("%s: the sum of no figure is %v", measure, empty)
+		}
+	}
+	mixing := f.respond(t, "example_batch_total", map[string]any{"period": "1h", "mode": "mixing",
+		"volume_measure": measureNetflow})
+	if mixing.Data != nil || !params.Contains(mixing.States, stateNetflowNotServedByType) {
+		t.Errorf("a logged figure covered in an array was served in netflow: %s", encoded(t, mixing))
 	}
 }
 

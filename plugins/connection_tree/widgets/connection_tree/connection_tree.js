@@ -6,13 +6,20 @@
 // port and protocol together, below that (depth 3). Every flow lands in exactly one node per level
 // on each side, so a node's children sum to the node and both roots sum to the same total; a level
 // truncated by limit_per_level carries an explicit remainder child. The rule is the store's
-// (ReadConnectionTree) and the mockup's (docs/mockups/check-tree-reconciliation.js). The rows are
-// the core's (host.flows.destinations), which reads no site name under aggregate_mode = no_domains,
-// so every destination is then in address form whether or not a name was ever inferred.
+// (ReadConnectionTree) and the mockup's (docs/mockups/check-tree-reconciliation.js).
+//
+// THE LEVELS ARE GROUPED BY THE WIDGET'S OWN STATEMENTS (connection_tree.statements.sql): each level
+// arrives ranked within its parent and cut at limit_per_level, its folded nodes in one remainder row,
+// so the script reads the nodes it draws rather than every destination of the window. Under
+// aggregate_mode = no_domains the statement read reads no site name, so every destination is then in
+// address form whether or not a name was ever inferred.
 
 // THIS_FIREWALL is the node key of the firewall itself, on either side: the store's
 // TreeNodeThisFirewall.
 var THIS_FIREWALL = "this_firewall";
+
+// REMAINDER is the key of the row a statement folds a level's nodes past limit_per_level into.
+var REMAINDER = "remainder";
 
 // coverFlows records the coverage of a reading of the flows alone, and the named state when part
 // of the window lies past the retention horizon.
@@ -21,68 +28,27 @@ function coverFlows(host, state) {
   host.envelope.coverFlowsState(state);
 }
 
-// idSet is a resolved reference list as a set, or null for no restriction.
-function idSet(ids) {
-  if (ids === null) {
-    return null;
-  }
-  var set = {};
-  ids.forEach(function (id) { set[id] = true; });
-  return set;
-}
-
-// treeKey renders a nullable id as a node key.
-function treeKey(prefix, value, fallback) {
-  return prefix + ":" + (value === null ? fallback : value);
-}
-
 // newNode is a node holding nothing yet.
 function newNode(key) {
   return { key: key, bytes: 0, connections: 0, blocked: 0, newest: 0 };
 }
 
-// accumulate adds one row's figures to a node.
-function accumulate(node, bytes, connections, blocked, newest) {
-  node.bytes += bytes;
-  node.connections += connections;
-  node.blocked += blocked;
-  node.newest = Math.max(node.newest, newest);
+// nodeOf is a node as a statement row carries it.
+function nodeOf(row) {
+  var node = newNode(row.node);
+  node.bytes = row.bytes === null ? 0 : row.bytes;
+  node.connections = row.connections;
+  node.blocked = row.blocked;
+  node.newest = row.newest === null ? 0 : row.newest;
+  if (row.node === REMAINDER) {
+    node.remainder = row.members;
+  }
+  return node;
 }
 
-// newLevels is one level of a side, each node holding the level below it.
-function newLevels() {
-  return { nodes: {}, order: [], children: {} };
-}
-
-// addToLevels lands one row in a node of each level of a side, from the first key down; an empty
-// key ends the path there. The keys are arguments rather than an array: the tree lands every row of
-// the window twice, and building an array of keys for each was a measurable share of its time.
-function addToLevels(side, first, second, third, bytes, connections, blocked, newest) {
-  if (first === "") {
-    return;
-  }
-  var level = addToLevel(side, first, bytes, connections, blocked, newest);
-  if (second === "") {
-    return;
-  }
-  level = addToLevel(level, second, bytes, connections, blocked, newest);
-  if (third === "") {
-    return;
-  }
-  addToLevel(level, third, bytes, connections, blocked, newest);
-}
-
-// addToLevel lands one row in a node of one level and returns the level below that node.
-function addToLevel(level, key, bytes, connections, blocked, newest) {
-  var node = level.nodes[key];
-  if (node === undefined) {
-    node = newNode(key);
-    level.nodes[key] = node;
-    level.order.push(key);
-    level.children[key] = newLevels();
-  }
-  accumulate(node, bytes, connections, blocked, newest);
-  return level.children[key];
+// levelKey names the nodes of one level below one parent.
+function levelKey(side, level, parentFirst, parentSecond) {
+  return side + "\u0000" + level + "\u0000" + parentFirst + "\u0000" + parentSecond;
 }
 
 // nodeValue is the figure a node is drawn by.
@@ -117,12 +83,21 @@ function written(measure, node) {
   return out;
 }
 
-// truncate sorts a level and folds every member past limit into one remainder node, so the level
-// still sums to its parent.
-function truncate(host, nodes, limit) {
+// ordered sorts the nodes a level draws, as the statement ranked them: by the chosen sort, most
+// first, equal values by key in byte order; the remainder, when there is one, last.
+function ordered(host, nodes) {
   var order = host.params.text("sort");
   var measure = host.params.text("measure");
-  nodes.sort(function (a, b) {
+  var remainder = null;
+  var shown = [];
+  nodes.forEach(function (node) {
+    if (node.key === REMAINDER) {
+      remainder = node;
+    } else {
+      shown.push(node);
+    }
+  });
+  shown.sort(function (a, b) {
     var difference = 0;
     switch (order) {
       case "connections":
@@ -138,15 +113,7 @@ function truncate(host, nodes, limit) {
     }
     return difference !== 0 ? (difference > 0 ? 1 : -1) : host.figures.compare(a.key, b.key);
   });
-  if (nodes.length <= limit) {
-    return nodes;
-  }
-  var remainder = newNode("remainder");
-  remainder.remainder = nodes.length - limit;
-  nodes.slice(limit).forEach(function (node) {
-    accumulate(remainder, node.bytes, node.connections, node.blocked, node.newest);
-  });
-  return nodes.slice(0, limit).concat([remainder]);
+  return remainder === null ? shown : shown.concat([remainder]);
 }
 
 // labelNode attaches what a node's key names.
@@ -196,16 +163,24 @@ function labelNode(host, node) {
   }
 }
 
-// finishLevel sorts, truncates and names one level of a side, and the levels below it down to depth.
-function finishLevel(host, level, limit, depth) {
+// finishLevel sorts and names one level of a side below one parent, and the levels below it down to
+// depth. parents are the keys of the nodes above it, outermost first.
+function finishLevel(host, levels, side, parents, depth) {
   var measure = host.params.text("measure");
-  var members = level.order.map(function (key) { return level.nodes[key]; });
-  return truncate(host, members, limit).map(function (node) {
+  var level = parents.length + 1;
+  var nodes = levels[levelKey(side, level, parents.length > 0 ? parents[0] : "",
+    parents.length > 1 ? parents[1] : "")];
+  if (nodes === undefined) {
+    return [];
+  }
+  return ordered(host, nodes).map(function (node) {
     var out = written(measure, node);
     labelNode(host, out);
-    var below = level.children[node.key];
-    if (depth >= 2 && below !== undefined && below.order.length > 0) {
-      out.children = finishLevel(host, below, limit, depth - 1);
+    if (depth >= 2 && node.key !== REMAINDER) {
+      var below = finishLevel(host, levels, side, parents.concat([node.key]), depth - 1);
+      if (below.length > 0) {
+        out.children = below;
+      }
     }
     return out;
   });
@@ -215,110 +190,56 @@ exports.widget = {
   serve: function (host) {
     coverFlows(host, "tree_beyond_flow_horizon");
     MEASURE = host.figures.measure;
-    var measured = MEASURE !== "logged";
-    var services = host.params.integer("depth") >= 3;
-    var directions = host.volume.directions;
     var root = host.params.text("root");
-    var interfaces = idSet(host.refs.ids("interfaces"));
-    var clients = idSet(host.refs.ids("clients"));
-    var owners = idSet(host.refs.ids("owners"));
-    var includeBlocked = host.params.flag("include_blocked");
-    var inside = newLevels();
-    var outside = newLevels();
-    var total = newNode("total");
-    var hasRows = false;
-    host.flows.destinations().forEach(function (row) {
-      if ((interfaces !== null && (row.interface_id === null || !interfaces[row.interface_id])) ||
-        (clients !== null && (row.client_id === null || !clients[row.client_id])) ||
-        (owners !== null && (row.owner_id === null || !owners[row.owner_id]))) {
-        return;
-      }
-      var connections = row.connections;
-      var bytes = row.bytes === null ? 0 : row.bytes;
-      var blocked = row.blocked === null ? 0 : row.blocked;
-      var blockedBytes = row.blocked_bytes === null ? 0 : row.blocked_bytes;
-      if (!includeBlocked) {
-        connections -= blocked;
-        bytes -= blockedBytes;
-        blocked = 0;
-        if (connections === 0) {
-          return;
-        }
-      }
-      hasRows = true;
-      // The core judges every row the tree counts, as it judges a Volume. A logged answer has nothing
-      // to judge: the core records a judgement only while the answer is read in a declared measure.
-      if (measured) {
-        host.figures.cover(row);
-      }
-      var direction = row.traffic_direction;
-      var firewall = direction === directions.to_this_firewall || direction === directions.from_this_firewall;
-      var looked = row.lookup_state !== null;
-      var firewallInside = firewall && (looked || row.interface_id === null);
-      var firewallOutside = firewall && !looked;
-      var clientNode = treeKey("client", row.client_id, "none");
-      var first = "";
-      var second = "";
-      if (firewallInside) {
-        first = THIS_FIREWALL;
-        if (root !== "client") {
-          second = THIS_FIREWALL;
-        }
-      } else if (root === "interface") {
-        first = treeKey("interface", row.interface_id, "none");
-        second = clientNode;
-      } else if (root === "client") {
-        first = clientNode;
-      } else {
-        first = treeKey("owner", row.owner_id, "unassigned");
-        if (row.client_id === null) {
-          first = "owner:none";
-        }
-        second = clientNode;
-      }
-      addToLevels(inside, first, second, "", bytes, connections, blocked, row.newest);
-      var destination;
-      if (firewallOutside) {
-        destination = THIS_FIREWALL;
-      } else if (direction === directions.inter_interface) {
-        destination = directions.inter_interface;
-      } else if (looked && row.lookup_state === "resolved") {
-        destination = treeKey("operator", row.asn, "none");
-      } else if (looked) {
-        destination = "unplaced:" + row.lookup_state;
-      } else {
-        destination = "unplaced:no_row";
-      }
-      // Below an outside destination: its site name where one was inferred and its address
-      // otherwise; then its service, port and protocol together. A destination with no outside
-      // address -- this firewall, another interface -- has no level below it.
-      var named = "";
-      var service = "";
-      if (row.peer_address !== null && !firewallOutside && direction !== directions.inter_interface) {
-        named = row.site_name !== null ? "site:" + row.site_name : "address:" + row.peer_address;
-        // The service is the third level, which only a tree of depth 3 draws.
-        if (services) {
-          service = host.flows.serviceKey(row.protocol, row.port);
-        }
-      }
-      addToLevels(outside, destination, named, service, bytes, connections, blocked, row.newest);
-      total.bytes += bytes;
-      total.connections += connections;
-      total.blocked += blocked;
-    });
-    var limit = host.params.integer("limit_per_level");
     var depth = host.params.integer("depth");
     var measure = host.params.text("measure");
     var noDomains = host.request.no_domains;
+    var window = host.request.window;
+    var rows = host.query.rows(noDomains ? "widget_tree_nodes_no_domains" : "widget_tree_nodes", {
+      from: window.from,
+      to: window.to,
+      root: root,
+      depth: depth,
+      limit: host.params.integer("limit_per_level"),
+      sort: host.params.text("sort"),
+      value_by: measure,
+      include_blocked: host.params.flag("include_blocked"),
+      interface_ids: host.refs.jsonIds(host.refs.ids("interfaces")),
+      client_ids: host.refs.jsonIds(host.refs.ids("clients")),
+      owner_ids: host.refs.jsonIds(host.refs.ids("owners"))
+    });
+    var levels = {};
+    var total = newNode("total");
+    var hasRows = false;
+    rows.forEach(function (row) {
+      if (row.side === "total") {
+        total.bytes = row.bytes;
+        total.connections = row.connections;
+        total.blocked = row.blocked;
+        hasRows = row.members > 0;
+        // The core judges every connection the tree counts, as it judges a Volume. A logged answer has
+        // nothing to judge: the core records a judgement only while the answer is read in a declared
+        // measure.
+        if (MEASURE !== "logged" && hasRows) {
+          host.figures.cover(row);
+        }
+        return;
+      }
+      var key = levelKey(row.side, row.level, row.parent_first, row.parent_second);
+      if (levels[key] === undefined) {
+        levels[key] = [];
+      }
+      levels[key].push(nodeOf(row));
+    });
     var data = {
       root: root,
       measure: measure,
       depth: depth,
-      inside: finishLevel(host, inside, limit, Math.min(depth, 2)),
-      outside: finishLevel(host, outside, limit, depth)
+      inside: finishLevel(host, levels, "inside", [], Math.min(depth, 2)),
+      outside: finishLevel(host, levels, "outside", [], depth)
     };
     if (noDomains) {
-      // The core read no site name: every destination below the operator is its address.
+      // The statement read no site name: every destination below the operator is its address.
       host.envelope.withhold("outside[].children[].site_name");
     }
     data.total = written(measure, total);

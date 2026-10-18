@@ -1,6 +1,7 @@
 package values
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/dop251/goja"
@@ -38,7 +39,10 @@ import (
 //	                                         of one connection complete in both directions is exact, and the
 //	                                         only figure whose lower_bound is false
 //	host.figures.cover(figures)              says the answer counts figures whose numbers the widget uses
-//	                                         directly, so the core judges them as it judges a Volume
+//	                                         directly, so the core judges them as it judges a Volume; an
+//	                                         array of figures is judged member by member, in one call
+//	host.figures.sum(list)                   the sum of an array of summable figures, as a new object: what
+//	                                         add folding the array from zero() returns, in one call
 //	host.figures.loggedCount(value)          {measure: "logged", lower_bound: true, value}: a count of logged
 //	                                         records, which an answer in a declared measure cannot carry
 //	host.figures.withMeasure(figures, from)  figures carrying the measure of `from` (a row or figures read
@@ -89,8 +93,25 @@ func init() {
 			return call.Value(r.ByteCountOf(FiguresOf(call, arguments.Argument(0), "the figures"), true))
 		})
 		call.Function(area, "cover", func(arguments goja.FunctionCall) goja.Value {
+			if list, isList := listOf(arguments.Argument(0)); isList {
+				for index := range list.length {
+					r.CoverFigures(FiguresOf(call, list.at(index), "the figures covered"))
+				}
+				return goja.Undefined()
+			}
 			r.CoverFigures(FiguresOf(call, arguments.Argument(0), "the figures"))
 			return goja.Undefined()
+		})
+		call.Function(area, "sum", func(arguments goja.FunctionCall) goja.Value {
+			list, isList := listOf(arguments.Argument(0))
+			if !isList {
+				call.Throw("the figures summed are %s, not an array", script.Describe(arguments.Argument(0)))
+			}
+			sum := reads.VolumeFigures{Measure: r.MeasureRead()}
+			for index := range list.length {
+				envelope.AddFigures(&sum, FiguresOf(call, list.at(index), "the figures summed"))
+			}
+			return call.Value(traffic.Summable(sum))
 		})
 		call.Function(area, "loggedCount", func(arguments goja.FunctionCall) goja.Value {
 			return call.Value(r.LoggedCountOf(call.IntegerOf(arguments.Argument(0), "the count")))
@@ -163,6 +184,24 @@ func init() {
 		_ = area.Set("declared", call.Value(declared))
 		_ = area.Set("measure", r.MeasureInForce())
 	})
+}
+
+// figuresList is an array a script hands the host, read element by element.
+type figuresList struct {
+	array  *goja.Object
+	length int
+}
+
+// at is one element of the list.
+func (l figuresList) at(index int) goja.Value { return l.array.Get(strconv.Itoa(index)) }
+
+// listOf reads an argument that is an array; false for anything else.
+func listOf(value goja.Value) (figuresList, bool) {
+	array, isObject := value.(*goja.Object)
+	if !isObject || array.ClassName() != "Array" {
+		return figuresList{}, false
+	}
+	return figuresList{array: array, length: int(array.Get("length").ToInteger())}, true
 }
 
 // FiguresOf reads summable figures a script hands the host.

@@ -35,9 +35,9 @@ exports.widget = {
     var bins = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row]);
     var groups = {};
     var groupList = [];
-    var total = host.figures.zero();
+    // Every peer's figures, summed in one call: host.figures.sum is add folded over a list.
+    var total = host.figures.sum(peers.map(function (peer) { return peer.figures; }));
     peers.forEach(function (peer) {
-      total = host.figures.add(total, peer.figures);
       var geo = host.services.geolocation(peer.address);
       if (geo.lookup_state !== "resolved") {
         bins.add(host.peers.placementState(geo), peer.figures, 1);
@@ -47,11 +47,11 @@ exports.widget = {
       var entry = has(groups, named.key) ? groups[named.key] : null;
       if (entry === null) {
         // The named members are the first peer's of the group: peers come by bytes, then address.
-        entry = { named: named, figures: host.figures.zero(), peers: 0, interfaces: [], build: null };
+        entry = { named: named, members: [], figures: null, peers: 0, interfaces: [], build: null };
         groups[named.key] = entry;
         groupList.push(entry);
       }
-      entry.figures = host.figures.add(entry.figures, peer.figures);
+      entry.members.push(peer.figures);
       entry.peers++;
       peer.interfaces.forEach(function (id) {
         if (entry.interfaces.indexOf(id) < 0) {
@@ -66,6 +66,7 @@ exports.widget = {
     var allowed = host.params.has("series", "allowed");
     var blocked = host.params.has("series", "blocked");
     var rows = groupList.map(function (entry) {
+      entry.figures = host.figures.sum(entry.members);
       var row = { key: entry.named.key };
       if (entry.named.asn !== null) {
         row.asn = entry.named.asn;
@@ -92,21 +93,20 @@ exports.widget = {
 
     var limit = host.params.integer("limit");
     var shown = [];
-    var dropped = 0;
-    var rest = host.figures.zero();
+    var dropped = [];
     rows.forEach(function (entry, index) {
       if (index < limit) {
         shown.push(entry.row);
         return;
       }
-      dropped++;
-      rest = host.figures.add(rest, entry.figures);
+      dropped.push(entry.figures);
     });
+    var rest = host.figures.sum(dropped);
     return {
       data: {
         group: group,
         rows: shown,
-        remainder: host.figures.remainder(dropped, rest, null),
+        remainder: host.figures.remainder(dropped.length, rest, null),
         unresolved: bins.list(),
         total: host.figures.volume(total)
       },

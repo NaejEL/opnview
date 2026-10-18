@@ -25,9 +25,9 @@ exports.widget = {
     var sizeBy = host.params.text("size_by");
     var minimum = host.params.integer("min_bytes");
     var points = [];
-    var belowMembers = 0;
-    var total = host.figures.zero();
-    var below = host.figures.zero();
+    // The figures summed into the total and the remainder, each summed in one call (host.figures.sum).
+    var placed = [];
+    var belowList = [];
     var hasRows = false;
     grouped.peers.forEach(function (peer) {
       var allowed = host.mapfilters.allowedOnly(peer.figures);
@@ -41,10 +41,9 @@ exports.widget = {
         bins.add(reason, allowed, 1);
         return;
       }
-      total = host.figures.add(total, allowed);
+      placed.push(allowed);
       if (allowed.bytes < minimum) {
-        belowMembers++;
-        below = host.figures.add(below, allowed);
+        belowList.push(allowed);
         return;
       }
       points.push({
@@ -58,7 +57,8 @@ exports.widget = {
     });
 
     var unplaced = bins.total();
-    total = host.figures.add(total, unplaced);
+    placed.push(unplaced);
+    var total = host.figures.sum(placed);
     if (unplaced.bytes > 0 || unplaced.allowed_connections > 0) {
       hasRows = true;
     }
@@ -66,7 +66,7 @@ exports.widget = {
       data: {
         size_by: sizeBy,
         points: points,
-        below_minimum: host.figures.remainder(belowMembers, below, null),
+        below_minimum: host.figures.remainder(belowList.length, host.figures.sum(belowList), null),
         unplaced: bins.list(),
         total: host.figures.volume(total)
       },

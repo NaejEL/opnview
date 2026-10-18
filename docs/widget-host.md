@@ -91,10 +91,11 @@ says so beside its measure.
 | `count(value)` | A count of the connections or records the answer's figures count, `{measure, lower_bound: true, value}`, in the measure the request is answered under. |
 | `byteCount(figures)` | The Count of the figures' bytes, in their measure. |
 | `connectionBytes(figures)` | The same for one connection's figures. A netflow figure of one connection measured in both directions is exact, and is the only figure whose `lower_bound` is `false`. |
-| `cover(figures)` | Says the answer counts figures whose numbers the script uses directly, rather than through a Volume or a Count, so the core judges them as it judges a Volume. |
+| `cover(figures)` | Says the answer counts figures whose numbers the script uses directly, rather than through a Volume or a Count, so the core judges them as it judges a Volume. Handed an array of figures, it judges each, in one call. |
 | `loggedCount(value)` | `{measure: "logged", lower_bound: true, value}`: a count of logged records, which an answer in the netflow measure cannot carry. |
 | `withMeasure(figures, from)` | Figures carrying the measure of `from` -- a row or figures read in it: its measure and its netflow parts. |
 | `zero()`, `add(a, b)` | Summable figures holding nothing, in the measure the request is answered under, and the sum of two. |
+| `sum(list)` | The sum of an array of summable figures, in one call: what `add` folded over the array from `zero()` returns. |
 | `value(measure, figures)` | The figure a `measure` names: `bytes`, `connections`, `allowed`, `blocked`, or `packets` of a declared measure's figures. |
 | `remainder(members, volume, count)` | What a truncating parameter dropped: `{members, volume, count}`, a `null` volume or count left out. `count` is a Count built by this area, or a number, read as `loggedCount` reads one. |
 | `compare(a, b)` | `-1`, `0` or `1`: two strings in byte order, the order every key of the core is ranked in. JavaScript's `<` compares UTF-16 code units and differs outside ASCII. |

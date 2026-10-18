@@ -236,7 +236,7 @@ Decision 6: domain names are withheld field by field, and `top_sites` and
 |---|---|
 | `top_sites`, `sites_by_client` | `data` (condition `withheld_by_aggregate_mode`) |
 | `client_traffic_detail` | `records[].site_name`, `records[].method`, `records[].correlation_delay_seconds` -- every record is in address form |
-| `connection_tree` | `outside[].children[].site_name` -- every destination below the operator is its address node, named ones included; the core reads no site name (`host.flows.destinations`) |
+| `connection_tree` | `outside[].children[].site_name` -- every destination below the operator is its address node, named ones included; the widget's statement reads no site name (`widget_tree_nodes_no_domains`) |
 | `unified_blocked_feed` | `entries[].target` of a DNS refusal; `groups[].key` of a domain group |
 | `blocked_dns_lookups` | `rows[].domain` |
 | every type taking a reference | the `value` and `label` of a `site` reference the request sent, wherever it stands: `<path>.value` |
