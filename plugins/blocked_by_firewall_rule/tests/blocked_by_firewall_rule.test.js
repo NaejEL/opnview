@@ -12,15 +12,15 @@ var AT = 1790000400;
 function seed(t) {
   t.clock(AT);
   var at = AT - 600;
-  t.sql("INSERT INTO interface (id, identifier, device, description, link_type, link_kind, " +
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, link_type, link_kind, " +
     "first_seen_at, last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'Inside', 'ethernet', 'vlan', :at, :at)",
     { at: at });
-  t.sql("INSERT INTO interface_map (device, description, interface_id, discovered_at) " +
+  t.sql("INSERT INTO plugin_installation.interface_map (device, description, interface_id, discovered_at) " +
     "VALUES ('vlan0.10', 'Inside', 1, :at)", { at: at });
-  t.sql("INSERT INTO client (id, identity_kind, identity_key, interface_id, mac, last_address, " +
+  t.sql("INSERT INTO plugin_installation.client (id, identity_kind, identity_key, interface_id, mac, last_address, " +
     "first_seen_at, last_seen_at) VALUES (10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', " +
     "'192.0.2.10', :at, :at)", { at: at });
-  t.sql("INSERT INTO rule (id, pf_label, description, action, is_automatic, discovered_at) VALUES " +
+  t.sql("INSERT INTO plugin_installation.rule (id, pf_label, description, action, is_automatic, discovered_at) VALUES " +
     "(5, 'label-five', 'Block the guests', 'block', false, :at), " +
     "(6, 'label-six', 'Default deny', 'block', true, :at)", { at: at });
   var flow = function (id, action, rid, rule) {

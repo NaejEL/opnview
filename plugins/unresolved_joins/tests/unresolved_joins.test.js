@@ -12,10 +12,10 @@ var AT = 1790000400;
 function seed(t) {
   t.clock(AT);
   var at = AT - 600;
-  t.sql("INSERT INTO interface (id, identifier, device, description, link_type, link_kind, " +
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, link_type, link_kind, " +
     "first_seen_at, last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'Inside', 'ethernet', 'vlan', :at, :at)",
     { at: at });
-  t.sql("INSERT INTO client (id, identity_kind, identity_key, interface_id, last_address, " +
+  t.sql("INSERT INTO plugin_installation.client (id, identity_kind, identity_key, interface_id, last_address, " +
     "first_seen_at, last_seen_at) VALUES (10, 'address_in_interface', '1/192.0.2.10', 1, '192.0.2.10', :at, :at)",
     { at: at });
   var flow = function (id, device, deviceState, iface, client, rid, ruleState) {

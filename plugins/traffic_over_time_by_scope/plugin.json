@@ -1,6 +1,7 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "traffic_over_time_by_scope",
+  "requires": ["installation"],
   "version": "1.0.0",
   "display_name": "Traffic over time by scope",
   "description": "One series per selected scope -- outbound, inbound and inter-interface -- of logged traffic in UTC-aligned buckets, with its totals.",

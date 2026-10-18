@@ -88,6 +88,22 @@ plus the key file. At start opnview waits a bounded time for the database, takes
 a session advisory lock (a second opnview on the same database refuses to
 start), and refuses to start if TimescaleDB's telemetry is on.
 
+## The transition, written down
+
+Until the migration of ADR 0020 ends, two things are temporarily untrue of
+the picture above, and both are listed so their removal is a step and not a
+discovery:
+
+- **The bridge.** opnview's own connections and the read role resolve an
+  unqualified table name through a search path that includes the schemas of
+  the plugins the core tables moved to (`internal/store/sqldb/searchpath.go`).
+  It exists for the Go that still names those tables and is scheduled for
+  deletion; the plugin role never has it, and a plugin's SQL names every
+  moved table by its qualified name.
+- **Dropped foreign keys.** A core table that references a moved table
+  carries no `REFERENCES` to it until its own wave moves it; the Go writers
+  keep the integrity meanwhile (ADR 0020).
+
 ## What this is not
 
 - Not a firewall manager: nothing is written to OPNsense, ever (ADR 0003).

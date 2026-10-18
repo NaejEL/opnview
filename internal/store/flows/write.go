@@ -407,7 +407,7 @@ func (s *FlowStore) UpsertInterfaceAddress(ctx context.Context, address vocab.In
 			`INSERT INTO interface_address (interface_id, source_field, address, prefix_length,
 			                                address_family, first_seen_at, last_seen_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7)
-			 ON CONFLICT (interface_id, source_field, address, coalesce(prefix_length, -1), first_seen_at)
+			 ON CONFLICT (interface_id, source_field, address, prefix_length, first_seen_at)
 			 DO UPDATE SET last_seen_at = GREATEST(interface_address.last_seen_at, excluded.last_seen_at)`,
 			address.InterfaceID, address.SourceField, address.Address, address.PrefixLength,
 			address.AddressFamily, now, now)

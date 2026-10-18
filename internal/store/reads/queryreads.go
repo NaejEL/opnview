@@ -124,6 +124,10 @@ func (s *ReadStore) Reads(ctx context.Context, text string, parameters []string)
 		return QueryReads{}, fmt.Errorf("store: planning a query: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// A plugin's statement never resolves a name through the bridge (sqldb, searchpath.go).
+	if _, err := tx.ExecContext(ctx, "SET LOCAL search_path = "+sqldb.CoreSearchPath()); err != nil {
+		return QueryReads{}, fmt.Errorf("store: planning a query: %w", err)
+	}
 	var plan string
 	if err := tx.QueryRowContext(ctx, "EXPLAIN (VERBOSE, FORMAT JSON) "+planned, arguments...).Scan(&plan); err != nil {
 		return QueryReads{}, fmt.Errorf("store: planning a query: %w", err)

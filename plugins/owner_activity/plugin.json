@@ -1,6 +1,7 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "owner_activity",
+  "requires": ["installation"],
   "version": "1.0.0",
   "display_name": "Per-person activity",
   "description": "One card per person -- their volume, their machines each with its own state and current rate, and an inline timeline -- and the residual Unassigned card.",

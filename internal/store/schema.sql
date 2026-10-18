@@ -447,89 +447,20 @@ CREATE TABLE IF NOT EXISTS provider_value (
 );
 
 -- ---------------------------------------------------------------------------
--- Interface — one interface as OPNsense defines it: a VLAN, a physical link or
--- a tunnel the firewall terminates, carrying rules and counters of its own.
--- The word is OPNsense's, not opnview's: the endpoint is named
--- /api/interfaces/overview/interfaces_info and the menu is Interfaces >
--- Assignments. Every discovered column below is that endpoint's own field name.
--- Source: /api/interfaces/overview/interfaces_info (identifier, description,
--- device, status, enabled, link_type, vlan_tag). Survey: "Runtime discovery"
--- (i).
---
---   identifier   the configuration key the firewall stores this interface
---                under; API field `identifier`
---   device       the network device the interface runs on; API field `device`,
---                the same token /api/diagnostics/interface/get_interface_names
---                keys its map by and the filter log reports in its `interface`
---                field. In this schema `device` means the network device and
---                nothing else; the machine on the network is a `client`.
---   description  the description entered by the user in the OPNsense UI; API
---                field `description`, falling back to the upper-cased
---                identifier
---   status       the link state the API reports; API field `status`
---   enabled      the administrative state the API reports; API field `enabled`
---   link_type    the raw link type the API reports; API field `link_type`
---
--- status and enabled are TEXT and are stored VERBATIM, with no CHECK and no
--- normalisation. They are stored rather than dropped because an interface with
--- no traffic and an interface that is down or switched off are three different
--- facts that look identical on a screen, and these are the only columns that
--- tell them apart -- the same distinction rule.logs_matches carries for a rule
--- that does not log. They are TEXT because the survey establishes the two
--- fields and NOT their encoding: writing a CHECK or a 0/1 column here would be
--- inventing a vocabulary OPNsense has not published. Normalising them is a
--- step-4 decision to be taken against a live firewall, and recorded then.
---
--- user_label and link_kind have no OPNsense equivalent and are opnview's own,
--- deliberately: OPNsense carries a single description field, so a label the
--- maintainer sets inside opnview needs a column the firewall cannot overwrite,
--- and OPNsense publishes no normalised class of link type. Relabelling never
--- overwrites discovery and a refresh of discovery never overwrites a label.
--- link_kind is the normalised class of link_type; is_tunnel derives from
--- link_kind alone and from nothing that carries a name.
+-- THE INSTALLATION MODEL LIVES IN THE installation PLUGIN (ADR 0019, ADR 0020
+-- wave 1): interface, interface_address, interface_network, owner,
+-- interface_map, rule and client, with the views this_firewall_address and
+-- blocked_decision, are declared in plugins/installation/plugin.json and created
+-- in the schema plugin_installation when the plugin loads. The Go that still
+-- names them unqualified reaches them through the search path's bridge
+-- (internal/store/sqldb/searchpath.go) until it is deleted; the tables below
+-- that referenced them carry no REFERENCES to them for the transition.
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS interface (
-    id             BIGINT PRIMARY KEY,
-    identifier     TEXT NOT NULL UNIQUE,
-    device         TEXT NOT NULL UNIQUE,
-    description    TEXT NOT NULL,
-    user_label     TEXT,
-    status         TEXT,
-    enabled        TEXT,
-    link_type      TEXT NOT NULL,
-    link_kind      TEXT NOT NULL
-                   CHECK (link_kind IN ('physical', 'vlan', 'tunnel', 'other')),
-    is_tunnel      BIGINT GENERATED ALWAYS AS
-                   (CASE WHEN link_kind = 'tunnel' THEN 1 ELSE 0 END) STORED,
-    vlan_tag       BIGINT,
-    address_family BIGINT CHECK (address_family IS NULL OR address_family IN (4, 6)),
-    -- is_upstream is 1 exactly when the last interfaces_info response reported a
-    -- non-empty `gateways[]` for this interface, and 0 otherwise. The API field
-    -- is the only input: no name, description, link type or address decides it.
-    -- The term is the widget catalogue's "upstream interface"; OPNsense applies
-    -- "upstream" to a GATEWAY (System > Gateways, "Upstream Gateway"), and an
-    -- interface carrying a gateway is what reaches beyond the firewall.
-    --
-    -- An address reached through an upstream interface is OUTSIDE: it has no
-    -- interface membership, and on-link evidence on an upstream interface is not
-    -- evidence of membership (docs/data-model.md, "Classification").
-    is_upstream    BOOLEAN NOT NULL DEFAULT false,
-    -- link_local_evidence is the OPERATOR'S rule, and discovery never writes it:
-    -- whether an IPv6 link-local address (RFC 4291, section 2.5.6) seen on this
-    -- interface is evidence that the address belongs to it. A link-local prefix
-    -- is the same on every interface, so an address inside it says nothing about
-    -- where a machine sits unless the operator says it does. The default is no
-    -- (0), and setting it on one interface makes such an address evidence on
-    -- that interface only (docs/data-model.md, "Classification").
-    link_local_evidence BOOLEAN NOT NULL DEFAULT false,
-    first_seen_at  BIGINT NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
-    last_seen_at   BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800)
-);
 
 -- ---------------------------------------------------------------------------
--- Interface address — the addresses an interface held, and the gateways behind
--- it, with the instants opnview first and last saw each one. Closes G13 in
--- part.
+-- Interface address — moved to the installation plugin. Its description, kept
+-- here until the Go that writes it moves: the addresses an interface held, and
+-- the gateways behind it, with the instants opnview first and last saw each one.
 -- Source: /api/interfaces/overview/interfaces_info, fields `addr4` and `addr6`
 -- (one string each, "address/prefix length", or empty), `ipv4[]` and `ipv6[]`
 -- (every address the interface holds, each entry an object whose `ipaddr` is
@@ -568,139 +499,15 @@ CREATE TABLE IF NOT EXISTS interface (
 --
 -- Growing, slowly: one row per address an interface ever held. Purged by
 -- last_seen_at, which never drops a current row because discovery moves it.
+--
+-- Interface network, owner, interface map, rule and client: moved likewise, each
+-- with its description, to plugins/installation/plugin.json.
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS interface_address (
-    id             BIGINT PRIMARY KEY,
-    interface_id   BIGINT NOT NULL REFERENCES interface (id),
-    source_field   TEXT NOT NULL
-                   CHECK (source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6', 'gateways')),
-    address        TEXT NOT NULL CHECK (length(address) > 0),
-    prefix_length  BIGINT CHECK (prefix_length IS NULL
-                                  OR (prefix_length >= 0 AND prefix_length <= 128)),
-    address_family BIGINT NOT NULL CHECK (address_family IN (4, 6)),
-    first_seen_at  BIGINT NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
-    last_seen_at   BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
-    CHECK (last_seen_at >= first_seen_at),
-    -- A gateway is an address with no prefix; an interface address carries one.
-    CHECK ((source_field = 'gateways') = (prefix_length IS NULL))
-);
-
--- One row per holding: the key carries first_seen_at, so a re-acquired address is a
--- holding of its own rather than its first holding's row.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_interface_address_holding
-    ON interface_address (interface_id, source_field, address, coalesce(prefix_length, -1),
-                          first_seen_at);
--- "This interface's current addresses" and "is this address one of the
--- firewall's own" are index searches rather than scans of a growing table.
-CREATE INDEX IF NOT EXISTS idx_interface_address_interface
-    ON interface_address (interface_id, last_seen_at);
-CREATE INDEX IF NOT EXISTS idx_interface_address_address
-    ON interface_address (address, source_field);
-CREATE INDEX IF NOT EXISTS idx_interface_address_last_seen_at
-    ON interface_address (last_seen_at);
 
 -- ---------------------------------------------------------------------------
--- Interface network — one on-link address range of an interface: the range
--- whose addresses classification takes to sit behind that interface.
---
--- THE TERM IS OPNSENSE'S. OPNsense calls the range an interface's address and
--- prefix length cover that interface's NETWORK: the firewall rule editor offers
--- "LAN net" for it, and the internal alias that holds it is named for "LAN
--- network" (https://docs.opnsense.org/manual/aliases.html, internal aliases).
--- opnview keeps the word, per interface, whatever the interface is called.
---
--- A NETWORK IS EITHER DETECTED OR SET BY THE OPERATOR, and origin says which:
---   'detected'  proposed by discovery from `addr4` / `addr6` and the entries of
---               `ipv4[]` / `ipv6[]` (their address masked to their prefix
---               length). An IPv6 link-local prefix is never proposed: it is the
---               same on every interface and places nothing; whether a
---               link-local address is evidence is interface.link_local_evidence.
---   'operator'  added by the operator, or a detected network the operator
---               confirmed.
--- removed_at is set when the operator removes a network. The row is kept, so a
--- detected network the operator removed is not proposed back into use by the
--- next discovery: discovery moves last_detected_at and never touches origin or
--- removed_at.
---
--- WHICH NETWORKS COUNT is the maintainer's decision D1 (specs/SPEC-step-5a-
--- corrections.md): a detected network counts until the operator overrides it;
--- an operator network always wins over a detected one; a removed network does
--- not count. A detected network counts only while discovery still reports it,
--- that is while its last_detected_at is the latest detection of its interface.
--- Nothing here is a default: no range is written by the schema or by code.
---
--- Bounded: one row per network an interface has carried, set by the
--- installation and the operator rather than by how long opnview has run. It is
--- never purged, because an operator row is user input.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS interface_network (
-    id                BIGINT PRIMARY KEY,
-    interface_id      BIGINT NOT NULL REFERENCES interface (id),
-    network_address   TEXT NOT NULL CHECK (length(network_address) > 0),
-    prefix_length     BIGINT NOT NULL CHECK (prefix_length >= 0 AND prefix_length <= 128),
-    address_family    BIGINT NOT NULL CHECK (address_family IN (4, 6)),
-    origin            TEXT NOT NULL CHECK (origin IN ('detected', 'operator')),
-    first_detected_at BIGINT CHECK (first_detected_at IS NULL
-                                     OR (first_detected_at >= 0 AND first_detected_at < 4102444800)),
-    last_detected_at  BIGINT CHECK (last_detected_at IS NULL
-                                     OR (last_detected_at >= 0 AND last_detected_at < 4102444800)),
-    removed_at        BIGINT CHECK (removed_at IS NULL
-                                     OR (removed_at >= 0 AND removed_at < 4102444800)),
-    updated_at        BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800),
-    CHECK ((first_detected_at IS NULL) = (last_detected_at IS NULL)),
-    -- A network nobody detected was set by the operator.
-    CHECK (origin = 'operator' OR first_detected_at IS NOT NULL),
-    CHECK (address_family = 6 OR prefix_length <= 32),
-    UNIQUE (interface_id, network_address, prefix_length)
-);
-
--- ---------------------------------------------------------------------------
--- Owner — a person the maintainer has told opnview about, so that one person's
--- several machines read as one person rather than as three unrelated cards.
---
--- THIS TERM IS OPNVIEW'S OWN, and deliberately so. Neither OPNsense nor any
--- product opnview reads has a notion of a person: a lease carries a hostname, a
--- MAC and a client identifier, and none of them names a human being. The word
--- is taken from the question the entity answers — whose machine is this — not
--- invented for something a product already names.
---
--- OWNERSHIP IS ASSIGNED BY THE USER AND IS NEVER INFERRED. Nothing derives an
--- owner from a hostname, a MAC prefix, a vendor hint, an address or any other
--- observed value: there is no DEFAULT on client.owner_id, no generated column,
--- no trigger, and no predicate anywhere in this schema that matches on a name.
--- It is the same rule interface.user_label already obeys, for the same reason.
---
--- A CLIENT WITH NO OWNER IS NORMAL, not an error and not a row to hide. Most
--- machines on a network belong to nobody in particular, and a per-person view
--- must therefore carry an explicit unassigned bucket rather than silently
--- dropping every client the user has not got round to attributing. The
--- diagnostic query "Clients per owner" in sql/queries/diagnostics.sql is that
--- guarantee, written down and executed.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS owner (
-    id           BIGINT PRIMARY KEY,
-    display_name TEXT NOT NULL UNIQUE,
-    created_at   BIGINT NOT NULL CHECK (created_at >= 0 AND created_at < 4102444800),
-    updated_at   BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
-);
-
--- ---------------------------------------------------------------------------
--- Interface map — first-class join key number one: the filter log's raw
--- device name to the user-given interface description.
--- Source: /api/diagnostics/interface/get_interface_names. Survey: "Runtime
--- discovery" (i). A device name absent from this table is the modelled
--- "not found" state carried on flow.interface_lookup_state.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS interface_map (
-    device        TEXT PRIMARY KEY,
-    description   TEXT NOT NULL,
-    interface_id  BIGINT REFERENCES interface (id),
-    discovered_at BIGINT NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800)
-);
-
--- ---------------------------------------------------------------------------
--- Rule — first-class join key number two: the filter log's rid / the rule
--- uuid, to the rule description.
+-- Rule — moved to the installation plugin. Its description, kept here until the
+-- Go that writes it moves: the filter log's rid / the rule uuid, to the rule
+-- description.
 -- Source: /api/firewall/filter/search_rule (uuid, description, action,
 -- direction, log, is_automatic). Survey: "Runtime discovery" (ii). A rid
 -- matching no row here is normal (the rule was removed) and is carried on
@@ -726,107 +533,12 @@ CREATE TABLE IF NOT EXISTS interface_map (
 -- description. An empty value is a floating rule, which the controller treats
 -- as matching on every interface. Stored for the "N rules do not log" figure
 -- per interface; docs/data-model.md, `rule`.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS rule (
-    id            BIGINT PRIMARY KEY,
-    pf_label      TEXT NOT NULL UNIQUE,
-    description   TEXT NOT NULL,
-    action        TEXT NOT NULL
-                  CHECK (action IN ('pass', 'block', 'reject', 'unknown')),
-    direction     TEXT CHECK (direction IS NULL OR direction IN ('in', 'out', 'any')),
-    interface     TEXT,
-    legacy        BOOLEAN,
-    logs_matches  BOOLEAN,
-    -- enabled is the endpoint's `enabled` field: "1" or "0" on a model rule, which the
-    -- endpoint returns disabled or not, and always "1" on a legacy or automatic row,
-    -- which it returns only when enabled (opnsense/core 26.7.3, Firewall/Filter.xml and
-    -- scripts/filter/list_non_mvc_rules.php). NULL is not reported. Stored as
-    -- coverage of the field: a rule a screen lists can say it is switched off, and
-    -- nothing in the derivation reads it.
-    enabled       BOOLEAN,
-    is_automatic  BOOLEAN NOT NULL DEFAULT false,
-    discovered_at BIGINT NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800),
-    -- destination_net is the endpoint's `destination_net` field, VERBATIM: an address,
-    -- a network, an alias name, `any`, whatever the rule says (B8a of
-    -- specs/SPEC-step-5b-widget-api.md, decision 12). It is stored so a table of rules
-    -- can show what a rule was written against, and IT IS NEVER EVALUATED: opnview
-    -- matches no flow against it and derives nothing from it. NULL is not reported.
-    -- The schema is edited in place (decision 12 of the step-5A live corrections), so
-    -- a database created before this column is rebuilt rather than migrated.
-    destination_net TEXT
-);
-
--- ---------------------------------------------------------------------------
--- Client — one physical machine, identified by the documented cascade, most
--- stable first: DHCP client identity, then MAC, then address within its
--- interface over a validity interval.
--- Sources: the lease endpoints of data source 4 (hostname, hwaddr/mac,
--- client_id, duid, iaid, mac_info) and, for a client never seen in a lease,
--- the filter log of data source 1, which carries no MAC at all.
 --
--- identity_key holds the value the chosen cascade level produced; the pair
--- (identity_kind, identity_key) is unique, so two observations only merge when
--- the same level yields the same value. An address reissued after a lease
--- expiry produces a different identity_key, because the key of that level
--- carries the validity start.
---
--- A randomised MAC is one whose second hex digit carries the IEEE
--- locally-administered bit: 2, 6, A or E. The digits 0, 4, 8 and C are
--- globally administered — burned-in addresses — and are NOT randomised. The
--- mac column is constrained to 17 lowercase characters so the digit test is
--- total.
+-- Client — moved to the installation plugin: one physical machine, identified
+-- by the documented cascade, most stable first: DHCP client identity, then MAC,
+-- then address within its interface over a validity interval. A randomised MAC
+-- is one whose second hex digit carries the IEEE locally-administered bit.
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS client (
-    id                BIGINT PRIMARY KEY,
-    identity_kind     TEXT NOT NULL
-                      CHECK (identity_kind IN ('dhcp_client_id', 'mac', 'address_in_interface')),
-    identity_key      TEXT NOT NULL,
-    interface_id      BIGINT REFERENCES interface (id),
-    mac               TEXT CHECK (mac IS NULL OR (length(mac) = 17 AND mac = lower(mac))),
-    hostname          TEXT,
-    vendor_hint       TEXT,
-    last_address      TEXT,
-    -- Ownership, assigned by the user and never inferred. No DEFAULT, so a
-    -- client is unowned until somebody says otherwise; owner_assigned_at
-    -- records when that happened, and the CHECK below keeps the two from
-    -- disagreeing.
-    owner_id          BIGINT REFERENCES owner (id),
-    owner_assigned_at BIGINT CHECK (owner_assigned_at IS NULL
-                                     OR (owner_assigned_at >= 0 AND owner_assigned_at < 4102444800)),
-    mac_is_randomised BIGINT GENERATED ALWAYS AS (
-                          CASE
-                              WHEN mac IS NULL THEN NULL
-                              WHEN strpos('26ae', substr(mac, 2, 1)) > 0 THEN 1
-                              ELSE 0
-                          END) STORED,
-    unstable_identity BIGINT GENERATED ALWAYS AS (
-                          CASE
-                              WHEN mac IS NOT NULL AND strpos('26ae', substr(mac, 2, 1)) > 0 THEN 1
-                              ELSE 0
-                          END) STORED,
-    first_seen_at     BIGINT NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
-    last_seen_at      BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
-    UNIQUE (identity_kind, identity_key),
-    CHECK ((owner_id IS NULL) = (owner_assigned_at IS NULL))
-);
-
-CREATE INDEX IF NOT EXISTS idx_client_interface ON client (interface_id, id);
-
--- "The machine at this address" is what classification and attribution ask for
--- every address a pass touches; an index search, never a scan of a growing table.
-CREATE INDEX IF NOT EXISTS idx_client_last_address ON client (last_address, last_seen_at);
-
--- An owner's machines. owner_id is NULL-bearing, and a B-tree index keeps the
--- unassigned clients rather than omitting them, so the index serves the
--- unassigned bucket as well as the assigned ones.
-CREATE INDEX IF NOT EXISTS idx_client_owner ON client (owner_id, id);
-
--- A widget reference to a client by host name (docs/dashboard-format.md, "The reference
--- object", `client` by `hostname`) is an exact match on this column, and the widget API's
--- statements may not scan a growing table (specs/SPEC-step-5b-widget-api.md, A12). The
--- write cost is one index entry per client row, which grows with the machines seen, not
--- with the traffic.
-CREATE INDEX IF NOT EXISTS idx_client_hostname ON client (hostname);
 
 -- ---------------------------------------------------------------------------
 -- DHCP lease — one observed lease generation.
@@ -861,7 +573,7 @@ CREATE INDEX IF NOT EXISTS idx_client_hostname ON client (hostname);
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS dhcp_lease (
     id             BIGINT PRIMARY KEY,
-    client_id      BIGINT REFERENCES client (id),
+    client_id      BIGINT,
     -- provider_id NAMES THE SERVER THAT ISSUED THIS LEASE, and it is a fact a
     -- reader is entitled to rather than a component of a de-duplication key.
     -- This kind admits several concurrently active providers -- one server on one
@@ -893,7 +605,7 @@ CREATE TABLE IF NOT EXISTS dhcp_lease (
     vendor_hint    TEXT,
     lease_state    TEXT NOT NULL
                    CHECK (lease_state IN ('active', 'expired', 'reserved', 'unknown')),
-    interface_id   BIGINT REFERENCES interface (id),
+    interface_id   BIGINT,
     starts_at      BIGINT CHECK (starts_at IS NULL
                                   OR (starts_at >= 0 AND starts_at < 4102444800)),
     generation_key TEXT NOT NULL CHECK (length(generation_key) > 0),
@@ -968,10 +680,10 @@ CREATE TABLE IF NOT EXISTS flow (
     interface_device       TEXT NOT NULL,
     interface_lookup_state TEXT NOT NULL
                            CHECK (interface_lookup_state IN ('resolved', 'not_found', 'pending')),
-    src_interface_id       BIGINT REFERENCES interface (id),
-    dst_interface_id       BIGINT REFERENCES interface (id),
-    src_client_id          BIGINT REFERENCES client (id),
-    dst_client_id          BIGINT REFERENCES client (id),
+    src_interface_id       BIGINT,
+    dst_interface_id       BIGINT,
+    src_client_id          BIGINT,
+    dst_client_id          BIGINT,
     src_address            TEXT NOT NULL,
     dst_address            TEXT NOT NULL,
     src_port               BIGINT CHECK (src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)),
@@ -984,7 +696,7 @@ CREATE TABLE IF NOT EXISTS flow (
     log_reason             TEXT,
     packet_bytes           BIGINT NOT NULL CHECK (packet_bytes >= 0),
     rid                    TEXT,
-    rule_id                BIGINT REFERENCES rule (id),
+    rule_id                BIGINT,
     rule_lookup_state      TEXT NOT NULL
                            CHECK (rule_lookup_state IN ('resolved', 'not_found', 'pending')),
     -- src_is_this_firewall and dst_is_this_firewall say that an end is THIS
@@ -1226,17 +938,11 @@ FROM flow;
 -- of its interface: an address the firewall still holds is held from its first
 -- sighting onward, so a record made after the last discovery is not orphaned by a
 -- discovery that has not run yet.
+--
+-- The view itself is the installation plugin's (plugins/installation/installation.relations.sql,
+-- ADR 0020 wave 1): plugin_installation.this_firewall_address, reached unqualified through the
+-- bridge by the Go that still reads it.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE VIEW this_firewall_address AS
-SELECT
-    a.address                                              AS address,
-    a.interface_id                                         AS interface_id,
-    a.first_seen_at                                        AS first_seen_at,
-    a.last_seen_at                                         AS last_seen_at,
-    CASE WHEN a.last_seen_at >= i.last_seen_at THEN 1 ELSE 0 END AS is_current
-FROM interface_address AS a
-JOIN interface AS i ON i.id = a.interface_id
-WHERE a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6');
 
 -- blocked_event — every refused filter-log record: action 'block' or 'reject'. A
 -- record whose action could not be named ('unknown') is not a refusal and is not
@@ -1453,7 +1159,7 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
                                                 'local_data_hostname',
                                                 'dual_stack_hostname')),
     client_family  BIGINT CHECK (client_family IS NULL OR client_family IN (4, 6)),
-    client_id      BIGINT REFERENCES client (id),
+    client_id      BIGINT,
     client_is_this_firewall BOOLEAN NOT NULL DEFAULT false,
     hostname_examined_at BIGINT CHECK (hostname_examined_at IS NULL
                                         OR (hostname_examined_at >= 0 AND hostname_examined_at < 4102444800)),
@@ -1469,7 +1175,7 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
     blocklist_id   BIGINT REFERENCES blocklist (id),
     looked_up_at   BIGINT NOT NULL CHECK (looked_up_at >= 0 AND looked_up_at < 4102444800),
     ingested_at    BIGINT NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
-    interface_id   BIGINT REFERENCES interface (id),
+    interface_id   BIGINT,
     interface_lookup_state TEXT NOT NULL DEFAULT 'pending'
                    CHECK (interface_lookup_state IN ('resolved', 'not_found', 'pending')),
     CHECK ((interface_lookup_state = 'resolved') = (interface_id IS NOT NULL)),
@@ -1825,8 +1531,8 @@ CREATE TABLE IF NOT EXISTS security_event (
     dst_port            BIGINT CHECK (dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)),
     protocol            TEXT,
     in_interface_device TEXT,
-    src_client_id       BIGINT REFERENCES client (id),
-    src_interface_id    BIGINT REFERENCES interface (id),
+    src_client_id       BIGINT,
+    src_interface_id    BIGINT,
     -- 1 when the event's source is this firewall, as flow.src_is_this_firewall
     -- decides it for a record's end; such a source has no client.
     src_is_this_firewall BOOLEAN NOT NULL DEFAULT false,
@@ -1834,8 +1540,8 @@ CREATE TABLE IF NOT EXISTS security_event (
     -- (gap G7, closed in step 6): many detections fire on the server-to-client
     -- packet, where the client is the destination. An outside destination has
     -- no interface and no client.
-    dst_client_id       BIGINT REFERENCES client (id),
-    dst_interface_id    BIGINT REFERENCES interface (id),
+    dst_client_id       BIGINT,
+    dst_interface_id    BIGINT,
     -- 1 when the event's destination is this firewall; such a destination has
     -- no client.
     dst_is_this_firewall BOOLEAN NOT NULL DEFAULT false,
@@ -1892,70 +1598,11 @@ CREATE INDEX IF NOT EXISTS idx_security_event_dst_address
 -- destination address, or the domain. target_is_this_firewall is 1 when that
 -- address is one the firewall itself holds (interface_address, addr4 or addr6),
 -- which is how a feed says "-> this firewall".
+--
+-- The view itself is the installation plugin's (plugins/installation/installation.relations.sql,
+-- ADR 0020 wave 1): plugin_installation.blocked_decision, since it reads interface_address, which
+-- moved there, and three sources' tables that no single source owns.
 -- ---------------------------------------------------------------------------
--- The view is replaced on every apply, so an edit to its text reaches a database
--- the previous text was applied to.
-CREATE OR REPLACE VIEW blocked_decision AS
-SELECT
-    'flow'                                                  AS source_table,
-    f.id                                                    AS source_id,
-    f.observed_at                                           AS occurred_at,
-    CASE
-        WHEN f.log_reason = 'match' THEN 'firewall_rule'
-        WHEN f.log_reason IN ('bad-offset', 'fragment', 'short', 'normalize', 'memory',
-                              'bad-timestamp', 'congestion', 'ip-option', 'proto-cksum',
-                              'state-mismatch', 'state-insert', 'state-limit',
-                              'src-limit', 'synproxy') THEN 'firewall_no_rule'
-        ELSE 'firewall_reason_not_recorded'
-    END                                                     AS engine_kind,
-    f.rid                                                   AS engine_reference,
-    f.src_client_id                                         AS client_id,
-    f.src_interface_id                                      AS interface_id,
-    f.dst_address                                           AS target,
-    'address'                                               AS target_kind,
-    CAST(CAST(EXISTS (SELECT 1 FROM interface_address AS a
-            WHERE a.address = f.dst_address AND a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6')) AS INTEGER) AS BIGINT)
-                                                            AS target_is_this_firewall
-FROM flow AS f
-WHERE f.action IN ('block', 'reject')
-UNION ALL
-SELECT
-    'dns_resolution',
-    r.id,
-    r.looked_up_at,
-    CASE
-        WHEN r.blocklist_id IS NULL THEN 'dns_list_not_recorded'
-        WHEN b.purpose IS NULL THEN 'dns_unassigned_list'
-        WHEN b.purpose = 'advertising' THEN 'dns_advertising_list'
-        WHEN b.purpose = 'tracking' THEN 'dns_tracking_list'
-        WHEN b.purpose = 'threat' THEN 'dns_threat_list'
-        WHEN b.purpose = 'parental' THEN 'dns_parental_list'
-        ELSE 'dns_other_list'
-    END,
-    b.name,
-    r.client_id,
-    r.interface_id,
-    r.domain,
-    'domain',
-    0
-FROM dns_resolution AS r
-LEFT JOIN blocklist AS b ON b.id = r.blocklist_id
-WHERE r.action IN ('block', 'drop')
-UNION ALL
-SELECT
-    'security_event',
-    e.id,
-    e.occurred_at,
-    'security_engine',
-    e.rule_identity,
-    e.src_client_id,
-    e.src_interface_id,
-    e.dst_address,
-    'address',
-    CAST(CAST(EXISTS (SELECT 1 FROM interface_address AS a
-            WHERE a.address = e.dst_address AND a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6')) AS INTEGER) AS BIGINT)
-FROM security_event AS e
-WHERE e.event_action = 'blocked';
 
 -- ---------------------------------------------------------------------------
 -- eve.json ingestion cursor — a per-file byte-offset watermark over an
@@ -2224,8 +1871,8 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_1h (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    BIGINT REFERENCES interface (id),
-    dst_interface_id    BIGINT REFERENCES interface (id),
+    src_interface_id    BIGINT,
+    dst_interface_id    BIGINT,
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL
                         CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
@@ -2271,8 +1918,8 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_24h (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    BIGINT REFERENCES interface (id),
-    dst_interface_id    BIGINT REFERENCES interface (id),
+    src_interface_id    BIGINT,
+    dst_interface_id    BIGINT,
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL
                         CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
@@ -2318,8 +1965,8 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_7d (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    BIGINT REFERENCES interface (id),
-    dst_interface_id    BIGINT REFERENCES interface (id),
+    src_interface_id    BIGINT,
+    dst_interface_id    BIGINT,
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL
                         CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
@@ -2365,8 +2012,8 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_30d (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    BIGINT REFERENCES interface (id),
-    dst_interface_id    BIGINT REFERENCES interface (id),
+    src_interface_id    BIGINT,
+    dst_interface_id    BIGINT,
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL
                         CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
@@ -2440,7 +2087,7 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_1h (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    owner_id            BIGINT REFERENCES owner (id),
+    owner_id            BIGINT,
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
@@ -2464,7 +2111,7 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_24h (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    owner_id            BIGINT REFERENCES owner (id),
+    owner_id            BIGINT,
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
@@ -2488,7 +2135,7 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_7d (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    owner_id            BIGINT REFERENCES owner (id),
+    owner_id            BIGINT,
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
@@ -2512,7 +2159,7 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_30d (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    owner_id            BIGINT REFERENCES owner (id),
+    owner_id            BIGINT,
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
@@ -2550,7 +2197,7 @@ CREATE TABLE IF NOT EXISTS client_volume_aggregate_1h (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT NOT NULL,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
@@ -2575,7 +2222,7 @@ CREATE TABLE IF NOT EXISTS client_volume_aggregate_24h (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT NOT NULL,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
@@ -2600,7 +2247,7 @@ CREATE TABLE IF NOT EXISTS client_volume_aggregate_7d (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT NOT NULL,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
@@ -2625,7 +2272,7 @@ CREATE TABLE IF NOT EXISTS client_volume_aggregate_30d (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT NOT NULL,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
@@ -2674,7 +2321,7 @@ CREATE TABLE IF NOT EXISTS peer_volume_aggregate_1h (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT NOT NULL,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
@@ -2699,7 +2346,7 @@ CREATE TABLE IF NOT EXISTS peer_volume_aggregate_24h (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT NOT NULL,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
@@ -2724,7 +2371,7 @@ CREATE TABLE IF NOT EXISTS peer_volume_aggregate_7d (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT NOT NULL,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
@@ -2749,7 +2396,7 @@ CREATE TABLE IF NOT EXISTS peer_volume_aggregate_30d (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT NOT NULL,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
@@ -2793,7 +2440,7 @@ CREATE TABLE IF NOT EXISTS domain_volume_aggregate_1h (
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
     site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
-    client_id           BIGINT REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT,
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
@@ -2814,7 +2461,7 @@ CREATE TABLE IF NOT EXISTS domain_volume_aggregate_24h (
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
     site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
-    client_id           BIGINT REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT,
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
@@ -2835,7 +2482,7 @@ CREATE TABLE IF NOT EXISTS domain_volume_aggregate_7d (
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
     site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
-    client_id           BIGINT REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT,
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
@@ -2856,7 +2503,7 @@ CREATE TABLE IF NOT EXISTS domain_volume_aggregate_30d (
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
     site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
-    client_id           BIGINT REFERENCES client (id) ON DELETE CASCADE,
+    client_id           BIGINT,
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
@@ -2885,9 +2532,9 @@ CREATE TABLE IF NOT EXISTS rule_volume_aggregate_1h (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    rule_id             BIGINT REFERENCES rule (id),
-    src_interface_id    BIGINT REFERENCES interface (id),
-    dst_interface_id    BIGINT REFERENCES interface (id),
+    rule_id             BIGINT,
+    src_interface_id    BIGINT,
+    dst_interface_id    BIGINT,
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
@@ -2910,9 +2557,9 @@ CREATE TABLE IF NOT EXISTS rule_volume_aggregate_24h (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    rule_id             BIGINT REFERENCES rule (id),
-    src_interface_id    BIGINT REFERENCES interface (id),
-    dst_interface_id    BIGINT REFERENCES interface (id),
+    rule_id             BIGINT,
+    src_interface_id    BIGINT,
+    dst_interface_id    BIGINT,
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
@@ -2935,9 +2582,9 @@ CREATE TABLE IF NOT EXISTS rule_volume_aggregate_7d (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    rule_id             BIGINT REFERENCES rule (id),
-    src_interface_id    BIGINT REFERENCES interface (id),
-    dst_interface_id    BIGINT REFERENCES interface (id),
+    rule_id             BIGINT,
+    src_interface_id    BIGINT,
+    dst_interface_id    BIGINT,
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
@@ -2960,9 +2607,9 @@ CREATE TABLE IF NOT EXISTS rule_volume_aggregate_30d (
     id                  BIGINT PRIMARY KEY,
     period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    rule_id             BIGINT REFERENCES rule (id),
-    src_interface_id    BIGINT REFERENCES interface (id),
-    dst_interface_id    BIGINT REFERENCES interface (id),
+    rule_id             BIGINT,
+    src_interface_id    BIGINT,
+    dst_interface_id    BIGINT,
     bytes               BIGINT NOT NULL CHECK (bytes >= 0),
     allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
@@ -3043,10 +2690,10 @@ CREATE TABLE IF NOT EXISTS purged_flow_hour (
     id                BIGINT PRIMARY KEY,
     hour_start_at     BIGINT NOT NULL CHECK (hour_start_at >= 0 AND hour_start_at < 4102444800
                                               AND hour_start_at % 3600 = 0),
-    src_interface_id  BIGINT REFERENCES interface (id),
-    dst_interface_id  BIGINT REFERENCES interface (id),
-    src_client_id     BIGINT REFERENCES client (id) ON DELETE SET NULL,
-    local_client_id   BIGINT REFERENCES client (id) ON DELETE SET NULL,
+    src_interface_id  BIGINT,
+    dst_interface_id  BIGINT,
+    src_client_id     BIGINT,
+    local_client_id   BIGINT,
     traffic_direction TEXT NOT NULL
                       CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
                                                    'to_this_firewall', 'from_this_firewall')),
@@ -3056,7 +2703,7 @@ CREATE TABLE IF NOT EXISTS purged_flow_hour (
     peer_address      TEXT,
     -- classified_flow.exit_leg_device: the device a second leg was logged on.
     exit_leg_device   TEXT,
-    rule_id           BIGINT REFERENCES rule (id),
+    rule_id           BIGINT,
     site_name         TEXT CHECK (site_name IS NULL OR length(site_name) > 0),
     action            TEXT NOT NULL CHECK (action IN ('pass', 'block', 'reject', 'unknown')),
     bytes             BIGINT NOT NULL CHECK (bytes >= 0),
@@ -4218,12 +3865,6 @@ $measure_markers$;
 SELECT install_assign_id(t::regclass) FROM unnest(ARRAY[
     'account',
     'provider',
-    'interface',
-    'interface_address',
-    'interface_network',
-    'owner',
-    'rule',
-    'client',
     'dhcp_lease',
     'flow',
     'blocklist',

@@ -56,12 +56,12 @@ function providers(t, state, outcome) {
 function seedWith(t, state, outcome) {
   t.clock(AT);
   var at = AT - 3000;
-  t.sql("INSERT INTO interface (id, identifier, device, description, link_type, link_kind, " +
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, link_type, link_kind, " +
     "first_seen_at, last_seen_at) VALUES (1, 'example_one', 'exdev1', 'Inside one', 'ethernet', 'vlan', :at, :at), " +
     "(2, 'example_two', 'exdev2', 'Inside two', 'ethernet', 'vlan', :at, :at)", { at: at });
-  t.sql("INSERT INTO interface_map (device, description, interface_id, discovered_at) VALUES " +
+  t.sql("INSERT INTO plugin_installation.interface_map (device, description, interface_id, discovered_at) VALUES " +
     "('exdev1', 'Inside one', 1, :at), ('exdev2', 'Inside two', 2, :at)", { at: at });
-  t.sql("INSERT INTO client (id, identity_kind, identity_key, interface_id, mac, last_address, " +
+  t.sql("INSERT INTO plugin_installation.client (id, identity_kind, identity_key, interface_id, mac, last_address, " +
     "first_seen_at, last_seen_at) VALUES (10, 'mac', '00:00:5e:00:53:0a', 1, '00:00:5e:00:53:0a', " +
     "'192.0.2.10', :at, :at), (20, 'mac', '00:00:5e:00:53:14', 2, '00:00:5e:00:53:14', '198.51.100.20', :at, :at)",
     { at: at });

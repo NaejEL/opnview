@@ -209,6 +209,8 @@ table of the same name; a query names it `plugin_<plugin>.<table>`.
 | `references` (a column) | A foreign key: `table(column)` of the plugin's own, or `plugin.table(column)` of a plugin the manifest `requires`, which loads first. A table with a time column may reference, and is never referenced. |
 | `checks` | The table's CHECK constraints, each `{"name", "expression"}`, named `<table>_<name>` in the database. |
 | `where` (an index) | The predicate of a partial index. |
+| `nulls_not_distinct` (an index) | `true` on a unique index: two NULLs count as equal, so a key with a nullable column is one holding per value, NULL included. |
+| `default` (a column) | The SQL literal a row written without the column takes: `"false"`, `"0"`, `"'none'"`. |
 | `writable_by` | The other plugins that may write the table (ADR 0019), each `{"plugin", "columns"}`: with `columns`, UPDATE of those columns alone; without, INSERT, UPDATE and DELETE of the whole table. It is the owner's declaration, turned into PostgreSQL's own grants on the other plugin's role at every start, and what the owner no longer grants is revoked. The other plugin `requires` the owner and names the table by its qualified name; its statements are planned under its role when it loads, so one that writes a column it was not granted refuses it by name (`statement_refused`). |
 
 An expression a declaration carries -- a check, a generated column, a partial index's predicate --

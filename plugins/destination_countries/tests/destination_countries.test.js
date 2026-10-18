@@ -20,10 +20,10 @@ function seed(t) {
   t.clock(AT);
   reachable(t);
   var at = AT - 600;
-  t.sql("INSERT INTO interface (id, identifier, device, description, link_type, link_kind, first_seen_at, " +
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, link_type, link_kind, first_seen_at, " +
     "last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'First inside', 'ethernet', 'vlan', :at, :at), " +
     "(2, 'opt2', 'vlan0.20', 'Second inside', 'ethernet', 'vlan', :at, :at)", { at: at });
-  t.sql("INSERT INTO rule (id, pf_label, description, action, discovered_at) " +
+  t.sql("INSERT INTO plugin_installation.rule (id, pf_label, description, action, discovered_at) " +
     "VALUES (1, 'example-pass', 'Example pass rule', 'pass', :at)", { at: at });
   // The dataset that placed the addresses is the geolocation provider the installation registered.
   var provider = "(SELECT id FROM provider WHERE kind = 'ip_geolocation' ORDER BY id LIMIT 1)";

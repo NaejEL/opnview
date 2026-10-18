@@ -1,6 +1,7 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "blocked_by_firewall_rule",
+  "requires": ["installation"],
   "version": "1.0.0",
   "display_name": "Blocked by firewall rule",
   "description": "Rules ranked by blocked connections, each naming its description, its pf label, the interfaces it fired on and the interfaces and clients it blocked, with an inline timeline; a rid no rule carries is its own row.",

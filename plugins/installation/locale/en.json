@@ -1,0 +1,8 @@
+{ "language": "en", "strings": {
+  "plugin.installation.dataset.interface": "Interfaces",
+  "plugin.installation.dataset.interface_address": "Interface addresses and gateways",
+  "plugin.installation.dataset.interface_network": "Interface networks",
+  "plugin.installation.dataset.owner": "People",
+  "plugin.installation.dataset.interface_map": "Device names",
+  "plugin.installation.dataset.rule": "Rules",
+  "plugin.installation.dataset.client": "Clients" } }

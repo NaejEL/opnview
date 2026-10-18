@@ -12,15 +12,15 @@ var AT = 1790000400;
 function seed(t) {
   t.clock(AT);
   var at = AT - 600;
-  t.sql("INSERT INTO interface (id, identifier, device, description, user_label, link_type, link_kind, " +
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, user_label, link_type, link_kind, " +
     "first_seen_at, last_seen_at) VALUES " +
     "(1, 'opt1', 'vlan0.10', 'First', 'Workshop', 'ethernet', 'vlan', :at, :at), " +
     "(2, 'opt2', 'vlan0.20', 'Second', NULL, 'ethernet', 'vlan', :at, :at)", { at: at });
-  t.sql("INSERT INTO client (id, identity_kind, identity_key, interface_id, mac, last_address, " +
+  t.sql("INSERT INTO plugin_installation.client (id, identity_kind, identity_key, interface_id, mac, last_address, " +
     "first_seen_at, last_seen_at) VALUES " +
     "(10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', '192.0.2.10', :at, :at), " +
     "(20, 'mac', '00:11:22:33:44:66', 2, '00:11:22:33:44:66', '198.51.100.20', :at, :at)", { at: at });
-  t.sql("INSERT INTO rule (id, pf_label, description, action, interface, legacy, logs_matches, discovered_at) " +
+  t.sql("INSERT INTO plugin_installation.rule (id, pf_label, description, action, interface, legacy, logs_matches, discovered_at) " +
     "VALUES (5, 'label-five', 'Quiet pass', 'pass', 'opt1', false, false, :at)", { at: at });
   var flow = function (id, iface, device, client, address, bytes) {
     t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +

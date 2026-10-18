@@ -1,6 +1,7 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "passed_traffic_world_map",
+  "requires": ["installation"],
   "version": "1.0.0",
   "display_name": "Passed-traffic world map",
   "description": "Where the allowed traffic went, as point marks sized by bytes or connections, with the unplaced counter beside them, split by reason.",

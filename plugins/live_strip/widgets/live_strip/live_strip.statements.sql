@@ -24,7 +24,7 @@ GROUP BY 1;
 -- statement: widget_live_strip_refusals
 SELECT d.occurred_at - d.occurred_at % :width AS bucket_start, d.engine_kind AS engine_kind,
        count(*) AS decisions
-FROM blocked_decision AS d
+FROM plugin_installation.blocked_decision AS d
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
   AND d.source_table IN ('flow', 'dns_resolution')

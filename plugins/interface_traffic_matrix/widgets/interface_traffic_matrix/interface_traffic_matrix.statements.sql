@@ -18,7 +18,7 @@ SELECT f.src_interface_id AS src_interface_id,
        f.rid AS rid,
        count(*) AS connections
 FROM classified_flow AS f
-LEFT JOIN rule AS r ON r.id = f.rule_id
+LEFT JOIN plugin_installation.rule AS r ON r.id = f.rule_id
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL

@@ -42,7 +42,7 @@ func connectorFor(config *pgx.ConnConfig) driver.Connector {
 	if config.RuntimeParams == nil {
 		config.RuntimeParams = map[string]string{}
 	}
-	config.RuntimeParams["search_path"] = searchPath
+	config.RuntimeParams["search_path"] = SearchPath()
 	config.RuntimeParams["application_name"] = "opnview"
 	return stdlib.GetConnector(*config)
 }
@@ -50,7 +50,3 @@ func connectorFor(config *pgx.ConnConfig) driver.Connector {
 // CoreSchema is the PostgreSQL schema the core's objects live in. No plugin schema can take
 // its name: a plugin's carries the plugin prefix (internal/store/plugindecl/plugintables.go).
 const CoreSchema = "opnview"
-
-// searchPath is every connection's search path: the core's objects, then public, where the
-// TimescaleDB extension's functions are.
-const searchPath = CoreSchema + ", public"

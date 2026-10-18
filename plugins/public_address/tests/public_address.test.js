@@ -12,11 +12,11 @@ var AT = 1790000400;
 function seed(t) {
   t.clock(AT);
   var day = 86400;
-  t.sql("INSERT INTO interface (id, identifier, device, description, link_type, link_kind, is_upstream, " +
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, link_type, link_kind, is_upstream, " +
     "first_seen_at, last_seen_at) VALUES (1, 'wan', 'igc0', 'Uplink', 'ethernet', 'physical', true, :at, :at)",
     { at: AT - 10 * day });
   var held = function (id, field, address, prefix, family, first, last) {
-    t.sql("INSERT INTO interface_address (id, interface_id, source_field, address, prefix_length, " +
+    t.sql("INSERT INTO plugin_installation.interface_address (id, interface_id, source_field, address, prefix_length, " +
       "address_family, first_seen_at, last_seen_at) VALUES (:id, 1, :field, :address, :prefix, :family, " +
       ":first, :last)", { id: id, field: field, address: address, prefix: prefix, family: family,
       first: first, last: last });

@@ -316,6 +316,8 @@ type ColumnDeclaration struct {
 	// References makes the column a foreign key: "table(column)" of the plugin's own, or
 	// "plugin.table(column)" of a plugin the manifest requires (ADR 0019).
 	References string `json:"references,omitempty"`
+	// Default is the SQL literal a row written without the column takes (ADR 0020): "false", "0", "'none'".
+	Default string `json:"default,omitempty"`
 }
 
 // CheckDeclaration is one CHECK constraint of a table (ADR 0019): a name and an SQL expression over
@@ -331,6 +333,8 @@ type IndexDeclaration struct {
 	Unique  bool     `json:"unique,omitempty"`
 	// Where makes it a partial index, over the rows the expression admits (ADR 0019).
 	Where string `json:"where,omitempty"`
+	// NullsNotDistinct makes a unique index treat two NULLs as equal (ADR 0020).
+	NullsNotDistinct bool `json:"nulls_not_distinct,omitempty"`
 }
 
 // RetentionDeclaration is a table's retention: the instant column the horizon reads, and how
@@ -399,8 +403,8 @@ func ValidateShape(manifest Manifest, directory string) *Refusal {
 		return Refuse(directory, RefusalManifestInvalid,
 			"script %q must be a plain file name ending in .js, in the plugin's own directory", manifest.Script)
 	}
-	if len(manifest.Providers) == 0 && len(manifest.Widgets) == 0 {
-		return Refuse(directory, RefusalManifestInvalid, "the plugin declares no provider and no widget")
+	if len(manifest.Providers) == 0 && len(manifest.Widgets) == 0 && len(manifest.Tables) == 0 && len(manifest.Relations) == 0 {
+		return Refuse(directory, RefusalManifestInvalid, "the plugin declares no provider, no widget, no table and no relation")
 	}
 	for _, widget := range manifest.Widgets {
 		if !NamePattern.MatchString(widget) {

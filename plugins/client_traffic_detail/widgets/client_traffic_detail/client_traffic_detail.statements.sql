@@ -28,7 +28,7 @@ SELECT f.id AS flow_id,
        a.method AS method,
        a.correlation_delay_seconds AS correlation_delay_seconds
 FROM flow AS f
-LEFT JOIN interface_map AS m ON m.device = f.interface_device
+LEFT JOIN plugin_installation.interface_map AS m ON m.device = f.interface_device
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 WHERE f.src_client_id = :client_id
@@ -119,7 +119,7 @@ SELECT f.id AS flow_id,
        rv.state AS reverse_state,
        measure_markers(CAST(:measure AS TEXT), rv.markers) AS reverse_markers
 FROM flow AS f
-LEFT JOIN interface_map AS m ON m.device = f.interface_device
+LEFT JOIN plugin_installation.interface_map AS m ON m.device = f.interface_device
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true

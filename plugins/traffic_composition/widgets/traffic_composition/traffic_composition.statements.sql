@@ -39,7 +39,7 @@ GROUP BY f.local_interface_id, f.traffic_direction;
 -- refused lookup never became a packet and a detection is not a logged record.
 -- statement: widget_traffic_composition_refusals
 SELECT d.engine_kind AS engine_kind, count(*) AS refusals
-FROM blocked_decision AS d
+FROM plugin_installation.blocked_decision AS d
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
 GROUP BY d.engine_kind;

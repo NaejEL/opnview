@@ -270,12 +270,17 @@ func baseTemplateName() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// The registry rows a template holds are the built-ins' declarations, so they are part of what it is.
+	// The registry rows a template holds are the built-ins' declarations, and its tables the built-ins'
+	// tables and relations (ADR 0020), so they are part of what it is.
 	declarations, err := builtinDeclarationsText()
 	if err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256(append(append(schema, []byte(testTemplateRevision)...), declarations...))
+	tables, err := builtinTablesText()
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(append(append(append(schema, []byte(testTemplateRevision)...), declarations...), tables...))
 	return "opnview_template_" + hex.EncodeToString(digest[:])[:16], nil
 }
 
@@ -394,6 +399,12 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 	if err := store.RegisterBuiltinDeclarations(ctx); err != nil {
 		_ = store.Close()
 		return "", fmt.Errorf("store: registering the built-ins in the test template: %w", err)
+	}
+	// The built-ins' tables and relations, as a started service has them (ADR 0020): the installation
+	// model the core's Go writes through the bridge exists in every test database.
+	if err := store.EnsureBuiltinTables(ctx); err != nil {
+		_ = store.Close()
+		return "", fmt.Errorf("store: creating the built-ins' tables in the test template: %w", err)
 	}
 	if err := store.Close(); err != nil {
 		return "", err

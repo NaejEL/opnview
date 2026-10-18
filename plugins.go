@@ -14,11 +14,11 @@ import (
 	"io/fs"
 )
 
-// embedded is every built-in plugin's manifest, scripts and catalogue strings, and every widget a
-// plugin carries: widgets/<type>/ with its manifest, its statement files and its script. Its
-// recorded answers and its tests stay out of the binary.
+// embedded is every built-in plugin's manifest, scripts, statement and relation files and catalogue
+// strings, and every widget a plugin carries: widgets/<type>/ with its manifest, its statement files
+// and its script. Its recorded answers and its tests stay out of the binary.
 //
-//go:embed plugins/*/plugin.json plugins/*/*.js plugins/*/locale/*.json
+//go:embed plugins/*/plugin.json plugins/*/*.js plugins/*/*.sql plugins/*/locale/*.json
 //go:embed plugins/*/widgets/*/manifest.json plugins/*/widgets/*/*.sql plugins/*/widgets/*/*.js
 var embedded embed.FS
 

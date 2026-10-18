@@ -33,7 +33,7 @@ func CountStatements(t testing.TB, s *store.Store) *StatementCounter {
 		t.Fatal(err)
 	}
 	config.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
-	config.RuntimeParams["search_path"] = sqldb.CoreSchema + ", public"
+	config.RuntimeParams["search_path"] = sqldb.SearchPath()
 	inner := stdlib.GetConnector(*config)
 	counter := &StatementCounter{counts: map[string]int{}}
 	pool := sql.OpenDB(countingConnector{inner: inner, counter: counter})

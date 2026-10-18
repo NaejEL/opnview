@@ -10,7 +10,7 @@
 -- host.installation.client.
 -- statement: widget_owner_activity_clients_of_owner
 SELECT id AS client_id
-FROM client
+FROM plugin_installation.client
 WHERE owner_id = :owner_id
 ORDER BY id;
 
@@ -29,7 +29,7 @@ SELECT f.observed_at - f.observed_at % :width AS bucket_start,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections
 FROM classified_flow AS f
-JOIN client AS c ON c.id = f.local_client_id
+JOIN plugin_installation.client AS c ON c.id = f.local_client_id
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.traffic_scope <> 'this_firewall'
@@ -55,7 +55,7 @@ SELECT f.observed_at - f.observed_at % :width AS bucket_start,
        CAST(:measure AS TEXT) AS measure,
        measure_parts_total(n.parts, n.not_known_index, n.part_width) AS measure_parts
 FROM classified_flow AS f
-JOIN client AS c ON c.id = f.local_client_id
+JOIN plugin_installation.client AS c ON c.id = f.local_client_id
 LEFT JOIN LATERAL flow_measure(f.id, NULL, NULL, f.action, CAST(:measure AS TEXT)) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to

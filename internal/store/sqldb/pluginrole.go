@@ -66,6 +66,8 @@ func TakePluginRole(ctx context.Context, tx *sql.Tx, plugin string) error {
 	for _, statement := range []string{
 		"SET LOCAL ROLE " + pgx.Identifier{PluginRoleName(plugin)}.Sanitize(),
 		"SET LOCAL statement_timeout = " + quoteLiteral(pluginStatementTimeout),
+		// Never the bridge (searchpath.go): a plugin names a moved table by its qualified name.
+		"SET LOCAL search_path = " + CoreSearchPath(),
 	} {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("store: taking the role of the plugin %s: %w", plugin, err)
@@ -76,7 +78,7 @@ func TakePluginRole(ctx context.Context, tx *sql.Tx, plugin string) error {
 
 // GivePluginRoleBack returns a transaction to opnview's own role.
 func GivePluginRoleBack(ctx context.Context, tx *sql.Tx) error {
-	for _, statement := range []string{"RESET ROLE", "RESET statement_timeout"} {
+	for _, statement := range []string{"RESET ROLE", "RESET statement_timeout", "RESET search_path"} {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("store: giving a plugin's role back: %w", err)
 		}

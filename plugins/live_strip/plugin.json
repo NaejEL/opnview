@@ -1,6 +1,7 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "live_strip",
+  "requires": ["installation"],
   "version": "1.0.0",
   "display_name": "Rolling strip",
   "description": "The rolling strip: a trailing series at the live cadence of the sampled throughput by traffic direction, and of the logged decisions per engine -- allowed, refused by a firewall rule, refused with no rule, refused for a reason not recorded, refused by a resolver's list -- each decision series complete up to its source's last healthy pass and a gap after it, never a zero. It reads stored samples and records, renews the live-interest lease and never calls the firewall.",

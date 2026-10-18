@@ -17,7 +17,7 @@ function reachable(t) {
 function seed(t) {
   t.clock(AT);
   reachable(t);
-  t.sql("INSERT INTO interface (id, identifier, device, description, link_type, link_kind, " +
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, link_type, link_kind, " +
     "first_seen_at, last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'Inside', 'ethernet', 'vlan', :at, :at)",
     { at: AT - 3000 });
   var sample = function (id, at, value) {

@@ -52,7 +52,7 @@ SELECT DISTINCT f.local_client_id AS client_id,
        c.last_address AS last_address,
        c.interface_id AS interface_id
 FROM classified_flow AS f
-JOIN client AS c ON c.id = f.local_client_id
+JOIN plugin_installation.client AS c ON c.id = f.local_client_id
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND (CAST(:interface_ids AS jsonb) IS NULL

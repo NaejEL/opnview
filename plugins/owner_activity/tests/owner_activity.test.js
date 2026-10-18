@@ -20,12 +20,12 @@ function seed(t) {
   t.clock(AT);
   reachable(t);
   var at = AT - 600;
-  t.sql("INSERT INTO interface (id, identifier, device, description, link_type, link_kind, " +
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, link_type, link_kind, " +
     "first_seen_at, last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'Inside', 'ethernet', 'vlan', :at, :at)",
     { at: at });
-  t.sql("INSERT INTO owner (id, display_name, created_at, updated_at) VALUES (1, 'Example Person', :at, :at)",
+  t.sql("INSERT INTO plugin_installation.owner (id, display_name, created_at, updated_at) VALUES (1, 'Example Person', :at, :at)",
     { at: at });
-  t.sql("INSERT INTO client (id, identity_kind, identity_key, interface_id, mac, last_address, owner_id, " +
+  t.sql("INSERT INTO plugin_installation.client (id, identity_kind, identity_key, interface_id, mac, last_address, owner_id, " +
     "owner_assigned_at, first_seen_at, last_seen_at) VALUES " +
     "(10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', '192.0.2.10', 1, :at, :at, :at), " +
     "(11, 'mac', '00:11:22:33:44:66', 1, '00:11:22:33:44:66', '192.0.2.11', NULL, NULL, :at, :at), " +
@@ -108,7 +108,7 @@ function sample(t, id, kind, key, measure, value, at) {
 // sends 500.
 function sampled(t) {
   seed(t);
-  t.sql("INSERT INTO interface_network (id, interface_id, network_address, prefix_length, address_family, " +
+  t.sql("INSERT INTO plugin_installation.interface_network (id, interface_id, network_address, prefix_length, address_family, " +
     "origin, updated_at) VALUES (1, 1, '192.0.2.0', 24, 4, 'operator', :at)", { at: AT - 600 });
   var at = AT - 30;
   sample(t, 1, "interface_endpoint", "vlan0.10 192.0.2.10", "rate_bits_in", 4000, at);

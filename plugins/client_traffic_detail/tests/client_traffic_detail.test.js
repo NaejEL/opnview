@@ -22,10 +22,10 @@ function seed(t) {
   t.clock(AT);
   reachable(t);
   var at = AT - 600;
-  t.sql("INSERT INTO interface (id, identifier, device, description, link_type, link_kind, " +
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, link_type, link_kind, " +
     "first_seen_at, last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'Inside', 'ethernet', 'vlan', :at, :at)",
     { at: at });
-  t.sql("INSERT INTO client (id, identity_kind, identity_key, interface_id, mac, last_address, " +
+  t.sql("INSERT INTO plugin_installation.client (id, identity_kind, identity_key, interface_id, mac, last_address, " +
     "first_seen_at, last_seen_at) VALUES " +
     "(10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', '192.0.2.10', :at, :at)", { at: at });
   t.sql("INSERT INTO dns_resolution (id, lookup_key, client_address, domain, resolver, action, " +
@@ -90,7 +90,7 @@ function sample(t, id, kind, key, measure, value, at) {
 
 test("the client's current rate per peer, keyed by the address its records name", function (t) {
   seed(t);
-  t.sql("INSERT INTO interface_network (id, interface_id, network_address, prefix_length, address_family, " +
+  t.sql("INSERT INTO plugin_installation.interface_network (id, interface_id, network_address, prefix_length, address_family, " +
     "origin, updated_at) VALUES (1, 1, '192.0.2.0', 24, 4, 'operator', :at)", { at: AT - 600 });
   var at = AT - 30;
   // The client was read with two peers: their per-pair inbound figures, and no outbound one --

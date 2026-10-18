@@ -126,6 +126,9 @@ func (s *Handle) planIsReadOnly(ctx context.Context, body string, arguments []an
 		return &QueryProblem{Kind: QueryDoesNotPlan, Detail: err.Error()}
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "SET LOCAL search_path = "+CoreSearchPath()); err != nil {
+		return &QueryProblem{Kind: QueryDoesNotPlan, Detail: err.Error()}
+	}
 	rows, err := tx.QueryContext(ctx, "EXPLAIN "+body, arguments...)
 	if err != nil {
 		return &QueryProblem{Kind: QueryDoesNotPlan, Detail: err.Error()}
@@ -141,6 +144,9 @@ func (s *Handle) queryColumns(ctx context.Context, body string, arguments []any)
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "SET LOCAL search_path = "+CoreSearchPath()); err != nil {
+		return nil, err
+	}
 	rows, err := tx.QueryContext(ctx, "SELECT * FROM (\n"+body+"\n) AS checked LIMIT 0", arguments...)
 	if err != nil {
 		return nil, err

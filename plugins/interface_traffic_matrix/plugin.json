@@ -1,6 +1,7 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "interface_traffic_matrix",
+  "requires": ["installation"],
   "version": "1.0.0",
   "display_name": "Interface traffic matrix",
   "description": "Source interface by destination interface, each cell carrying the logged volume, the allowed and blocked connections and, on request, the rules that matched.",

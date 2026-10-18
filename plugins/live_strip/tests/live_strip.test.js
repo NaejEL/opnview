@@ -6,9 +6,9 @@
 var AT = 1790000400;
 
 function seed(t) {
-  t.sql("INSERT INTO interface (id, identifier, device, description, link_type, link_kind, first_seen_at, " +
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, link_type, link_kind, first_seen_at, " +
     "last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'Inside', 'ethernet', 'vlan', :at, :at)", { at: AT - 3600 });
-  t.sql("INSERT INTO interface_network (id, interface_id, network_address, prefix_length, address_family, " +
+  t.sql("INSERT INTO plugin_installation.interface_network (id, interface_id, network_address, prefix_length, address_family, " +
     "origin, updated_at) VALUES (1, 1, '192.0.2.0', 24, 4, 'operator', :at)", { at: AT - 3600 });
 }
 

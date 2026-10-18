@@ -97,6 +97,8 @@ type PluginColumn struct {
 	// ReferencesTable and ReferencesColumn make the column a foreign key to a qualified table (ADR 0019).
 	ReferencesTable  string
 	ReferencesColumn string
+	// Default is the SQL literal a row written without the column takes, empty for none (ADR 0020).
+	Default string
 }
 
 // Written reports whether rows written to the table carry the column: an identity or a generated
@@ -109,6 +111,8 @@ type PluginIndex struct {
 	Unique  bool
 	// Where is the predicate of a partial index, empty for a whole one (ADR 0019).
 	Where string
+	// NullsNotDistinct makes a unique index treat two NULLs as equal (ADR 0020).
+	NullsNotDistinct bool
 }
 
 // PluginCheck is one CHECK constraint of a plugin table (ADR 0019).
@@ -382,6 +386,9 @@ func (t PluginTable) CreateStatements() []string {
 		if !column.Nullable {
 			definition.WriteString(" NOT NULL")
 		}
+		if column.Default != "" {
+			definition.WriteString(" DEFAULT " + column.Default)
+		}
 		if column.ReferencesTable != "" {
 			definition.WriteString(" REFERENCES " + column.ReferencesTable + " (" + QuoteIdentifier(column.ReferencesColumn) + ")")
 		}
@@ -416,9 +423,13 @@ func (t PluginTable) CreateStatements() []string {
 		if declared.Where != "" {
 			where = " WHERE " + declared.Where
 		}
-		statements = append(statements, fmt.Sprintf("CREATE %sINDEX IF NOT EXISTS %s ON %s (%s)%s",
+		nulls := ""
+		if declared.NullsNotDistinct {
+			nulls = " NULLS NOT DISTINCT"
+		}
+		statements = append(statements, fmt.Sprintf("CREATE %sINDEX IF NOT EXISTS %s ON %s (%s)%s%s",
 			unique, QuoteIdentifier(fmt.Sprintf("%s_index_%d", t.Table, index)), t.Quoted(),
-			quotedList(declared.Columns), where))
+			quotedList(declared.Columns), nulls, where))
 	}
 	return statements
 }

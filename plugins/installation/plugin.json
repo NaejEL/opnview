@@ -1,0 +1,194 @@
+{
+  "api_version": 3,
+  "name": "installation",
+  "version": "1.0.0",
+  "display_name": "Installation",
+  "description": "The model of what the installation is: its interfaces and the addresses, networks and gateways they hold, its rules, the clients behind its interfaces, and the people the maintainer names (ADR 0019, ADR 0020 wave 1). Discovery writes the interfaces and rules; the classification writes the clients; the operator names the people and labels the interfaces.",
+  "tables": [
+    {
+      "name": "interface",
+      "columns": [
+        { "name": "id", "type": "integer", "identity": true },
+        { "name": "identifier", "type": "text" },
+        { "name": "device", "type": "text" },
+        { "name": "description", "type": "text" },
+        { "name": "user_label", "type": "text", "nullable": true },
+        { "name": "status", "type": "text", "nullable": true },
+        { "name": "enabled", "type": "text", "nullable": true },
+        { "name": "link_type", "type": "text" },
+        { "name": "link_kind", "type": "text" },
+        { "name": "is_tunnel", "type": "integer", "generated": "CASE WHEN link_kind = 'tunnel' THEN 1 ELSE 0 END" },
+        { "name": "vlan_tag", "type": "integer", "nullable": true },
+        { "name": "address_family", "type": "integer", "nullable": true },
+        { "name": "is_upstream", "type": "boolean", "default": "false" },
+        { "name": "link_local_evidence", "type": "boolean", "default": "false" },
+        { "name": "first_seen_at", "type": "integer" },
+        { "name": "last_seen_at", "type": "integer" }
+      ],
+      "primary_key": ["id"],
+      "indexes": [
+        { "columns": ["identifier"], "unique": true },
+        { "columns": ["device"], "unique": true }
+      ],
+      "checks": [
+        { "name": "link_kind_known", "expression": "link_kind IN ('physical', 'vlan', 'tunnel', 'other')" },
+        { "name": "address_family_known", "expression": "address_family IS NULL OR address_family IN (4, 6)" },
+        { "name": "first_seen_at_instant", "expression": "first_seen_at >= 0 AND first_seen_at < 4102444800" },
+        { "name": "last_seen_at_instant", "expression": "last_seen_at >= 0 AND last_seen_at < 4102444800" }
+      ]
+    },
+    {
+      "name": "interface_address",
+      "columns": [
+        { "name": "id", "type": "integer", "identity": true },
+        { "name": "interface_id", "type": "integer", "references": "interface(id)" },
+        { "name": "source_field", "type": "text" },
+        { "name": "address", "type": "text" },
+        { "name": "prefix_length", "type": "integer", "nullable": true },
+        { "name": "address_family", "type": "integer" },
+        { "name": "first_seen_at", "type": "integer" },
+        { "name": "last_seen_at", "type": "integer" }
+      ],
+      "primary_key": ["id"],
+      "indexes": [
+        { "columns": ["interface_id", "source_field", "address", "prefix_length", "first_seen_at"], "unique": true,
+          "nulls_not_distinct": true },
+        { "columns": ["interface_id", "last_seen_at"] },
+        { "columns": ["address", "source_field"] },
+        { "columns": ["last_seen_at"] }
+      ],
+      "checks": [
+        { "name": "source_field_known", "expression": "source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6', 'gateways')" },
+        { "name": "address_not_empty", "expression": "length(address) > 0" },
+        { "name": "prefix_length_range", "expression": "prefix_length IS NULL OR (prefix_length >= 0 AND prefix_length <= 128)" },
+        { "name": "address_family_known", "expression": "address_family IN (4, 6)" },
+        { "name": "first_seen_at_instant", "expression": "first_seen_at >= 0 AND first_seen_at < 4102444800" },
+        { "name": "last_seen_at_instant", "expression": "last_seen_at >= 0 AND last_seen_at < 4102444800" },
+        { "name": "seen_in_order", "expression": "last_seen_at >= first_seen_at" },
+        { "name": "gateway_has_no_prefix", "expression": "(source_field = 'gateways') = (prefix_length IS NULL)" }
+      ]
+    },
+    {
+      "name": "interface_network",
+      "columns": [
+        { "name": "id", "type": "integer", "identity": true },
+        { "name": "interface_id", "type": "integer", "references": "interface(id)" },
+        { "name": "network_address", "type": "text" },
+        { "name": "prefix_length", "type": "integer" },
+        { "name": "address_family", "type": "integer" },
+        { "name": "origin", "type": "text" },
+        { "name": "first_detected_at", "type": "integer", "nullable": true },
+        { "name": "last_detected_at", "type": "integer", "nullable": true },
+        { "name": "removed_at", "type": "integer", "nullable": true },
+        { "name": "updated_at", "type": "integer" }
+      ],
+      "primary_key": ["id"],
+      "indexes": [
+        { "columns": ["interface_id", "network_address", "prefix_length"], "unique": true }
+      ],
+      "checks": [
+        { "name": "network_address_not_empty", "expression": "length(network_address) > 0" },
+        { "name": "prefix_length_range", "expression": "prefix_length >= 0 AND prefix_length <= 128" },
+        { "name": "address_family_known", "expression": "address_family IN (4, 6)" },
+        { "name": "origin_known", "expression": "origin IN ('detected', 'operator')" },
+        { "name": "first_detected_at_instant", "expression": "first_detected_at IS NULL OR (first_detected_at >= 0 AND first_detected_at < 4102444800)" },
+        { "name": "last_detected_at_instant", "expression": "last_detected_at IS NULL OR (last_detected_at >= 0 AND last_detected_at < 4102444800)" },
+        { "name": "removed_at_instant", "expression": "removed_at IS NULL OR (removed_at >= 0 AND removed_at < 4102444800)" },
+        { "name": "updated_at_instant", "expression": "updated_at >= 0 AND updated_at < 4102444800" },
+        { "name": "detected_both_or_neither", "expression": "(first_detected_at IS NULL) = (last_detected_at IS NULL)" },
+        { "name": "undetected_is_operator", "expression": "origin = 'operator' OR first_detected_at IS NOT NULL" },
+        { "name": "ipv4_prefix_fits", "expression": "address_family = 6 OR prefix_length <= 32" }
+      ]
+    },
+    {
+      "name": "owner",
+      "columns": [
+        { "name": "id", "type": "integer", "identity": true },
+        { "name": "display_name", "type": "text" },
+        { "name": "created_at", "type": "integer" },
+        { "name": "updated_at", "type": "integer" }
+      ],
+      "primary_key": ["id"],
+      "indexes": [ { "columns": ["display_name"], "unique": true } ],
+      "checks": [
+        { "name": "created_at_instant", "expression": "created_at >= 0 AND created_at < 4102444800" },
+        { "name": "updated_at_instant", "expression": "updated_at >= 0 AND updated_at < 4102444800" }
+      ]
+    },
+    {
+      "name": "interface_map",
+      "columns": [
+        { "name": "device", "type": "text" },
+        { "name": "description", "type": "text" },
+        { "name": "interface_id", "type": "integer", "nullable": true, "references": "interface(id)" },
+        { "name": "discovered_at", "type": "integer" }
+      ],
+      "primary_key": ["device"],
+      "checks": [
+        { "name": "discovered_at_instant", "expression": "discovered_at >= 0 AND discovered_at < 4102444800" }
+      ]
+    },
+    {
+      "name": "rule",
+      "columns": [
+        { "name": "id", "type": "integer", "identity": true },
+        { "name": "pf_label", "type": "text" },
+        { "name": "description", "type": "text" },
+        { "name": "action", "type": "text" },
+        { "name": "direction", "type": "text", "nullable": true },
+        { "name": "interface", "type": "text", "nullable": true },
+        { "name": "legacy", "type": "boolean", "nullable": true },
+        { "name": "logs_matches", "type": "boolean", "nullable": true },
+        { "name": "enabled", "type": "boolean", "nullable": true },
+        { "name": "is_automatic", "type": "boolean", "default": "false" },
+        { "name": "discovered_at", "type": "integer" },
+        { "name": "destination_net", "type": "text", "nullable": true }
+      ],
+      "primary_key": ["id"],
+      "indexes": [ { "columns": ["pf_label"], "unique": true } ],
+      "checks": [
+        { "name": "action_known", "expression": "action IN ('pass', 'block', 'reject', 'unknown')" },
+        { "name": "direction_known", "expression": "direction IS NULL OR direction IN ('in', 'out', 'any')" },
+        { "name": "discovered_at_instant", "expression": "discovered_at >= 0 AND discovered_at < 4102444800" }
+      ]
+    },
+    {
+      "name": "client",
+      "columns": [
+        { "name": "id", "type": "integer", "identity": true },
+        { "name": "identity_kind", "type": "text" },
+        { "name": "identity_key", "type": "text" },
+        { "name": "interface_id", "type": "integer", "nullable": true, "references": "interface(id)" },
+        { "name": "mac", "type": "text", "nullable": true },
+        { "name": "hostname", "type": "text", "nullable": true },
+        { "name": "vendor_hint", "type": "text", "nullable": true },
+        { "name": "last_address", "type": "text", "nullable": true },
+        { "name": "owner_id", "type": "integer", "nullable": true, "references": "owner(id)" },
+        { "name": "owner_assigned_at", "type": "integer", "nullable": true },
+        { "name": "mac_is_randomised", "type": "integer", "nullable": true,
+          "generated": "CASE WHEN mac IS NULL THEN NULL WHEN strpos('26ae', substr(mac, 2, 1)) > 0 THEN 1 ELSE 0 END" },
+        { "name": "unstable_identity", "type": "integer",
+          "generated": "CASE WHEN mac IS NOT NULL AND strpos('26ae', substr(mac, 2, 1)) > 0 THEN 1 ELSE 0 END" },
+        { "name": "first_seen_at", "type": "integer" },
+        { "name": "last_seen_at", "type": "integer" }
+      ],
+      "primary_key": ["id"],
+      "indexes": [
+        { "columns": ["identity_kind", "identity_key"], "unique": true },
+        { "columns": ["interface_id", "id"] },
+        { "columns": ["last_address", "last_seen_at"] },
+        { "columns": ["owner_id", "id"] },
+        { "columns": ["hostname"] }
+      ],
+      "checks": [
+        { "name": "identity_kind_known", "expression": "identity_kind IN ('dhcp_client_id', 'mac', 'address_in_interface')" },
+        { "name": "mac_canonical", "expression": "mac IS NULL OR (length(mac) = 17 AND mac = lower(mac))" },
+        { "name": "owner_assigned_at_instant", "expression": "owner_assigned_at IS NULL OR (owner_assigned_at >= 0 AND owner_assigned_at < 4102444800)" },
+        { "name": "first_seen_at_instant", "expression": "first_seen_at >= 0 AND first_seen_at < 4102444800" },
+        { "name": "last_seen_at_instant", "expression": "last_seen_at >= 0 AND last_seen_at < 4102444800" },
+        { "name": "owner_with_instant", "expression": "(owner_id IS NULL) = (owner_assigned_at IS NULL)" }
+      ]
+    }
+  ],
+  "relations": ["installation.relations.sql"]
+}

@@ -88,14 +88,28 @@ in this record's progress table so none is forgotten.
 
 ## Consequences
 
-- The data a running installation holds is **moved, not rebuilt**: the
-  installation's tables are renamed into their plugin schemas by the wave that
-  moves them (`ALTER TABLE … SET SCHEMA`), under the declaration's recorded
-  digest, so a restart after an update carries every row across. A plugin
-  table whose declaration matches an existing table of the same name in the
-  plugin's schema is adopted, never set aside.
+- The data a running installation holds is **rebuilt, not moved**: the
+  maintainer's standing rule before the proof of concept is that the database
+  is rebuilt, never migrated, and a wave creates its plugin's tables empty.
+  The proofs below therefore compare row counts and widget answers on a copy
+  that the new build has collected into, and wave 3 copies the raw rows into
+  the new tables once, in the dev container, for its row-by-row diff.
 - Five waves, five commits at least, each validated as above; wave 3 is the
   longest. Nothing reaches `main` before the maintainer has looked at the
   live service after each wave.
 - The bridge is the one place the architecture is temporarily untrue, and it
   is written down here so that its removal is a step and not a discovery.
+
+## Progress
+
+| Date | Wave | Done |
+|---|---|---|
+| 18 October 2026 | 1, `installation` | The seven tables and the two views (`this_firewall_address`, and `blocked_decision`, which joins three sources' tables and lives with the model) declared in `plugins/installation`; the bridge; the read role and the plan checks of plugin statements set apart from it; the rename to qualified names in 37 plugin files, each of the 26 plugins now `requires` installation; the `REFERENCES` to the seven dropped from `flow`, `dhcp_lease`, `dns_resolution`, `security_event`, `purged_flow_hour` and the 24 rollups, with their `ON DELETE` actions; the test template holds the built-ins' tables and relations as a started service does; a column `default` and `nulls_not_distinct` on a unique index added to the declaration for `interface` and `interface_address`. Not yet: the proof on a copy of the maintainer's database, which needs his firewall. |
+| | 2 to 5 | not started |
+
+**Dropped foreign keys to restore**, by the wave that moves the referencing
+table: `flow` → interface, client, rule (wave 2); `dhcp_lease` → client,
+interface (wave 4); `dns_resolution` → client, interface (wave 4);
+`security_event` → client, interface (wave 4); `purged_flow_hour` → client,
+interface, rule and the 24 rollups → client, interface, rule, owner, with
+`ON DELETE CASCADE` (wave 5).

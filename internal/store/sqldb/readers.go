@@ -96,8 +96,39 @@ func OpenSharedReaders(ctx context.Context, s *Handle, role string) (*ReadConnec
 		if err := s.grantReadRole(ctx, role, password); err != nil {
 			return nil, err
 		}
+	} else if err := s.grantReadRoleInDatabase(ctx, role); err != nil {
+		// The role exists on the instance, but a grant is held per database: a second template built
+		// under the same name at the same time, or a clone, gets the role's grants in this database
+		// without touching the instance-wide role catalogue.
+		return nil, err
 	}
 	return s.connectReaders(ctx, role, "")
+}
+
+// readGrantStatements are the grants a read role holds in one database: what it reads, and what it
+// never reads.
+func readGrantStatements(quoted string) []string {
+	statements := []string{
+		"REVOKE ALL ON SCHEMA public FROM " + quoted,
+		"GRANT USAGE ON SCHEMA public TO " + quoted,
+		"GRANT USAGE ON SCHEMA " + CoreSchema + " TO " + quoted,
+		"GRANT SELECT ON ALL TABLES IN SCHEMA " + CoreSchema + " TO " + quoted,
+	}
+	for _, object := range unreadableObjects {
+		statements = append(statements, "REVOKE ALL ON "+CoreSchema+"."+object+" FROM "+quoted)
+	}
+	return statements
+}
+
+// grantReadRoleInDatabase gives an existing read role its grants in this database.
+func (s *Handle) grantReadRoleInDatabase(ctx context.Context, role string) error {
+	quoted := pgx.Identifier{role}.Sanitize()
+	for _, statement := range readGrantStatements(quoted) {
+		if _, err := s.SQL.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("store: granting the read role in this database: %w", err)
+		}
+	}
+	return nil
 }
 
 // connectReaders opens the read role's pool.
@@ -129,6 +160,12 @@ func (s *Handle) grantReadRole(ctx context.Context, role, password string) error
 		return fmt.Errorf("store: beginning the read role's grants: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Two processes may build the same test template at once and both find the shared role missing:
+	// the role catalogue is written under one lock per role name, so the second waits for the first
+	// and alters the role the first created, instead of the two colliding on one catalogue row.
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(2, hashtext($1))", role); err != nil {
+		return fmt.Errorf("store: locking the read role: %w", err)
+	}
 	var exists bool
 	if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)", role).
 		Scan(&exists); err != nil {
@@ -136,8 +173,6 @@ func (s *Handle) grantReadRole(ctx context.Context, role, password string) error
 	}
 	statements := []string{}
 	if !exists {
-		// Two processes may build the same test template at once and both find the shared role
-		// missing: the second creation is then the first's role, and the grants below apply to it.
 		statements = append(statements, "DO $create$ BEGIN CREATE ROLE "+quoted+
 			" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT; "+
 			"EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $create$")
@@ -147,15 +182,9 @@ func (s *Handle) grantReadRole(ctx context.Context, role, password string) error
 			quoteLiteral(password),
 		"ALTER ROLE "+quoted+" SET default_transaction_read_only = on",
 		"ALTER ROLE "+quoted+" SET statement_timeout = "+quoteLiteral(readStatementTimeout),
-		"ALTER ROLE "+quoted+" SET search_path = "+CoreSchema+", public",
-		"REVOKE ALL ON SCHEMA public FROM "+quoted,
-		"GRANT USAGE ON SCHEMA public TO "+quoted,
-		"GRANT USAGE ON SCHEMA "+CoreSchema+" TO "+quoted,
-		"GRANT SELECT ON ALL TABLES IN SCHEMA "+CoreSchema+" TO "+quoted,
+		"ALTER ROLE "+quoted+" SET search_path = "+SearchPath(),
 	)
-	for _, object := range unreadableObjects {
-		statements = append(statements, "REVOKE ALL ON "+CoreSchema+"."+object+" FROM "+quoted)
-	}
+	statements = append(statements, readGrantStatements(quoted)...)
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("store: granting the read role: %w", err)
