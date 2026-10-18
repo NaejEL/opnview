@@ -1,4 +1,4 @@
-package collect_test
+package purgeconcurrency_test
 
 import (
 	"context"
