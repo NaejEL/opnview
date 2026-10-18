@@ -116,6 +116,9 @@ type PluginTable struct {
 	// RetentionSeconds is how long a row is kept after its instant. Zero follows the
 	// installation's retention_seconds setting, under which zero means unlimited.
 	RetentionSeconds int64
+	// RetentionSetting is the stored key of the plugin setting that overrides RetentionSeconds when it holds
+	// a value above zero; empty when the declaration names none.
+	RetentionSetting string
 	// Counters makes it a table of counters (PA4 of the plugin-API amendment): every column outside its
 	// primary key is a number, and a row written with a key already held adds its figures to the held
 	// row's. Only a derivation writes one.
@@ -355,6 +358,38 @@ func (t PluginTable) Declaration() string {
 	}{t.Columns, t.PrimaryKey, t.Indexes, t.TimeColumn}
 	encoded, _ := json.Marshal(shape)
 	return string(encoded)
+}
+
+// CounterEmptyDelete is the statement that removes, among the keys of rows a derivation added to a table of
+// counters, every row whose figures all came back to zero: a counter holding nothing is no row, as a row
+// was never written for it. Its arguments are each row's primary key, typed as the key's columns.
+func (t PluginTable) CounterEmptyDelete(rows []map[string]any) (string, []any, error) {
+	columns := make(map[string]PluginColumn, len(t.Columns))
+	for _, column := range t.Columns {
+		columns[column.Name] = column
+	}
+	tuples := make([]string, 0, len(rows))
+	arguments := make([]any, 0, len(rows)*len(t.PrimaryKey))
+	for _, row := range rows {
+		marks := make([]string, 0, len(t.PrimaryKey))
+		for _, name := range t.PrimaryKey {
+			argument, err := PluginArgument(columns[name], row[name])
+			if err != nil {
+				return "", nil, fmt.Errorf("store: a row of %s: %w", t.SQLName(), err)
+			}
+			arguments = append(arguments, argument)
+			marks = append(marks, "CAST($"+strconv.Itoa(len(arguments))+" AS "+PluginColumnTypes[columns[name].Type]+")")
+		}
+		tuples = append(tuples, "("+strings.Join(marks, ", ")+")")
+	}
+	var zero []string
+	for _, column := range t.Columns {
+		if !Contains(t.PrimaryKey, column.Name) {
+			zero = append(zero, QuoteIdentifier(column.Name)+" = 0")
+		}
+	}
+	return "DELETE FROM " + t.Quoted() + " WHERE (" + quotedList(t.PrimaryKey) + ") IN (VALUES " +
+		strings.Join(tuples, ", ") + ") AND " + strings.Join(zero, " AND "), arguments, nil
 }
 
 // UpsertStatement is the INSERT a row of the table is written with: an upsert on the primary key

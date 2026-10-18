@@ -1,0 +1,8 @@
+{
+  "nature": "sample",
+  "freshness": {"kind": "discovery"},
+  "columns": [
+    {"name": "purged_before", "type": "integer"},
+    {"name": "purged_at", "type": "integer"}
+  ]
+}

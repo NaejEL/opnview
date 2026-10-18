@@ -49,9 +49,6 @@ const (
 	CounterConnectionsRefused = "connections_refused"
 	CounterInstantUnresolved  = "instant_unresolved"
 	CounterValueInvalid       = "push_value_invalid"
-	// CounterInterfaceUnmapped counts a record carrying an interface index no interface of the
-	// firewall holds: its index is kept, its interface fields are absent (PS11).
-	CounterInterfaceUnmapped = "interface_index_unmapped"
 	// CounterSequenceNotAsserted counts a loss the sender's sequence numbers showed that a sink's
 	// SequenceJudge refused to assert: no gap is recorded for it.
 	CounterSequenceNotAsserted = "sequence_gap_not_asserted"
@@ -179,9 +176,6 @@ type Options struct {
 	Now func() time.Time
 	// Resolve turns a zoneless timestamp into an instant with the firewall's measured offset (PS5).
 	Resolve func(ctx context.Context, zoneless string) (time.Time, error)
-	// Interfaces maps the exporter's interface indexes to the firewall's interfaces, read through the
-	// broker at its max age (PS11); nil maps nothing, and every index is then unmapped.
-	Interfaces func(ctx context.Context) (map[uint64]Interface, error)
 	Senders    *Senders
 	Gaps       GapRecorder
 	History    ListenerHistory

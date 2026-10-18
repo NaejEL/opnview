@@ -205,7 +205,9 @@ func (c *FilterLogCoordinator) storePushed(ctx context.Context, providerID int64
 		for _, record := range records {
 			newest = max(newest, record.ObservedAt)
 		}
-		derive.On(c.Collector).SetFilterLogReadThrough(newest)
+		if err := c.Store.RecordReadThrough(ctx, providerID, newest, c.Now()); err != nil {
+			passErr = err
+		}
 	}
 	return derive.On(c.Collector).DeriveAfter(ctx, stored, passErr)
 }

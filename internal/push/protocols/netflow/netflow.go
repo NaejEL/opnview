@@ -31,20 +31,9 @@ func (protocol) NewDecoder(limits push.Limits) push.Decoder { return newDecoder(
 func (protocol) NewFramer(io.Reader, int) push.Framer       { return nil }
 func (protocol) Fields() map[string]string                  { return nil }
 
-// indexFields are the elements whose value is an interface index the exporter numbered.
-var indexFields = []string{"ingressInterface", "egressInterface"}
-
-// IndexFields are mapped by the hub to the firewall's interfaces (PS11).
-func (protocol) IndexFields() []string { return append([]string(nil), indexFields...) }
-
 // FieldType is the plugin type of a registry element, by name; the elements the decoder adds from
-// the header are registry elements too, and so are the interfaces an index maps to, as text.
+// the header are registry elements too.
 func (protocol) FieldType(name string) (string, bool) {
-	for _, field := range indexFields {
-		if name == field+push.IndexIdentifierSuffix || name == field+push.IndexDeviceSuffix {
-			return push.TypeText, true
-		}
-	}
 	element, found := ipfixregistry.ByName(name)
 	if !found {
 		return "", false

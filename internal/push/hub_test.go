@@ -2,6 +2,7 @@ package push_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -34,7 +35,6 @@ func (lineProtocol) NewFramer(io.Reader, int) push.Framer { return nil }
 func (lineProtocol) Fields() map[string]string            { return map[string]string{"text": push.TypeText} }
 func (lineProtocol) FieldType(name string) (string, bool) { return push.TypeText, name == "text" }
 func (lineProtocol) LossDetectable(string) bool           { return false }
-func (lineProtocol) IndexFields() []string                { return nil }
 func (lineProtocol) Compile(raw json.RawMessage) (push.Selector, error) {
 	var key string
 	if err := json.Unmarshal(raw, &key); err != nil {
@@ -576,13 +576,12 @@ const examplePacket = "00090002000186a06ab85c80000000010000000000000058010100140
 	"000101010040c633640acb00711400000000000300010000000a00003778000000000000000000009c4000017318ad2101bb1b06000000" +
 	"0000000000001818000000"
 
-// TestInterfaceIndexesAreMappedAtReceptionOrCounted is PS-AC17 in the hub: a mapped index gets its
-// interface beside it, an unknown one keeps its raw value, has none, and is counted.
-func TestInterfaceIndexesAreMappedAtReceptionOrCounted(t *testing.T) {
+// TestARecordKeepsItsRawIndexesAndNamesItsDelivery: the hub maps no interface index -- what an index
+// names is the subscribing plugin's to read, from the exporter's own reads (PA9 of the plugin-API
+// amendment) -- and every record names the delivery it came in, which a field mapping may store.
+func TestARecordKeepsItsRawIndexesAndNamesItsDelivery(t *testing.T) {
 	t.Parallel()
-	hub := push.NewHub(push.Options{Interfaces: func(context.Context) (map[uint64]push.Interface, error) {
-		return map[uint64]push.Interface{3: {Identifier: "lan", Device: "exdev0"}}, nil
-	}})
+	hub := push.NewHub(push.Options{})
 	recorded := &recordingSink{}
 	_ = hub.Subscribe(push.Subscription{ID: "n.flows", Protocol: "netflow",
 		Selector: compile(t, "netflow", json.RawMessage(`{"require": ["octetDeltaCount"]}`)), Sink: sink{recorded}})
@@ -599,17 +598,24 @@ func TestInterfaceIndexesAreMappedAtReceptionOrCounted(t *testing.T) {
 	if len(recorded.records) != 1 {
 		t.Fatalf("%d records", len(recorded.records))
 	}
-	fields := recorded.records[0].Fields
-	if fields["ingressInterface"] != uint64(3) || fields["ingressInterface_identifier"] != "lan" ||
-		fields["ingressInterface_device"] != "exdev0" {
-		t.Errorf("the mapped index: %v", fields)
+	record := recorded.records[0]
+	if record.Fields["ingressInterface"] != uint64(3) || record.Fields["egressInterface"] != uint64(1) {
+		t.Errorf("the raw indexes: %v", record.Fields)
 	}
-	if fields["egressInterface"] != uint64(1) || fields["egressInterface_device"] != nil {
-		t.Errorf("the unmapped index: %v", fields)
+	for name := range record.Fields {
+		if strings.HasPrefix(name, "ingressInterface_") || strings.HasPrefix(name, "egressInterface_") {
+			t.Errorf("the hub added %s beside an index", name)
+		}
 	}
-	state, _ := hub.SubscriptionState("n.flows")
-	if state.Counters[push.CounterInterfaceUnmapped] != 1 {
-		t.Errorf("unmapped indexes counted %d", state.Counters[push.CounterInterfaceUnmapped])
+	digest := sha256.Sum256(packet)
+	if delivery, isField := push.DeliveryValue(record, push.DeliveryField); !isField || delivery != hex.EncodeToString(digest[:]) {
+		t.Errorf("the delivery field is %v, want the datagram's SHA-256", delivery)
+	}
+	if position, isField := push.DeliveryValue(record, push.DeliveryPositionField); !isField || position != int64(record.Position) {
+		t.Errorf("the delivery position field is %v, want %d", position, record.Position)
+	}
+	if _, isField := push.DeliveryValue(record, "ingressInterface"); isField {
+		t.Error("an Information Element is taken for a delivery field")
 	}
 }
 

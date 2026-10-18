@@ -54,8 +54,8 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 	}
 
 	// Every record the firewall logged before the page was asked for is in it, or in the gap the
-	// pass records: the filter log's read-through instant, which the NetFlow join waits for
-	// (internal/collect/derive/flowrecord.go).
+	// pass records: the filter log's read-through instant (schema.sql, provider_read_through), which a
+	// derivation joining another source to the logged legs waits for.
 	readStarted := c.Now()
 	answer, result, readErr := source.Implementation.Call(ctx, c, "records", c.PageSize(Kind))
 	records := make([]vocab.Flow, 0, len(provider.Records(answer, "records")))
@@ -72,7 +72,9 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 	if len(records) == 0 {
 		// The refresh runs after every pass, an empty one included: the current slot
 		// of each period is rewritten on every pass, because it is still filling.
-		derive.On(c.Collector).SetFilterLogReadThrough(readStarted)
+		if err := c.Store.RecordReadThrough(ctx, providerID, readStarted, c.Now()); err != nil {
+			return err
+		}
 		return derive.On(c.Collector).Derive(ctx, derive.Derivation{})
 	}
 
@@ -110,7 +112,7 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 	}
 
 	if passErr == nil {
-		derive.On(c.Collector).SetFilterLogReadThrough(readStarted)
+		passErr = c.Store.RecordReadThrough(ctx, providerID, readStarted, c.Now())
 	}
 	// Every record of the page that was stored -- all of them, or those stored before
 	// the pass failed -- can be placed from everything held, its flows attributed, and

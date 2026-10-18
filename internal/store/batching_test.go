@@ -187,3 +187,98 @@ func TestTheRefreshOfOneAndOfAHundredTouchedHoursRunsTheSameStatements(t *testin
 		t.Errorf("one touched hour ran %d statements, a hundred %d", oneTotal, hundredTotal)
 	}
 }
+
+// TestTheRefreshNumbersItsRowsOncePerStatementWithoutGaps is the aggregate row numbering of the budget work
+// in Lot 3 of the plugin-API amendment: the refresh's inserts number their rows themselves, under the
+// row-id lock, so every aggregate table's ids are gap-free -- 1 to its row count on a store written by
+// refreshes alone, the next rows numbered on from the largest -- and a row a writer inserts with no id
+// still takes the next number from the row-id trigger.
+func TestTheRefreshNumbersItsRowsOncePerStatementWithoutGaps(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	database, _ := openTestStore(t)
+	const lastHour = int64(1749999600)
+	insertHours := func(first, count int) {
+		flows := make([]vocab.Flow, count)
+		for index := range flows {
+			flow := exampleFlow(first + index)
+			flow.LogDigest = fmt.Sprintf("numbering-digest-%06d", first+index)
+			flow.SrcAddress = fmt.Sprintf("192.0.2.%d", (first+index)%250+1)
+			flow.ObservedAt = lastHour - int64(first+index)*3600
+			flows[index] = flow
+		}
+		if err := database.InsertFlows(ctx, flows); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tables := []string{}
+	for _, family := range []string{"volume", "rule_volume", "domain_volume", "peer_volume", "client_volume",
+		"owner_volume"} {
+		for _, period := range vocab.Periods() {
+			tables = append(tables, family+"_aggregate_"+period.Name)
+		}
+	}
+	idsOf := func(table string) (count, low, high, distinct int64) {
+		t.Helper()
+		if err := database.DB().QueryRowContext(ctx, `SELECT count(*), coalesce(min(id), 0), coalesce(max(id), 0),
+		    count(DISTINCT id) FROM `+table).Scan(&count, &low, &high, &distinct); err != nil {
+			t.Fatal(err)
+		}
+		return count, low, high, distinct
+	}
+	insertHours(0, 50)
+	if _, err := database.RefreshAggregates(ctx, 0, lastHour+40*86400, nil); err != nil {
+		t.Fatal(err)
+	}
+	before := map[string]int64{}
+	written := false
+	for _, table := range tables {
+		count, low, high, distinct := idsOf(table)
+		if count > 0 && (low != 1 || high != count || distinct != count) {
+			t.Errorf("%s holds %d rows numbered %d to %d (%d distinct), want 1 to %d", table, count, low, high,
+				distinct, count)
+		}
+		written = written || count > 0
+		before[table] = high
+	}
+	if !written {
+		t.Fatal("the refresh wrote no aggregate row")
+	}
+	// Older hours, refreshed after: their rows are numbered on from the largest id, with no gap.
+	insertHours(50, 30)
+	if _, err := database.RefreshAggregates(ctx, 0, lastHour+40*86400, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range tables {
+		var newRows, newLow, newHigh int64
+		if err := database.DB().QueryRowContext(ctx, `SELECT count(*), coalesce(min(id), 0), coalesce(max(id), 0)
+		    FROM `+table+` WHERE id > $1`, before[table]).Scan(&newRows, &newLow, &newHigh); err != nil {
+			t.Fatal(err)
+		}
+		if newRows > 0 && (newLow != before[table]+1 || newHigh != before[table]+newRows) {
+			t.Errorf("%s numbered its %d new rows %d to %d, want %d to %d", table, newRows, newLow, newHigh,
+				before[table]+1, before[table]+newRows)
+		}
+		if _, _, high, distinct := idsOf(table); high > 0 {
+			if count, _, _, _ := idsOf(table); distinct != count {
+				t.Errorf("%s holds %d rows and %d distinct ids", table, count, distinct)
+			}
+		}
+	}
+	// A writer that names no id still takes the next number from the trigger.
+	var assigned, largest int64
+	if err := database.DB().QueryRowContext(ctx, "SELECT coalesce(max(id), 0) FROM volume_aggregate_1h").
+		Scan(&largest); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.DB().QueryRowContext(ctx, `INSERT INTO volume_aggregate_1h (period_start_at, period_end_at,
+	    peer_address, traffic_scope, traffic_direction, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+	    blocked_connections, unknown_connections, measure_parts, computed_at)
+	    VALUES (3600, 7200, '203.0.113.9', 'north_south', 'outbound', 0, 0, 0, 0, 0, 0, 0, '{}', 7200) RETURNING id`).
+		Scan(&assigned); err != nil {
+		t.Fatal(err)
+	}
+	if assigned != largest+1 {
+		t.Errorf("a row inserted with no id took %d, want %d", assigned, largest+1)
+	}
+}

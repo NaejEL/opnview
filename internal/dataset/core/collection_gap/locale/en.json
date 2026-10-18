@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "dataset.collection_gap": "The intervals each provider knows it did not cover, with the reason"
+  }
+}

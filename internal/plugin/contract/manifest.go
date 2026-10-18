@@ -293,6 +293,9 @@ type IndexDeclaration struct {
 type RetentionDeclaration struct {
 	Column  string `json:"column"`
 	Seconds int64  `json:"seconds,omitempty"`
+	// Setting names one of the plugin's integer settings: when the operator set it above zero, it is how long a
+	// row is kept, in place of Seconds.
+	Setting string `json:"setting,omitempty"`
 }
 
 // NamePattern is what a plugin name, an endpoint name, a table name and a column name match: a

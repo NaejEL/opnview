@@ -11,7 +11,11 @@
 -- interface discovery assigned that device to, or null; direction is pf's own `in`/`out` per interface;
 -- the tuple is the one pf logged, as the leg saw it; src_is_this_firewall and dst_is_this_firewall are 1
 -- when that end is an address this firewall held (*This Firewall*). flow_id is the record's identity, which
--- a set-based read keys on (host.datasets.rows, keys).
+-- a set-based read keys on (host.datasets.rows, keys). canonical_src_address and canonical_dst_address are the
+-- tuple's two addresses in their canonical text -- an address compared by value, never by how pf wrote it
+-- (null for a text that is no address) -- which the index of the legs by device and canonical addresses
+-- serves; ingested_at is when the core stored the leg, so a derivation reads the legs stored since its last
+-- run.
 SELECT f.observed_at,
        f.id AS flow_id,
        f.interface_device AS device,
@@ -22,13 +26,16 @@ SELECT f.observed_at,
        f.paired_flow_id,
        f.src_address,
        f.dst_address,
+       canonical_address(f.src_address) AS canonical_src_address,
+       canonical_address(f.dst_address) AS canonical_dst_address,
        f.src_port,
        f.dst_port,
        f.protocol,
        f.ip_version,
        CASE WHEN f.src_is_this_firewall THEN 1 ELSE 0 END AS src_is_this_firewall,
        CASE WHEN f.dst_is_this_firewall THEN 1 ELSE 0 END AS dst_is_this_firewall,
-       f.packet_bytes
+       f.packet_bytes,
+       f.ingested_at
 FROM flow AS f
 LEFT JOIN interface AS i ON i.device = f.interface_device
 WHERE f.observed_at >= :from

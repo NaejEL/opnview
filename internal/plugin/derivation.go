@@ -109,9 +109,9 @@ func checkDerivations(plugin *Plugin, exports map[string]map[string]string, prov
 		}
 		for _, pass := range declaration.AfterPasses {
 			kind, key, scoped := cutPass(pass)
-			if !provider.IsCoreKind(kind) || (scoped && !contract.NamePattern.MatchString(key)) {
-				return nil, refuse("the derivation %s runs after %q, which is not a core kind, alone or followed by "+
-					"/<provider key>", declaration.Name, pass)
+			if !(provider.IsCoreKind(kind) || providerOf[kind] != "") || (scoped && !contract.NamePattern.MatchString(key)) {
+				return nil, refuse("the derivation %s runs after %q, which is neither a core kind nor a kind one of the "+
+					"plugin's providers implements, alone or followed by /<provider key>", declaration.Name, pass)
 			}
 		}
 		for _, entry := range declaration.AfterPush {
@@ -206,6 +206,18 @@ func (p *Plugin) notePush(entry string, rows int, from, to, at time.Time) {
 	}
 }
 
+// noteCondition records a condition the decoder detected on a stream one of the plugin's push entries is fed
+// by, for every derivation that entry runs: what no row says -- an exporter that restarted -- reaches the
+// derivations that read the entry's rows.
+func (p *Plugin) noteCondition(entry string, problem push.Problem) {
+	for _, d := range p.derivations {
+		if slices.Contains(d.declaration.AfterPush, entry) {
+			d.Note(provider.DerivationChange{Trigger: provider.TriggerCondition, Entry: entry, Reason: problem.Reason,
+				Scope: problem.Scope, At: problem.From.Unix()})
+		}
+	}
+}
+
 // Run runs the derivation over the changes noted since its last successful run.
 func (d *derivation) Run(ctx context.Context, session provider.Session, now int64) (provider.DerivationOutcome, error) {
 	d.run.Lock()
@@ -261,6 +273,10 @@ func canonicalChanges(changes []provider.DerivationChange) []provider.Derivation
 			return a.To < b.To
 		case a.Rows != b.Rows:
 			return a.Rows < b.Rows
+		case a.Reason != b.Reason:
+			return a.Reason < b.Reason
+		case a.Scope != b.Scope:
+			return a.Scope < b.Scope
 		}
 		return a.At < b.At
 	})
@@ -292,6 +308,8 @@ func (d *derivation) compute(ctx context.Context, session provider.Session, now,
 		case provider.TriggerPush:
 			object["entry"], object["rows"], object["from"], object["to"] = change.Entry, int64(change.Rows),
 				change.From, change.To
+		case provider.TriggerCondition:
+			object["entry"], object["reason"], object["scope"] = change.Entry, change.Reason, change.Scope
 		}
 		handed = append(handed, object)
 	}
@@ -412,6 +430,16 @@ func (d *derivation) measureRow(measure vocab.DeclaredMeasure, item any, path st
 	object, isObject := item.(map[string]any)
 	if !isObject {
 		return row, d.failed(vocab.OutcomeRecordsInvalid, "%s is not an object", path)
+	}
+	if remove, present := object["remove"]; present {
+		// A row to remove: a connection the derivation no longer gives a figure, its held row deleted.
+		connection, whole := scripthost.IntegerOf(object["connection"])
+		direction, _ := object["direction"].(string)
+		if remove != true || len(object) != 3 || !whole || connection < 0 || (direction != "forward" && direction != "reverse") {
+			return row, d.failed(vocab.OutcomeRecordsInvalid, "%s removes a row: it is {connection, direction, remove: true}",
+				path)
+		}
+		return plugintables.ConnectionMeasureRow{ConnectionFlowID: connection, Direction: direction, Remove: true}, nil
 	}
 	for field := range object {
 		if !measureRowFields[field] {

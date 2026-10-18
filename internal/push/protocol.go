@@ -50,26 +50,37 @@ type Protocol interface {
 	// LossDetectable says whether loss on the network is detectable on a transport: a protocol
 	// carrying a sequence number detects it, syslog over UDP does not (PS7).
 	LossDetectable(transport string) bool
-	// IndexFields are the fields whose value is the exporter's interface index -- NetFlow's
-	// ingressInterface and egressInterface -- which the hub maps to the firewall's interfaces (PS11);
-	// nil for a protocol that carries none.
-	IndexFields() []string
 }
 
-// Interface is one interface of the firewall, as an exported interface index maps to it: its
-// configuration identifier and its network device, the words of docs/data-model.md, *Vocabulary*.
-type Interface struct {
-	Identifier string
-	Device     string
-}
-
-// The fields the hub adds beside an index field it maps (PS11), named after it: <field>_identifier
-// and <field>_device. These two suffixes are opnview's own: no registry names an interface by
-// OPNsense's identifier.
+// The two fields of a delivery that every push entry's field mapping may name, whatever its protocol:
+// the SHA-256 of the datagram or frame a record was decoded from, in hexadecimal (Record.Delivery), and
+// the record's place in it (Record.Position). With them a plugin's table keys a record by the delivery it
+// came in, so a datagram delivered twice stores its records once and two records identical in every field
+// of one datagram are two rows. The names are opnview's own: no registry names a delivery.
 const (
-	IndexIdentifierSuffix = "_identifier"
-	IndexDeviceSuffix     = "_device"
+	DeliveryField         = "delivery"
+	DeliveryPositionField = "delivery_position"
 )
+
+// DeliveryValue is the value of one of the two delivery fields of a record, and whether the name is one.
+func DeliveryValue(record Record, name string) (any, bool) {
+	switch name {
+	case DeliveryField:
+		if record.Delivery == "" {
+			return nil, true
+		}
+		return record.Delivery, true
+	case DeliveryPositionField:
+		if record.Delivery == "" {
+			return nil, true
+		}
+		return int64(record.Position), true
+	}
+	return nil, false
+}
+
+// IsDeliveryField reports whether a field name is one of the two delivery fields.
+func IsDeliveryField(name string) bool { return name == DeliveryField || name == DeliveryPositionField }
 
 // Limits bound one decoder's state.
 type Limits struct {

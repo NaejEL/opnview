@@ -11,6 +11,12 @@
 -- the hour as well, in one transaction for the whole set. The rows are the same rows; the
 -- contract of aggregate.go is unchanged.
 --
+-- EACH INSERT NUMBERS ITS ROWS ONCE. A row's id is the largest id of its table plus its rank among the
+-- statement's rows: id_base (schema.sql) takes the table's row-id lock and reads the largest id once, in an
+-- uncorrelated subquery the statement evaluates once, and row_number() ranks the rows. The ids stay
+-- gap-free and are the numbers the row-id trigger would have given one row at a time, which then has
+-- nothing to do: it runs only for a row inserted with no id.
+--
 -- Parameters:
 --   :hours  the hour starts to rewrite, a JSON array of UTC epoch seconds
 --   :from   the earliest of them
@@ -80,11 +86,11 @@ WHERE period_start_at IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elemen
 
 
 -- statement: insert_volume_hours
-INSERT INTO volume_aggregate_1h (period_start_at, period_end_at, src_interface_id,
+INSERT INTO volume_aggregate_1h (id, period_start_at, period_end_at, src_interface_id,
     dst_interface_id, peer_address, traffic_scope, traffic_direction, exit_leg_device, bytes,
     allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections,
     unknown_connections, measure_parts, computed_at)
-SELECT
+SELECT (SELECT id_base('volume_aggregate_1h')) + row_number() OVER (),
     u.start,
     u.start + 3600,
     u.src_interface_id,
@@ -128,10 +134,10 @@ GROUP BY u.start, u.src_interface_id, u.dst_interface_id, u.peer_address, u.traf
 
 
 -- statement: insert_rule_hours
-INSERT INTO rule_volume_aggregate_1h (period_start_at, period_end_at, rule_id,
+INSERT INTO rule_volume_aggregate_1h (id, period_start_at, period_end_at, rule_id,
     src_interface_id, dst_interface_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
     allowed_connections, blocked_connections, unknown_connections, measure_parts, computed_at)
-SELECT
+SELECT (SELECT id_base('rule_volume_aggregate_1h')) + row_number() OVER (),
     u.start,
     u.start + 3600,
     u.rule_id,
@@ -166,10 +172,10 @@ GROUP BY u.start, u.rule_id, u.src_interface_id, u.dst_interface_id;
 
 
 -- statement: insert_domain_hours
-INSERT INTO domain_volume_aggregate_1h (period_start_at, period_end_at, site_name,
+INSERT INTO domain_volume_aggregate_1h (id, period_start_at, period_end_at, site_name,
     client_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
     blocked_connections, unknown_connections, measure_parts, computed_at)
-SELECT
+SELECT (SELECT id_base('domain_volume_aggregate_1h')) + row_number() OVER (),
     u.start,
     u.start + 3600,
     u.site_name,
@@ -206,10 +212,10 @@ GROUP BY u.start, u.site_name, u.client_id;
 
 
 -- statement: insert_peer_hours
-INSERT INTO peer_volume_aggregate_1h (period_start_at, period_end_at, client_id,
+INSERT INTO peer_volume_aggregate_1h (id, period_start_at, period_end_at, client_id,
     traffic_direction, peer_address, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
     allowed_connections, blocked_connections, unknown_connections, measure_parts, computed_at)
-SELECT
+SELECT (SELECT id_base('peer_volume_aggregate_1h')) + row_number() OVER (),
     u.start,
     u.start + 3600,
     u.client_id,
@@ -254,10 +260,10 @@ GROUP BY u.start, u.client_id, u.traffic_direction, u.peer_address;
 
 
 -- statement: regroup_client_hours
-INSERT INTO client_volume_aggregate_1h (period_start_at, period_end_at, client_id,
+INSERT INTO client_volume_aggregate_1h (id, period_start_at, period_end_at, client_id,
     traffic_direction, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
     blocked_connections, unknown_connections, distinct_peers, measure_parts, computed_at)
-SELECT p.period_start_at, p.period_start_at + 3600, p.client_id, p.traffic_direction, sum(p.bytes),
+SELECT (SELECT id_base('client_volume_aggregate_1h')) + row_number() OVER (), p.period_start_at, p.period_start_at + 3600, p.client_id, p.traffic_direction, sum(p.bytes),
        sum(p.allowed_bytes), sum(p.blocked_bytes), sum(p.unknown_bytes),
        sum(p.allowed_connections), sum(p.blocked_connections), sum(p.unknown_connections),
        count(DISTINCT p.peer_address), measure_parts_sum(p.measure_parts), :now
@@ -267,10 +273,10 @@ GROUP BY p.period_start_at, p.client_id, p.traffic_direction;
 
 
 -- statement: regroup_owner_hours
-INSERT INTO owner_volume_aggregate_1h (period_start_at, period_end_at, owner_id,
+INSERT INTO owner_volume_aggregate_1h (id, period_start_at, period_end_at, owner_id,
     traffic_scope, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
     blocked_connections, unknown_connections, client_count, measure_parts, computed_at)
-SELECT c.period_start_at, c.period_start_at + 3600, k.owner_id,
+SELECT (SELECT id_base('owner_volume_aggregate_1h')) + row_number() OVER (), c.period_start_at, c.period_start_at + 3600, k.owner_id,
        CASE WHEN c.traffic_direction = 'inter_interface' THEN 'east_west'
             ELSE 'north_south' END,
        sum(c.bytes), sum(c.allowed_bytes), sum(c.blocked_bytes), sum(c.unknown_bytes),

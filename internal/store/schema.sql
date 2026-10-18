@@ -78,7 +78,9 @@ AS $$ SELECT CAST(extract(epoch FROM date_trunc('month', to_timestamp(at) AT TIM
 -- the writers of one table are serialised, which is what the store was
 -- written against. The lock's first key, 1, keeps it apart from the
 -- instance lock (store.go). The trigger function is one per table, with
--- static SQL, so its plan is prepared once per connection.
+-- static SQL, so its plan is prepared once per connection. It fires only for a
+-- row inserted with no id (WHEN NEW.id IS NULL): a statement numbering its own
+-- rows under the same lock (id_base, below) calls no function per row.
 CREATE OR REPLACE FUNCTION install_assign_id(target regclass) RETURNS void
 LANGUAGE plpgsql AS $install$
 DECLARE
@@ -95,10 +97,29 @@ BEGIN
         END
         $body$
     $function$, name || '_assign_id', target::oid::integer, target);
-    EXECUTE format('CREATE OR REPLACE TRIGGER assign_id BEFORE INSERT ON %s FOR EACH ROW EXECUTE FUNCTION %I()',
-                   target, name || '_assign_id');
+    EXECUTE format('CREATE OR REPLACE TRIGGER assign_id BEFORE INSERT ON %s FOR EACH ROW WHEN (NEW.id IS NULL) '
+                   'EXECUTE FUNCTION %I()', target, name || '_assign_id');
 END
 $install$;
+
+-- A STATEMENT THAT NUMBERS ITS OWN ROWS. The aggregate refresh inserts a slot's rows in one
+-- statement, and one row-id trigger per row -- one lock call and one look-up of the largest id for
+-- every row -- was most of what an insert of many rows cost. id_base takes the same lock the trigger
+-- takes and answers the largest id in use, once: the statement gives its rows id_base + 1, + 2, ...
+-- (row_number() over its rows), so the ids are the gap-free numbers the trigger would give one row at
+-- a time, and two writers of one table are still serialised. A statement calls it in an uncorrelated
+-- subquery, which PostgreSQL evaluates once per statement. The trigger fires only for a row inserted
+-- with no id, so every other writer keeps its numbering unchanged.
+CREATE OR REPLACE FUNCTION id_base(target regclass) RETURNS BIGINT
+LANGUAGE plpgsql VOLATILE AS $id_base$
+DECLARE
+    base BIGINT;
+BEGIN
+    PERFORM pg_advisory_xact_lock(1, target::oid::integer);
+    EXECUTE format('SELECT coalesce(max(id), 0) FROM %s', target) INTO base;
+    RETURN base;
+END
+$id_base$;
 
 -- ---------------------------------------------------------------------------
 -- Configuration. Bounded: one row per setting key.
@@ -3492,6 +3513,24 @@ CREATE TABLE IF NOT EXISTS sequence_bound (
     ends_at     BIGINT NOT NULL CHECK (ends_at >= starts_at AND ends_at < 4102444800),
     counters    BIGINT NOT NULL CHECK (counters >= 0),
     PRIMARY KEY (provider_id, name, starts_at)
+);
+
+-- ---------------------------------------------------------------------------
+-- provider_read_through -- how far a provider's source has been read: every
+-- record its source held before read_through is stored, or lies in a gap the
+-- provider recorded (collection_gap). The filter log's is the instant its last
+-- complete pass began asking, or the newest record a push path delivered in
+-- order (internal/collect/kinds/filterlog); it only moves forward. A derivation
+-- joining another source's records to the logged legs reads it through the core
+-- dataset read_through, so a leg not read yet is never taken for one that does
+-- not exist. "Read-through" is opnview's own term: no product names it.
+--
+-- Source: opnview itself. Bounded: one row per provider that records one.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS provider_read_through (
+    provider_id  BIGINT PRIMARY KEY REFERENCES provider (id) ON DELETE CASCADE,
+    read_through BIGINT NOT NULL CHECK (read_through >= 0 AND read_through < 4102444800),
+    recorded_at  BIGINT NOT NULL CHECK (recorded_at >= 0 AND recorded_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------

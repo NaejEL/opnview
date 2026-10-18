@@ -226,7 +226,6 @@ func (s *subscriber) flushBatch(ctx context.Context, batch []Record) {
 	if len(resolved) == 0 {
 		return
 	}
-	s.mapIndexes(ctx, resolved)
 	prepared := s.Sink.Prepare(ctx, resolved)
 	s.mutex.Lock()
 	for name, delta := range prepared.Counts {
@@ -349,47 +348,3 @@ func (s *subscriber) recordGap(ctx context.Context, reason string, gap *pendingG
 	}
 }
 
-// mapIndexes adds, beside every interface index a record carries, the firewall's interface it maps
-// to -- the mapping in force when the batch is flushed, within a second of reception, so a later
-// renumbering never rewrites a stored row. An index no interface holds is kept, its interface left
-// absent, and counted; the core never matches an index by position, name or count (PS11).
-func (s *subscriber) mapIndexes(ctx context.Context, records []Record) {
-	protocol, known := Lookup(s.Protocol)
-	if !known || len(protocol.IndexFields()) == 0 {
-		return
-	}
-	var interfaces map[uint64]Interface
-	if s.hub.options.Interfaces != nil {
-		read, err := s.hub.options.Interfaces(ctx)
-		if err != nil {
-			s.hub.options.Report(fmt.Errorf("push: reading the interface indexes: %w", err))
-		}
-		interfaces = read
-	}
-	for index := range records {
-		fields := records[index].Fields
-		var added map[string]any
-		for _, field := range protocol.IndexFields() {
-			raw, present := fields[field].(uint64)
-			if !present {
-				continue
-			}
-			mapped, found := interfaces[raw]
-			if !found {
-				s.count(CounterInterfaceUnmapped, 1)
-				continue
-			}
-			if added == nil {
-				added = make(map[string]any, len(fields)+4)
-				for name, value := range fields {
-					added[name] = value
-				}
-			}
-			added[field+IndexIdentifierSuffix] = mapped.Identifier
-			added[field+IndexDeviceSuffix] = mapped.Device
-		}
-		if added != nil {
-			records[index].Fields = added
-		}
-	}
-}

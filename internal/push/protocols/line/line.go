@@ -35,7 +35,6 @@ func (protocol) Compile(filter json.RawMessage) (push.Selector, error) {
 // Fields: a line carries no field the core reads; its decode function reads its text.
 func (protocol) Fields() map[string]string       { return nil }
 func (protocol) FieldType(string) (string, bool) { return "", false }
-func (protocol) IndexFields() []string           { return nil }
 func (protocol) ScriptDecoded() bool             { return true }
 
 // LossDetectable: TCP is acknowledged and its loss ends the connection, which the listener sees; a line

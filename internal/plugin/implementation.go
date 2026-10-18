@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -95,9 +96,14 @@ func (i implementation) call(ctx context.Context, session provider.Session, func
 		if err != nil {
 			return i.invalid(err.Error())
 		}
-		own = map[string]any{"rows": rows, "state": state}
+		bounds, err := checkBounds(object["bounds"])
+		if err != nil {
+			return i.invalid(err.Error())
+		}
+		own = map[string]any{"rows": rows, "state": state, "bounds": bounds}
 		delete(object, "rows")
 		delete(object, "state")
+		delete(object, "bounds")
 	}
 	answerErr, _ := object["error"].(error)
 	delete(object, "error")
@@ -126,6 +132,37 @@ func (i implementation) call(ctx context.Context, session provider.Session, func
 		return checked, result, fmt.Errorf("%w: %s", provider.ErrUnsupportedRead, unsupported)
 	}
 	return checked, result, nil
+}
+
+// checkBounds reads the sequence bounds a collect answer records (docs/plugins.md, "Push sources",
+// "Liveness and gaps"): {<value name>: {counters, changed}}, how many sequence counters the sender now runs
+// by what the pass read of its configuration, and whether that configuration changed, so its decoders follow
+// the sender's sequence numbers afresh. Absent records none.
+func checkBounds(raw any) ([]provider.SequenceBoundRead, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	object, isObject := raw.(map[string]any)
+	if !isObject {
+		return nil, fmt.Errorf("bounds is not an object of value names")
+	}
+	names := make([]string, 0, len(object))
+	for name := range object {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	reads := make([]provider.SequenceBoundRead, 0, len(names))
+	for _, name := range names {
+		read, isRead := object[name].(map[string]any)
+		counters, whole := scripthost.IntegerOf(read["counters"])
+		changed, isFlag := read["changed"].(bool)
+		if !contract.NamePattern.MatchString(name) || !isRead || !whole || counters < 0 || !isFlag || len(read) != 2 {
+			return nil, fmt.Errorf("bounds.%s is not {counters, changed} under a snake_case value name, counters a whole "+
+				"number of 0 or more", name)
+		}
+		reads = append(reads, provider.SequenceBoundRead{Name: name, Counters: int(counters), Changed: changed})
+	}
+	return reads, nil
 }
 
 // failed is the result a failed call is recorded with.

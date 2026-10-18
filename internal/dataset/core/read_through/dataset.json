@@ -1,0 +1,9 @@
+{
+  "nature": "sample",
+  "freshness": {"kind": "discovery"},
+  "columns": [
+    {"name": "kind", "type": "text"},
+    {"name": "provider_key", "type": "text"},
+    {"name": "read_through", "type": "integer"}
+  ]
+}

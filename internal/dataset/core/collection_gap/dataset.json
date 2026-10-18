@@ -1,0 +1,11 @@
+{
+  "nature": "sample",
+  "freshness": {"kind": "discovery"},
+  "columns": [
+    {"name": "kind", "type": "text"},
+    {"name": "provider_key", "type": "text"},
+    {"name": "interval_start_at", "type": "integer"},
+    {"name": "interval_end_at", "type": "integer"},
+    {"name": "reason", "type": "text"}
+  ]
+}

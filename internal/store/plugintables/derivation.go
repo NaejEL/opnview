@@ -34,6 +34,9 @@ type ConnectionMeasureRow struct {
 	Markers int64
 	// DueAt is the instant from which the row may change by time alone; nil is final.
 	DueAt *int64
+	// Remove deletes the held row of the connection and direction instead: the derivation gives it no figure
+	// any more -- it started under no configuration the derivation can read.
+	Remove bool
 }
 
 // MeasureInterval is one window interval of a measure (schema.sql, measure_interval); EndsAt nil is open.
@@ -100,6 +103,18 @@ func (s *PluginTableStore) WriteDerivation(ctx context.Context, write Derivation
 			changed, _ := result.RowsAffected()
 			written.Rows += changed
 			written.Statements++
+			if table.Counters {
+				// A counter whose figures all came back to zero -- a record counted and then taken out -- holds
+				// nothing, and is removed.
+				statement, arguments, err := table.CounterEmptyDelete(rows[start:min(len(rows), start+perStatement)])
+				if err != nil {
+					return DerivationWritten{}, err
+				}
+				if _, err := transaction.ExecContext(ctx, statement, arguments...); err != nil {
+					return DerivationWritten{}, fmt.Errorf("store: removing the empty counters of %s: %w", table.SQLName(), err)
+				}
+				written.Statements++
+			}
 		}
 	}
 	for _, measure := range sortedKeys(write.Measures) {
@@ -130,15 +145,52 @@ func writeMeasureRows(ctx context.Context, transaction *sql.Tx, measure string, 
 	}
 	// One row per connection and direction: the last given wins, as a sequence of single writes would keep it.
 	latest := map[[2]any]int{}
-	var kept []ConnectionMeasureRow
+	var given []ConnectionMeasureRow
 	for _, row := range rows {
 		key := [2]any{row.ConnectionFlowID, row.Direction}
 		if index, seen := latest[key]; seen {
-			kept[index] = row
+			given[index] = row
 			continue
 		}
-		latest[key] = len(kept)
+		latest[key] = len(given)
+		given = append(given, row)
+	}
+	var kept []ConnectionMeasureRow
+	var goneIDs []int64
+	var goneDirections []string
+	for _, row := range given {
+		if row.Remove {
+			goneIDs, goneDirections = append(goneIDs, row.ConnectionFlowID), append(goneDirections, row.Direction)
+			continue
+		}
 		kept = append(kept, row)
+	}
+	if len(goneIDs) > 0 {
+		gone, err := transaction.QueryContext(ctx,
+			`DELETE FROM connection_measure AS v
+			 USING unnest(CAST($2 AS BIGINT[]), CAST($3 AS TEXT[])) AS g (id, direction)
+			 WHERE v.measure = $1 AND v.connection_flow_id = g.id AND v.direction = g.direction
+			 RETURNING v.connection_start_at`, measure, goneIDs, goneDirections)
+		if err != nil {
+			return fmt.Errorf("store: removing the %s measure's rows: %w", measure, err)
+		}
+		written.Statements++
+		for gone.Next() {
+			var at int64
+			if err := gone.Scan(&at); err != nil {
+				_ = gone.Close()
+				return fmt.Errorf("store: removing the %s measure's rows: %w", measure, err)
+			}
+			written.Rows++
+			written.Instants = append(written.Instants, at)
+		}
+		_ = gone.Close()
+		if err := gone.Err(); err != nil {
+			return fmt.Errorf("store: removing the %s measure's rows: %w", measure, err)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
 	}
 	var (
 		ids, starts, bytes, packets, records, markers, dues []int64

@@ -204,6 +204,13 @@ func (s *tableSink) extract(record push.Record) (map[string]any, bool) {
 	values := map[string]any{}
 	for column, sources := range s.binding.declaration.Fields {
 		for _, source := range sources {
+			if value, isDelivery := push.DeliveryValue(record, source); isDelivery {
+				if value != nil {
+					values[column] = value
+					break
+				}
+				continue
+			}
 			if value, present := record.Fields[source]; present && value != nil {
 				values[column] = value
 				break
@@ -470,6 +477,12 @@ func (p *Plugin) pushAvailability(kind, key string) provider.Result {
 		result.Detail = noMessageDetail(hub.Senders().State())
 	}
 	return result
+}
+
+// ObserveCondition hands a condition of the entry's stream -- the exporter restarted -- to the derivations the
+// entry runs, as a change of trigger condition: nothing the entry stores says it.
+func (s *tableSink) ObserveCondition(_ context.Context, problem push.Problem) {
+	s.plugin.noteCondition(s.binding.declaration.Name, problem)
 }
 
 // SequenceAsserted judges a loss the sender's sequence numbers show by the entry's declared bound.

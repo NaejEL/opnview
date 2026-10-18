@@ -13,6 +13,12 @@
 -- one-slot counterpart computes for every slot of the set, grouped by the slot as well. The rows are
 -- the same rows (aggregatehours.statements.sql does the same for the hours).
 --
+-- EACH INSERT NUMBERS ITS ROWS ONCE. A row's id is the largest id of its table plus its rank among the
+-- statement's rows: id_base (schema.sql) takes the table's row-id lock and reads the largest id once, in an
+-- uncorrelated subquery the statement evaluates once, and row_number() ranks the rows. The ids stay
+-- gap-free and are the numbers the row-id trigger would have given one row at a time, which then has
+-- nothing to do: it runs only for a row inserted with no id.
+--
 -- Parameters:
 --   :slots  the slots to rewrite, a JSON array of [start, end] pairs, UTC epoch seconds
 --   :from   the earliest start
@@ -92,11 +98,11 @@ WHERE period_start_at IN (SELECT CAST(j.value ->> 0 AS BIGINT) FROM jsonb_array_
 
 
 -- statement: compose_volume_slots
-INSERT INTO volume_aggregate_@period@ (period_start_at, period_end_at, src_interface_id,
+INSERT INTO volume_aggregate_@period@ (id, period_start_at, period_end_at, src_interface_id,
     dst_interface_id, peer_address, traffic_scope, traffic_direction, exit_leg_device, bytes,
     allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections,
     unknown_connections, measure_parts, computed_at)
-SELECT s.slot_start, s.slot_end, v.src_interface_id, v.dst_interface_id, v.peer_address,
+SELECT (SELECT id_base('volume_aggregate_@period@')) + row_number() OVER (), s.slot_start, s.slot_end, v.src_interface_id, v.dst_interface_id, v.peer_address,
        v.traffic_scope, v.traffic_direction, v.exit_leg_device, sum(v.bytes), sum(v.allowed_bytes),
        sum(v.blocked_bytes), sum(v.unknown_bytes), sum(v.allowed_connections),
        sum(v.blocked_connections), sum(v.unknown_connections), measure_parts_sum(v.measure_parts), :now
@@ -109,10 +115,10 @@ GROUP BY s.slot_start, s.slot_end, v.src_interface_id, v.dst_interface_id, v.pee
 
 
 -- statement: compose_rule_slots
-INSERT INTO rule_volume_aggregate_@period@ (period_start_at, period_end_at, rule_id,
+INSERT INTO rule_volume_aggregate_@period@ (id, period_start_at, period_end_at, rule_id,
     src_interface_id, dst_interface_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
     allowed_connections, blocked_connections, unknown_connections, measure_parts, computed_at)
-SELECT s.slot_start, s.slot_end, r.rule_id, r.src_interface_id, r.dst_interface_id,
+SELECT (SELECT id_base('rule_volume_aggregate_@period@')) + row_number() OVER (), s.slot_start, s.slot_end, r.rule_id, r.src_interface_id, r.dst_interface_id,
        sum(r.bytes), sum(r.allowed_bytes), sum(r.blocked_bytes), sum(r.unknown_bytes),
        sum(r.allowed_connections), sum(r.blocked_connections), sum(r.unknown_connections), measure_parts_sum(r.measure_parts),
        :now
@@ -124,10 +130,10 @@ GROUP BY s.slot_start, s.slot_end, r.rule_id, r.src_interface_id, r.dst_interfac
 
 
 -- statement: compose_domain_slots
-INSERT INTO domain_volume_aggregate_@period@ (period_start_at, period_end_at, site_name,
+INSERT INTO domain_volume_aggregate_@period@ (id, period_start_at, period_end_at, site_name,
     client_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
     blocked_connections, unknown_connections, measure_parts, computed_at)
-SELECT s.slot_start, s.slot_end, d.site_name, d.client_id, sum(d.bytes),
+SELECT (SELECT id_base('domain_volume_aggregate_@period@')) + row_number() OVER (), s.slot_start, s.slot_end, d.site_name, d.client_id, sum(d.bytes),
        sum(d.allowed_bytes), sum(d.blocked_bytes), sum(d.unknown_bytes),
        sum(d.allowed_connections), sum(d.blocked_connections), sum(d.unknown_connections), measure_parts_sum(d.measure_parts),
        :now
@@ -139,10 +145,10 @@ GROUP BY s.slot_start, s.slot_end, d.site_name, d.client_id;
 
 
 -- statement: compose_peer_slots
-INSERT INTO peer_volume_aggregate_@period@ (period_start_at, period_end_at, client_id,
+INSERT INTO peer_volume_aggregate_@period@ (id, period_start_at, period_end_at, client_id,
     traffic_direction, peer_address, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
     allowed_connections, blocked_connections, unknown_connections, measure_parts, computed_at)
-SELECT s.slot_start, s.slot_end, p.client_id, p.traffic_direction, p.peer_address,
+SELECT (SELECT id_base('peer_volume_aggregate_@period@')) + row_number() OVER (), s.slot_start, s.slot_end, p.client_id, p.traffic_direction, p.peer_address,
        sum(p.bytes), sum(p.allowed_bytes), sum(p.blocked_bytes), sum(p.unknown_bytes),
        sum(p.allowed_connections), sum(p.blocked_connections), sum(p.unknown_connections), measure_parts_sum(p.measure_parts),
        :now
@@ -154,10 +160,10 @@ GROUP BY s.slot_start, s.slot_end, p.client_id, p.traffic_direction, p.peer_addr
 
 
 -- statement: regroup_client_slots
-INSERT INTO client_volume_aggregate_@period@ (period_start_at, period_end_at, client_id,
+INSERT INTO client_volume_aggregate_@period@ (id, period_start_at, period_end_at, client_id,
     traffic_direction, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
     blocked_connections, unknown_connections, distinct_peers, measure_parts, computed_at)
-SELECT s.slot_start, s.slot_end, p.client_id, p.traffic_direction, sum(p.bytes),
+SELECT (SELECT id_base('client_volume_aggregate_@period@')) + row_number() OVER (), s.slot_start, s.slot_end, p.client_id, p.traffic_direction, sum(p.bytes),
        sum(p.allowed_bytes), sum(p.blocked_bytes), sum(p.unknown_bytes),
        sum(p.allowed_connections), sum(p.blocked_connections), sum(p.unknown_connections),
        count(DISTINCT p.peer_address), measure_parts_sum(p.measure_parts), :now
@@ -168,10 +174,10 @@ GROUP BY s.slot_start, s.slot_end, p.client_id, p.traffic_direction;
 
 
 -- statement: regroup_owner_slots
-INSERT INTO owner_volume_aggregate_@period@ (period_start_at, period_end_at, owner_id,
+INSERT INTO owner_volume_aggregate_@period@ (id, period_start_at, period_end_at, owner_id,
     traffic_scope, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
     blocked_connections, unknown_connections, client_count, measure_parts, computed_at)
-SELECT s.slot_start, s.slot_end, k.owner_id,
+SELECT (SELECT id_base('owner_volume_aggregate_@period@')) + row_number() OVER (), s.slot_start, s.slot_end, k.owner_id,
        CASE WHEN c.traffic_direction = 'inter_interface' THEN 'east_west'
             ELSE 'north_south' END,
        sum(c.bytes), sum(c.allowed_bytes), sum(c.blocked_bytes), sum(c.unknown_bytes),

@@ -23,11 +23,14 @@ const (
 	TriggerPass    = "pass"
 	TriggerPush    = "push"
 	TriggerCadence = "cadence"
+	// TriggerCondition is a condition the decoder detected on a stream one of the plugin's push entries is fed
+	// by -- an exporter that restarted -- which no row says.
+	TriggerCondition = "condition"
 )
 
 // DerivationChange is one change a run is handed.
 type DerivationChange struct {
-	// Trigger is pass, push or cadence.
+	// Trigger is pass, push, condition or cadence.
 	Trigger string
 	// Kind and Provider are a pass's.
 	Kind, Provider string
@@ -36,6 +39,9 @@ type DerivationChange struct {
 	Entry    string
 	Rows     int
 	From, To int64
+	// Reason and Scope are a condition's: the decoder's name for it, and the stream it was detected on
+	// ("<exporter address>/<observation domain>"); its Entry is the push entry the stream feeds.
+	Reason, Scope string
 	// At is when the change was noted, UTC epoch seconds.
 	At int64
 }
@@ -91,4 +97,13 @@ func (s *Set) Derivations() []Derivation {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 	return append([]Derivation(nil), s.derivations...)
+}
+
+// SequenceBoundRead is one sequence bound a pass of a kind of a plugin's own recorded from its sender's
+// configuration (docs/plugins.md, "Push sources"): the value a push entry names as its sequence_bound, how many
+// counters the sender now runs, and whether its configuration changed, so the decoders follow it afresh.
+type SequenceBoundRead struct {
+	Name     string
+	Counters int
+	Changed  bool
 }

@@ -53,10 +53,14 @@ func checkPush(plugin *Plugin, exports map[string]map[string]string) ([]*pushBin
 	for _, table := range plugin.OwnTables {
 		tables[table.Table] = table
 	}
+	// The providers a push entry writing a table of the plugin's own may belong to: one fed by push alone
+	// (source push), or one of a kind of the plugin's own declared push that its script also polls -- the
+	// netflow plugin's flow_record provider reads the exporter's configuration and receives its records.
 	var pushProviders []contract.ProviderDeclaration
 	providedKinds := map[string]contract.ProviderDeclaration{}
 	for _, declaration := range manifest.Providers {
-		if declaration.Source == providerSourcePush {
+		_, core := provider.ContractOf(declaration.Kind)
+		if declaration.Source == providerSourcePush || (!core && ownKindAttributes(plugin, declaration.Kind).Push) {
 			pushProviders = append(pushProviders, declaration)
 		}
 		providedKinds[declaration.Kind] = declaration
@@ -137,7 +141,7 @@ func checkPushEntry(plugin *Plugin, declaration contract.PushDeclaration, tables
 			return nil, contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s maps the column %q to no field", entry, column)
 		}
 		for _, source := range sources {
-			if _, known := protocol.FieldType(source); !known {
+			if _, known := protocol.FieldType(source); !known && !push.IsDeliveryField(source) {
 				return nil, contract.Refuse(name, contract.RefusalPushElementUnknown, "%s maps the column %q to %q, which %s does "+
 					"not carry", entry, column, source, declaration.Protocol)
 			}
@@ -247,7 +251,7 @@ func checkPushTable(plugin *Plugin, binding *pushBinding, tables map[string]plug
 	}
 	if len(pushProviders) != 1 {
 		return contract.Refuse(name, contract.RefusalPushProviderMissing, "%s writes into a table of the plugin's own, which needs "+
-			"exactly one provider of a kind of the plugin's own with source push; the plugin declares %d",
+			"exactly one provider of a kind of the plugin's own declared push, or with source push; the plugin declares %d",
 			entry, len(pushProviders))
 	}
 	binding.table = table

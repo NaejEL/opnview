@@ -32,7 +32,6 @@ func (protocol) Compile(filter json.RawMessage) (push.Selector, error) {
 // Fields: a datagram carries no field the core reads; its decode function reads its octets.
 func (protocol) Fields() map[string]string       { return nil }
 func (protocol) FieldType(string) (string, bool) { return "", false }
-func (protocol) IndexFields() []string           { return nil }
 func (protocol) ScriptDecoded() bool             { return true }
 
 // LossDetectable: a datagram carries no sequence number the core reads, so one lost on the way is

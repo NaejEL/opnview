@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "dataset.read_through": "How far each provider's source has been read: every record before the instant is stored or in a recorded gap"
+  }
+}

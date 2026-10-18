@@ -598,6 +598,13 @@ func declaredTables(manifest contract.Manifest) ([]plugindecl.PluginTable, *cont
 		if declaration.Retention != nil {
 			table.TimeColumn = declaration.Retention.Column
 			table.RetentionSeconds = declaration.Retention.Seconds
+			if setting := declaration.Retention.Setting; setting != "" {
+				if !declaresIntegerSetting(manifest, setting) {
+					return nil, contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "the table %q keeps its rows as long "+
+						"as the setting %q says, which the manifest does not declare as an integer setting", declaration.Name, setting)
+				}
+				table.RetentionSetting = manifest.Name + "_" + setting
+			}
 		}
 		if err := plugindecl.ValidatePluginTable(table); err != nil {
 			if errors.Is(err, plugindecl.ErrUniqueKeyWithoutTime) {
@@ -608,6 +615,16 @@ func declaredTables(manifest contract.Manifest) ([]plugindecl.PluginTable, *cont
 		tables = append(tables, table)
 	}
 	return tables, nil
+}
+
+// declaresIntegerSetting reports whether a manifest declares an integer setting of a key.
+func declaresIntegerSetting(manifest contract.Manifest, key string) bool {
+	for _, setting := range manifest.Settings {
+		if setting.Key == key && setting.Type == "integer" {
+			return true
+		}
+	}
+	return false
 }
 
 // loadScript reads and compiles the script a manifest names, and runs it once to see what it
@@ -768,9 +785,10 @@ func checkProviders(set *provider.Set, plugin *Plugin) ([]checkedProvider, *cont
 			Endpoints: endpointInfos(plugin.Endpoints)}
 		base := implementation{plugin: plugin.Name, contract: kindContract, endpoints: plugin.Endpoints,
 			scriptProbe: scriptEndpoint(plugin.Name, plugin.Manifest.Script)}
-		if core && kindContract.Push && !provider.PolledRecordTables(kindContract)[kindContract.PushRecord] {
-			// The kind's records arrive only by push and its polled functions read something else -- flow_record's
-			// capture configuration -- so a healthy read is not a healthy provider while its push entry
+		if (core && kindContract.Push && !provider.PolledRecordTables(kindContract)[kindContract.PushRecord]) ||
+			(!core && own.Push && declaration.Source == "") {
+			// The kind's records arrive only by push and its polled functions read something else -- the netflow
+			// plugin's exporter configuration -- so a healthy read is not a healthy provider while its push entry
 			// receives nothing (D1 of the live validation of 17 October 2026).
 			base.pushFed, base.key = plugin, key
 		}

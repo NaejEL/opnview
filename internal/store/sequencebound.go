@@ -68,3 +68,17 @@ func (s *Store) SequenceBoundAsserted(ctx context.Context, providerID int64, nam
 	}
 	return asserted, nil
 }
+
+// RecordReadThrough records how far a provider's source has been read (schema.sql, provider_read_through):
+// every record before at is stored, or in a gap the provider recorded. It only moves forward: a read through
+// an earlier instant than the one held changes nothing.
+func (s *Store) RecordReadThrough(ctx context.Context, providerID, at, now int64) error {
+	if _, err := s.SQL.ExecContext(ctx,
+		`INSERT INTO provider_read_through (provider_id, read_through, recorded_at) VALUES ($1, $2, $3)
+		 ON CONFLICT (provider_id) DO UPDATE SET read_through = excluded.read_through,
+		     recorded_at = excluded.recorded_at
+		 WHERE provider_read_through.read_through < excluded.read_through`, providerID, at, now); err != nil {
+		return fmt.Errorf("store: recording a provider's read-through instant: %w", err)
+	}
+	return nil
+}

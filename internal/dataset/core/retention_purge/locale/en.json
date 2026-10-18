@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "dataset.retention_purge": "How far back the retention purge has removed the logged legs"
+  }
+}

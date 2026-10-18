@@ -510,7 +510,20 @@ func (s *PluginTableStore) PurgePluginTables(ctx context.Context, transaction *s
 		if table.TimeColumn == "" {
 			continue
 		}
-		horizon, bounded, err := RetentionHorizon(ctx, transaction, now, table.RetentionSeconds)
+		retention := table.RetentionSeconds
+		if table.RetentionSetting != "" {
+			// The operator's value of the setting the declaration names, when it holds one above zero.
+			override, found, err := sqldb.QueryOptionalIntText(ctx, transaction, "retention setting",
+				"SELECT CAST(value AS BIGINT) FROM setting WHERE key = :key AND value ~ '^[0-9]+$'",
+				map[string]any{"key": table.RetentionSetting})
+			if err != nil {
+				return err
+			}
+			if found && override > 0 {
+				retention = override
+			}
+		}
+		horizon, bounded, err := RetentionHorizon(ctx, transaction, now, retention)
 		if err != nil {
 			return err
 		}

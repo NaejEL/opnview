@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
@@ -199,12 +200,29 @@ func (c *DeclaredKindCoordinator) CollectDeclaredKind(ctx context.Context, kind,
 	for _, table := range passRows {
 		rows += len(table)
 	}
-	if err := c.Store.WritePluginPass(ctx, registration.Plugin, key, passRows, passState, c.Now()); err != nil {
+	passAt := c.Now()
+	if err := c.Store.WritePluginPass(ctx, registration.Plugin, key, passRows, passState, passAt); err != nil {
 		if writeErr := c.WriteAvailability(ctx, providerID, vocab.StateReachable, vocab.OutcomeStoreFailure,
 			result.Probe, "the rows were read and could not be stored"); writeErr != nil {
 			return writeErr
 		}
 		return err
+	}
+	// The sequence bounds the pass read of its sender's configuration, recorded under the value a push entry
+	// names, then the plugin's derivations that run after this kind's passes.
+	bounds, _ := pass["bounds"].([]provider.SequenceBoundRead)
+	for _, bound := range bounds {
+		if err := c.RecordSequenceBound(ctx, kind, key, bound.Name, passAt, bound.Counters, bound.Changed); err != nil {
+			return err
+		}
+	}
+	for _, derivation := range c.SourceSet.Derivations() {
+		for _, trigger := range derivation.AfterPasses() {
+			if passKind, passKey, scoped := strings.Cut(trigger, "/"); passKind == kind && (!scoped || passKey == key) {
+				derivation.Note(provider.DerivationChange{Trigger: provider.TriggerPass, Kind: kind, Provider: key, At: passAt})
+				break
+			}
+		}
 	}
 	detail := result.Detail
 	if detail == "" {

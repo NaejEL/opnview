@@ -300,18 +300,30 @@ done
 # share no database instance, so the non-race run starts in the background as the -race run starts
 # in the foreground: measured on 16 October 2026 on 16 CPUs, one after the other they took 95.2 s
 # and 103.1 s, and the run reached the hard limit before the schema checks ended.
+#
+# AS MANY TEST BINARIES AT ONCE AS THE MACHINE HAS PHYSICAL CORES, the rule ci/checks.sh states and
+# measured: go test's -p defaults to the logical CPU count, and every test binary runs its parallel
+# tests against a test database, so on hyperthreads twice as many database-bound binaries ran as there
+# are cores to run them. Both go test runs below take it; a topology lscpu cannot read keeps the
+# default.
+test_parallelism=()
+physical_cores="$(lscpu -p=CORE,SOCKET 2>/dev/null | grep -v '^#' | sort -u | wc -l)"
+if [ "${physical_cores:-0}" -gt 0 ]; then
+  test_parallelism=(-p "$physical_cores")
+fi
 if [ "${#plain_packages[@]}" -gt 0 ]; then
-  start_step plain "go test -count=1 -tags predeployment (${#plain_packages[@]} excluded packages)" \
-    go test -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags predeployment "${plain_packages[@]}"
+  start_step plain "go test -count=1 ${test_parallelism[*]} -tags predeployment (${#plain_packages[@]} excluded packages)" \
+    go test -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" "${test_parallelism[@]}" -tags predeployment \
+    "${plain_packages[@]}"
 fi
 race_test_database="${OPNVIEW_RACE_TEST_DATABASE:-}"
 if [ -z "$race_test_database" ]; then
   printf -- 'OPNVIEW_RACE_TEST_DATABASE is not set: docker-compose.yml names the -race step its test instance.\n' >&2
   record 'OPNVIEW_RACE_TEST_DATABASE' 1 0
 elif [ "${#race_packages[@]}" -gt 0 ]; then
-  run_step "go test -race -count=1 -tags predeployment (${#race_packages[@]} selected packages, on the everyday test instance)" \
+  run_step "go test -race -count=1 ${test_parallelism[*]} -tags predeployment (${#race_packages[@]} selected packages, on the everyday test instance)" \
     env -u OPNVIEW_TEST_CLONE_STRATEGY OPNVIEW_TEST_DATABASE="$race_test_database" \
-    go test -race -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags predeployment "${race_packages[@]}"
+    go test -race -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" "${test_parallelism[@]}" -tags predeployment "${race_packages[@]}"
 fi
 if [ "${#plain_packages[@]}" -gt 0 ]; then
   wait_step plain
