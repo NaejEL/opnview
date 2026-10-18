@@ -302,9 +302,10 @@ func classifyAddress(ctx context.Context, q sqldb.Querier, address string, prefi
 	interfaceID := place.interfaceID
 
 	// Whether the address is, or ever was, this firewall: the rows naming it are then
-	// decided one by one, as of their own instants, by the statements below.
+	// decided one by one, as of their own instants, by the statements below. The loopback, the
+	// limited broadcast and a multicast address are the firewall's at every instant (IsLocalDelivery).
 	loopback := 0
-	if IsLoopback(address) {
+	if IsLocalDelivery(address) {
 		loopback = 1
 	}
 	holdings, err := firewallHoldings(ctx, q, address)

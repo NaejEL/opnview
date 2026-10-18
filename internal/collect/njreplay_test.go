@@ -5,8 +5,8 @@ package collect_test
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"os"

@@ -60,6 +60,23 @@ func IsLoopback(address string) bool {
 	return strings.EqualFold(strings.TrimRight(address, "."), localhostName)
 }
 
+// IsLocalDelivery reports whether a destination address is delivered to the firewall itself whatever interface
+// holds it: the loopback, the limited broadcast 255.255.255.255, and every multicast address -- 224.0.0.0/4 and
+// ff00::/8 (RFC 919, RFC 5771, RFC 4291) -- an IPv4-mapped one included. A packet to one of them that pf logged
+// is the firewall's to receive, so its end is This Firewall and the flow is never north_south (D5 of the live
+// validation of 17 October 2026, specs/SPEC-backend-completion-plugins.md).
+func IsLocalDelivery(address string) bool {
+	if IsLoopback(address) {
+		return true
+	}
+	parsed, err := netip.ParseAddr(address)
+	if err != nil {
+		return false
+	}
+	parsed = parsed.WithZone("").Unmap()
+	return parsed.IsMulticast() || parsed == netip.AddrFrom4([4]byte{255, 255, 255, 255})
+}
+
 // IsLocalhostName reports whether a host name is `localhost`, without regard to case
 // or to a trailing dot.
 func IsLocalhostName(name string) bool {
@@ -129,7 +146,7 @@ func (s *FlowStore) IsThisFirewallAt(ctx context.Context, address string, at int
 	if parsed, err := netip.ParseAddr(address); err == nil {
 		address = parsed.WithZone("").Unmap().String()
 	}
-	if IsLoopback(address) {
+	if IsLocalDelivery(address) {
 		return true, nil
 	}
 	margin, err := heldMargin(ctx, s.SQL)

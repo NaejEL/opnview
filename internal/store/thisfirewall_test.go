@@ -787,3 +787,58 @@ func TestAnAddressReleasedAndReacquiredIsNotHeldInBetween(t *testing.T) {
 		}
 	}
 }
+
+// TestBroadcastAndMulticastDeliveredToTheFirewallAreThisFirewall is D5's second clause (live validation of 17
+// October 2026): a packet logged to the limited broadcast or a multicast address -- 255.255.255.255, 224.0.0.0/4,
+// ff00::/8 -- is delivered to the firewall itself, so its destination end is This Firewall, the flow is classified
+// this_firewall, never north_south, and no client is made of the address; a unicast outside destination stays
+// north_south.
+func TestBroadcastAndMulticastDeliveredToTheFirewallAreThisFirewall(t *testing.T) {
+	t.Parallel()
+	network := storetest.NewNetwork(t, 4, 13)
+	device := map[bool]string{}
+	sources := map[bool]string{}
+	for _, iface := range network.Inside {
+		for _, v6 := range []bool{false, true} {
+			if client, found := firstClient(t, network, iface.ID, v6); found && sources[v6] == "" {
+				sources[v6], device[v6] = client.Address, iface.Device
+			}
+		}
+	}
+	if sources[false] == "" || sources[true] == "" {
+		t.Fatal("the network has no inside client of each family")
+	}
+	mdns := int64(5353)
+	var specs []storetest.Flow
+	destinations := map[string]bool{"255.255.255.255": false, "224.0.0.251": false, "239.255.255.250": false,
+		"ff02::fb": true}
+	for destination, v6 := range destinations {
+		specs = append(specs, storetest.Flow{ObservedAt: network.Now - 40, Device: device[v6], Direction: "in",
+			Src: sources[v6], Dst: destination, DstPort: &mdns, Protocol: "udp", Action: "pass", Bytes: 90})
+	}
+	outside := storetest.Outside(21, false)
+	specs = append(specs, storetest.Flow{ObservedAt: network.Now - 30, Device: device[false], Direction: "in",
+		Src: sources[false], Dst: outside, DstPort: &mdns, Protocol: "udp", Action: "pass", Bytes: 90})
+	addresses := network.Insert(t, specs)
+	network.ClassifyAndRefresh(t, addresses)
+	for destination := range destinations {
+		if got := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow
+			WHERE dst_address = $1 AND dst_is_this_firewall AND dst_client_id IS NULL
+			  AND traffic_scope = 'this_firewall'`, destination); got != 1 {
+			t.Errorf("the flow to %s is not delivered to this firewall", destination)
+		}
+		if clients := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client WHERE last_address = $1",
+			destination); clients != 0 {
+			t.Errorf("%d clients were made of %s", clients, destination)
+		}
+	}
+	if got := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM classified_flow
+		WHERE dst_address = ANY ($1) AND traffic_direction <> 'to_this_firewall'`,
+		[]string{"255.255.255.255", "224.0.0.251", "239.255.255.250", "ff02::fb"}); got != 0 {
+		t.Errorf("%d flows to a broadcast or multicast address are not to_this_firewall", got)
+	}
+	if got := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow
+		WHERE dst_address = $1 AND traffic_scope = 'north_south' AND NOT dst_is_this_firewall`, outside); got != 1 {
+		t.Errorf("the unicast outside destination is no longer north_south")
+	}
+}
