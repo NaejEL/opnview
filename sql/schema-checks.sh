@@ -346,16 +346,20 @@ remove_declared_databases() {
 # store requires, or a copy of another, which no session may hold.
 create_database() {
     if [ -n "${2:-}" ]; then
-        admin "CREATE DATABASE \"$1\" TEMPLATE \"$2\" STRATEGY FILE_COPY;" > /dev/null
+        admin "CREATE DATABASE \"$1\" TEMPLATE \"$2\" STRATEGY ${3:-FILE_COPY};" > /dev/null
     else
         admin "CREATE DATABASE \"$1\" ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;" > /dev/null
     fi
 }
 
-# copy_database <from> <to> — the PostgreSQL form of cp.
+# copy_database <from> <to> [strategy] — the PostgreSQL form of cp. FILE_COPY, the default, forces a
+# checkpoint before and after the copy, and a checkpoint writes every dirty buffer of the instance:
+# the copies of the 100 000-row seed are made WAL_LOG, block by block through the write-ahead log,
+# because beside the 1 000 000-row job they waited on that job's writes -- six of them took 73 s on
+# 18 October 2026, against 6.5 s on a quiet instance.
 copy_database() {
     drop_database "$2"
-    create_database "$2" "$1"
+    create_database "$2" "$1" "${3:-}"
 }
 
 database_exists() {
@@ -808,6 +812,10 @@ build_kept_seed() {
 prepare_kept_seed() {
     local db="$1" digest="$2" begun status
     if [ "$(recorded_digest "$db")" = "$digest" ]; then
+        # A kept seed is read in place through the store -- the answer drift, the 1 000 000-row
+        # budgets -- and opening a store records the schema file it applied (internal/store/schema.go,
+        # applied_schema), a row no build writes. It is removed, so the seed reused is the seed built.
+        q "$db" "DELETE FROM opnview.applied_schema;" > /dev/null
         printf -- 'reused\n' > "$WORK/kept_${db}_origin.txt"
         return 0
     fi
@@ -1259,7 +1267,7 @@ check 'E10 the kept 100 000-row seed carries the digest of what it was built fro
     "$MAIN_SEED_DIGEST" "$(recorded_digest "$MAIN_SEED_DB")"
 check 'E10 the second kept 100 000-row build carries the same digest (decision 11)' \
     "$MAIN_SEED_DIGEST" "$(recorded_digest "$REPEAT_SEED_DB")"
-timed "$WORK/main_clone_ms.txt" copy_database "$MAIN_SEED_DB" "$MAIN_DB" ||
+timed "$WORK/main_clone_ms.txt" copy_database "$MAIN_SEED_DB" "$MAIN_DB" WAL_LOG ||
     fail 'AC7 the kept 100 000-row seed could not be cloned into the database the checks read'
 printf -- '  the kept seed was cloned into %s in %d ms\n' "$MAIN_DB" "$(cat "$WORK/main_clone_ms.txt")"
 
@@ -1356,7 +1364,7 @@ check 'E21 every foreign key holds once the plugin tables are seeded' '' "$(fk_v
 # (S5B-AC18) and its backup round trip (P-AC22) start now, and are read in their sections.
 COPY_PIDS=()
 for copy in "$MEAS_DB" "$PURGE_DB" "$UNLIMITED_DB" "$REGISTER_DB" "$STATE_DB" "$LEASE_DB"; do
-    copy_database "$MAIN_DB" "$copy" &
+    copy_database "$MAIN_DB" "$copy" WAL_LOG &
     COPY_PIDS+=("$!")
 done
 COPIES_FAILED=0
