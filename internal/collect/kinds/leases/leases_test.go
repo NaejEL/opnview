@@ -67,8 +67,8 @@ func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testi
 	// A registry row of a collected kind with no implementation registered for it. Inserting one
 	// is how a future provider arrives, and until its file exists the collector has to say so.
 	if _, err := harness.Store.DB().ExecContext(ctx,
-		`INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-		 VALUES ($1, $2, $3, false, $4)`,
+		`INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at)
+		 VALUES ($1, $2, $3, true, false, $4)`,
 		"dhcp_lease", "an-unimplemented-backend", "An unimplemented backend",
 		collecttest.ReferenceEpoch()); err != nil {
 		t.Fatalf("registering a provider with no implementation: %v", err)

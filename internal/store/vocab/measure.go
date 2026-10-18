@@ -117,7 +117,7 @@ func (m DeclaredMeasure) Validate() string {
 		return fmt.Sprintf("the measure name %q is the core's own", m.Name)
 	case m.Label == "":
 		return fmt.Sprintf("the measure %s has no label", m.Name)
-	case m.Description == "":
+	case len(m.Description) == 0:
 		return fmt.Sprintf("the measure %s has no description", m.Name)
 	case !measureWord.MatchString(m.ProviderKind):
 		return fmt.Sprintf("the measure %s names no provider_kind", m.Name)

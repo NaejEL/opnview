@@ -2109,8 +2109,8 @@ check 'MEAS-AC6 introducing a term changed no DDL at all' "$MEAS_DDL_BEFORE" \
 # reading one subject at one instant are two readings, and a provider-less gauge
 # offered twice is still one row.
 expect_sql_success 'MEAS-AC7 a second provider may report the same subject at the same instant' "$MEAS_DB" \
-    "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-       VALUES ('measurement_sample', 'meas-ac7-second', 'MEAS-AC7 second sampler', true, $NOW);
+    "INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at)
+       VALUES ('measurement_sample', 'meas-ac7-second', 'MEAS-AC7 second sampler', true, true, $NOW);
      INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
        SELECT id, 'reachable', 'meas-ac7-probe', NULL, $NOW
        FROM provider WHERE provider_key = 'meas-ac7-second';
@@ -2746,6 +2746,9 @@ rc_ac14_after() {
 rc_ac14_before "$PURGE_DB" 'schema-checks-main'
 OLD_OBSERVATIONS_NAMED="$RC14_NAMED"
 PERIODS_OLDER_BEFORE="$(q "$PURGE_DB" "SELECT count(*) FROM provider_source_period WHERE to_at < $CUTOFF;")"
+# connection_measure is purged by purge.sql itself, at the flows' horizon (PA5 of the plugin-API amendment), so its
+# rows older than the horizon are counted before it runs, as the source periods are.
+MEASURES_OLDER_BEFORE="$(q "$PURGE_DB" "SELECT count(*) FROM connection_measure WHERE connection_start_at < $CUTOFF;")"
 run_purge "$PURGE_DB"
 PURGE_STATUS=$?
 rc_ac14_after "$PURGE_DB" 'schema-checks-main' "$PURGE_STATUS"
@@ -2888,13 +2891,17 @@ e22_horizon() {
 }
 for entry in $E22_HORIZONS; do
     table="${entry%%:*}"; rest="${entry#*:}"; column="${rest%%:*}"
-    # purge.sql, run above, purges the source periods; the copy held one past the horizon then.
+    # purge.sql, run above, purges the source periods and connection_measure; the copy held rows past
+    # the horizon then.
     [ "$table" != 'provider_source_period' ] || continue
+    [ "$table" != 'connection_measure' ] || continue
     check_ge "E22 $table holds rows older than its horizon before the purge" 1 \
         "$(q "$PURGE_DB" "SELECT count(*) FROM $table WHERE $column < $(e22_horizon "${rest#*:}");")"
 done
 check_ge 'E21 the seed held a closed source period older than the horizon before purge.sql ran' 1 \
     "$PERIODS_OLDER_BEFORE"
+check_ge 'E22 connection_measure held rows older than its horizon before purge.sql ran' 1 \
+    "$MEASURES_OLDER_BEFORE"
 OPEN_PERIODS_BEFORE="$(q "$PURGE_DB" 'SELECT count(*) FROM provider_source_period WHERE to_at IS NULL;')"
 if "$WORK/bin/plugintables" -database "$(dsn "$PURGE_DB")" -now "$NOW" -data-dir "$PLUGIN_DATA" -purge \
         > /dev/null 2> "$WORK/whole_purge.err"; then
@@ -3304,11 +3311,29 @@ extract_block "$ARCH_DOC" '<!-- provider-kinds:begin -->' '<!-- provider-kinds:e
 check 'PN-AC9 the document lists exactly twelve kinds' '12' \
     "$(wc -l < "$WORK/doc_kinds.txt" | tr -d ' ')"
 q "$MAIN_DB" 'SELECT DISTINCT kind FROM provider ORDER BY kind;' | sort > "$WORK/db_kinds.txt"
-if diff -u "$WORK/doc_kinds.txt" "$WORK/db_kinds.txt" > "$WORK/kinds.diff"; then
-    pass 'PN-AC9 the documented kinds and the live kinds are identical'
+# Restated by PA2 of the plugin-API amendment: the core kinds are the kind files of
+# internal/collect/provider/kinds, and the built-ins register their own kinds when they load -- here
+# through ci/plugintables, as the product's loader does. So the documented kinds are the kind files,
+# the live core kinds are exactly those, and every other live kind is one a built-in manifest declares.
+find "$REPO_ROOT/internal/collect/provider/kinds" -maxdepth 1 -name '*.json' -type f -exec basename {} .json \; |
+    sort > "$WORK/core_kinds.txt"
+if diff -u "$WORK/doc_kinds.txt" "$WORK/core_kinds.txt" > "$WORK/kinds_files.diff"; then
+    pass 'PN-AC9 the documented kinds are the kind files'
+else
+    fail "PN-AC9 the documented kinds and the kind files differ: $(cat "$WORK/kinds_files.diff")"
+fi
+comm -12 "$WORK/db_kinds.txt" "$WORK/core_kinds.txt" > "$WORK/db_core_kinds.txt"
+if diff -u "$WORK/doc_kinds.txt" "$WORK/db_core_kinds.txt" > "$WORK/kinds.diff"; then
+    pass 'PN-AC9 the documented kinds and the live core kinds are identical'
 else
     fail "PN-AC9 the kind lists differ: $(cat "$WORK/kinds.diff")"
 fi
+UNDECLARED_KINDS=''
+while read -r kind; do
+    [ -n "$kind" ] || continue
+    grep -qF "\"kind\": \"$kind\"" "$REPO_ROOT"/plugins/*/plugin.json || UNDECLARED_KINDS="$UNDECLARED_KINDS $kind"
+done <<< "$(comm -23 "$WORK/db_kinds.txt" "$WORK/core_kinds.txt")"
+check 'PN-AC9 every live kind that is no kind file is one a built-in manifest declares' '' "$UNDECLARED_KINDS"
 
 # ===========================================================================
 section 'PN-AC11, PN-AC12, PN-AC13 — several providers per kind, one active'
@@ -3321,7 +3346,8 @@ printf -- '  the registry:\n'
 q "$MAIN_DB" 'SELECT kind, provider_key, is_active FROM provider ORDER BY kind, provider_key;' |
     sed 's/^/    /'
 
-KIND_COUNT="$(q "$MAIN_DB" 'SELECT count(DISTINCT kind) FROM provider;')"
+# The core kinds the registry holds (PN-AC9 above): a built-in plugin's own kind is its own, not one of the twelve.
+KIND_COUNT="$(wc -l < "$WORK/db_core_kinds.txt" | tr -d ' ')"
 # PN-AC12, RESTATED AGAINST THE RULE THAT REPLACED UNIVERSAL EXCLUSIVITY. These
 # assertions named a property the model deliberately changed, not one that stopped
 # mattering, so they are restated and not removed. The rule:
@@ -3424,8 +3450,8 @@ section 'PN-AC8, PN-AC18 — registering a second provider of an existing kind'
 # No DDL: an INSERT into the registry, an INSERT into availability, and events.
 # REGISTER_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
 expect_sql_success 'PN-AC8 registering a second security-event provider needs no DDL' "$REGISTER_DB" \
-    "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-       VALUES ('security_event', 'second-event-provider', 'Second event provider', false, $NOW);
+    "INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at)
+       VALUES ('security_event', 'second-event-provider', 'Second event provider', true, false, $NOW);
      INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
        SELECT id, 'reachable', 'pn-ac8-probe', NULL, $NOW
        FROM provider WHERE provider_key = 'second-event-provider';
@@ -3549,7 +3575,7 @@ expect_sql_failure 'EX-AC3 two providers of the dns_lookup kind cannot both be a
 # set is open (PN-AC9 above), so the registry refuses an ill-formed kind, not an unknown one.
 expect_sql_failure 'EX-AC4 an active provider of a kind that is not a snake_case name is rejected' "$REGISTER_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-     VALUES ('Tele-Pathy', 'ex-ac4', 'EX-AC4', 1, $NOW);"
+     VALUES ('Tele-Pathy', 'ex-ac4', 'EX-AC4', true, $NOW);"
 
 # ===========================================================================
 section 'ST-AC1 .. ST-AC6 — the reconciled-state kind, and the departure it exists for'
@@ -4323,7 +4349,7 @@ split_statements() {
             printf "" > file
             next
         }
-        file != "" && index($0, "--") != 1 { print >> file }
+        file != "" && (index($0, "--") != 1 || index($0, "-- plan-with: ") == 1) { print >> file }
     ' "$src"
 }
 # Kept by decision 9: one exact path inside this run's own mktemp directory, no glob.
@@ -4534,7 +4560,8 @@ TEETH_SOURCE="$(grep -l 'flow_measures(' "$WORK"/statements/*.sql | grep -v '/ex
     to_nodes "$MAIN_DB" > "$WORK/teeth_netflow_plan.txt"
 check "E18 the check catches a call of a non-inlinable copy of flow_measures ($(basename "$TEETH_SOURCE" .sql))" \
     'flow_measures_not_inlined' \
-    "$(awk -F'\t' '$1 == "Function Scan" { print $2 }' "$WORK/teeth_netflow_plan.txt" | sort -u | tr -d '\n')"
+    "$(awk -F'\t' '$1 == "Function Scan" && $2 ~ /^(flow_measures|connection_measure_parts)/ { print $2 }' \
+        "$WORK/teeth_netflow_plan.txt" | sort -u | tr -d '\n')"
 
 # E12: the geolocations a widget places are read by one named statement, which the sweep planned
 # above at both seeds; it searches geo_asn's primary key, and scans no growing table.
@@ -4825,7 +4852,7 @@ for db in "$MAIN_DB" "$ALT_DB"; do
     check "C5A-AC6 $tag: interface_network carries both families" '4,6' \
         "$(q "$db" "SELECT string_agg(CAST(address_family AS text), ',' ORDER BY address_family) FROM
             (SELECT DISTINCT address_family FROM interface_network ORDER BY 1);")"
-    check "C5A-AC6 $tag: the link-local rule carries both values" '0,1' \
+    check "C5A-AC6 $tag: the link-local rule carries both values" 'false,true' \
         "$(q "$db" "SELECT string_agg(CAST(link_local_evidence AS text), ',' ORDER BY link_local_evidence) FROM
             (SELECT DISTINCT link_local_evidence FROM interface ORDER BY 1);")"
     # Amended by the resolver-cache cycle: local_data_hostname is the sixth resolution; and by
@@ -4874,7 +4901,7 @@ for db in "$MAIN_DB" "$ALT_DB"; do
     check_ge "S5A-AC35 $tag: an interface address change is history, not an overwrite" 2 \
         "$(q "$db" "SELECT max(n) FROM (SELECT count(*) AS n FROM interface_address
             WHERE source_field = 'addr4' GROUP BY interface_id);")"
-    check "S5A-AC35 $tag: is_upstream carries both values" '0,1' \
+    check "S5A-AC35 $tag: is_upstream carries both values" 'false,true' \
         "$(q "$db" "SELECT string_agg(CAST(is_upstream AS text), ',' ORDER BY is_upstream) FROM
             (SELECT DISTINCT is_upstream FROM interface ORDER BY 1);")"
     check_ge "S5A-AC35 $tag: rule.interface is filled, a floating rule's empty value included" 1 \
@@ -4940,7 +4967,7 @@ for db in "$MAIN_DB" "$SCALE_DB"; do
                        WHERE unmatched_reason IS NOT NULL) AS c)
             || '|' || (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT ingress_role AS v FROM flow_record) AS d)
             || '|' || (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT egress_role AS v FROM flow_record) AS e)
-            || '|' || (SELECT CAST(max(counted_copy) AS text) FROM flow_record);")"
+            || '|' || (SELECT CAST(CAST(bool_or(counted_copy) AS INTEGER) AS text) FROM flow_record);")"
     check "E17 $tag: one pull period and one push period, the push one open" 'pull:closed,push:open' \
         "$(q "$db" "SELECT string_agg(path || ':' || CASE WHEN to_at IS NULL THEN 'open' ELSE 'closed' END, ','
             ORDER BY path) FROM provider_source_period;")"
@@ -5639,8 +5666,11 @@ check_ge 'FC-AC5 a rule that does not log is representable' 1 \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM rule WHERE NOT logs_matches;')"
 check_ge 'FC-AC5 a rule whose logging flag was not reported stays distinguishable' 1 \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM rule WHERE logs_matches IS NULL;')"
-expect_sql_failure 'FC-AC5 a logging flag outside the two states is rejected' "$MAIN_DB" \
-    'UPDATE rule SET logs_matches = 2 WHERE id = 1;'
+# A BOOLEAN holds the two states and nothing else, NULL being "not reported": its type is the
+# constraint a CHECK (x IN (0, 1)) was before the store's columns became BOOLEAN (PA15).
+check 'FC-AC5 a logging flag can hold only its two states, or not reported' 'boolean' \
+    "$(q "$MAIN_DB" "SELECT data_type FROM information_schema.columns
+        WHERE table_schema = 'opnview' AND table_name = 'rule' AND column_name = 'logs_matches';")"
 check_ge 'FC-AC5 an interface whose link state differs from the common one is representable' 1 \
     "$(q "$MAIN_DB" "SELECT count(DISTINCT status) FROM interface WHERE status IS NOT NULL;")"
 check_ge 'FC-AC5 an interface discovered without a state reads as not reported' 1 \
@@ -5705,6 +5735,10 @@ else
         "$(run_query "$RATE_DB" "$(wrap_query "$RATE_FILE" \
             'SELECT count(*) FROM (' \
             ') WHERE record_count = 0 AND covered_from_at IS NULL AND peak_bucket_records IS NULL;')")"
+    # The schema seeds no provider (PA2 of the plugin-API amendment): the registry the built-ins write
+    # when they load is applied as the seed applies it, so the gap below has its provider.
+    expect_sql_success 'RR-AC6 the declarations register the core providers' "$RATE_DB" \
+        "$(sed -n '/^-- registry:begin$/,/^-- registry:end$/p' "$REPO_ROOT/sql/seed.sql" | sed "s/:now/$NOW/g")"
     PF_ID="$(q "$RATE_DB" "SELECT id FROM provider WHERE kind = 'firewall_log' AND provider_key = 'pf';")"
     q "$RATE_DB" "INSERT INTO collection_gap
         (provider_id, interval_start_at, interval_end_at, reason, detail, detected_at)

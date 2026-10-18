@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -202,7 +203,7 @@ func writeStatements(path string, declarations []dataset.Declaration, now int64)
 		}
 		compiled := dataset.Compile(declaration, query, dataset.Window{From: now - 86400, To: now})
 		fmt.Fprintf(&text, "\n-- statement: plugin_dataset_%s_default\n%s;\n", statementName(declaration.Name),
-			compiled.Text)
+			namedParameters(compiled.Text))
 		if earliest := dataset.EarliestStatement(declaration); earliest != "" {
 			fmt.Fprintf(&text, "\n-- statement: plugin_dataset_%s_earliest\n%s;\n", statementName(declaration.Name),
 				earliest)
@@ -266,3 +267,11 @@ func value(column plugindecl.PluginColumn, timeColumn bool, n int, instant int64
 		return fmt.Sprintf("%s-%d", column.Name, n)
 	}
 }
+
+// positional is a PostgreSQL positional parameter, $1 and the like.
+var positional = regexp.MustCompile(`\$([0-9]+)`)
+
+// namedParameters writes a compiled statement's positional parameters as named ones, :p1 for $1, the
+// form every statements file of the tree is written in, so the plan sweep binds each of them as it
+// binds every other statement's (planjson explain). The compiler quotes no text holding a dollar sign.
+func namedParameters(text string) string { return positional.ReplaceAllString(text, ":p$1") }

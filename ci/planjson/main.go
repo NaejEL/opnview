@@ -9,7 +9,9 @@
 // <value> as an untyped literal, which the server types from the place it stands in -- a
 // bigint beside a bigint column, text beside a text one -- as the store's driver casts each
 // argument to its Go type (internal/store/sqldb/driver.go). A literal is planned for its value, as
-// the store's first executions are;
+// the store's first executions are. A parameter that cannot take an instant -- a BOOLEAN flag -- is
+// given its own value by a line "-- plan-with: <name>=<literal>" among its statement's lines, which the
+// statement files keep beside the statement as a comment and the store never reads;
 //
 //	planjson nodes
 //
@@ -63,17 +65,30 @@ func explain(path, value string) error {
 	if err != nil {
 		return err
 	}
-	literal := "'" + strings.ReplaceAll(value, "'", "''") + "'"
-	text := replaceParameters(strings.TrimSpace(string(raw)), literal)
+	quote := func(text string) string { return "'" + strings.ReplaceAll(text, "'", "''") + "'" }
+	literals := map[string]string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		assignment, found := strings.CutPrefix(strings.TrimSpace(line), "-- plan-with: ")
+		if !found {
+			continue
+		}
+		name, given, valid := strings.Cut(assignment, "=")
+		if !valid || name == "" {
+			return fmt.Errorf("%s: %q is not a plan-with line, -- plan-with: <name>=<literal>", path, line)
+		}
+		literals[strings.TrimSpace(name)] = quote(strings.TrimSpace(given))
+	}
+	text := replaceParameters(strings.TrimSpace(string(raw)), quote(value), literals)
 	text = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(text), ";"))
 	fmt.Printf("EXPLAIN (FORMAT JSON)\n%s;\n", text)
 	return nil
 }
 
-// replaceParameters replaces every :name parameter with the literal, leaving quoted text,
+// replaceParameters replaces every :name parameter with its literal -- its own, or the default --
+// leaving quoted text,
 // quoted identifiers, comments, dollar-quoted bodies and :: casts alone, as the store's driver
 // reads a statement.
-func replaceParameters(query, literal string) string {
+func replaceParameters(query, literal string, literals map[string]string) string {
 	var out strings.Builder
 	for i := 0; i < len(query); {
 		character := query[i]
@@ -119,7 +134,11 @@ func replaceParameters(query, literal string) string {
 			for end < len(query) && isIdentifierPart(query[end]) {
 				end++
 			}
-			out.WriteString(literal)
+			if own, found := literals[query[i+1:end]]; found {
+				out.WriteString(own)
+			} else {
+				out.WriteString(literal)
+			}
 			i = end
 		default:
 			out.WriteByte(character)

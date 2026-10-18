@@ -40,6 +40,7 @@ func (s *FlowStore) ProviderID(ctx context.Context, kind, providerKey string) (i
 // is, activeness included; and the availability row every registry row has. It is how the DDL can seed no
 // product row: the built-ins' declarations write theirs when they load, and a plugin added later writes
 // its own the same way.
+// A provider of a kind the declarations do not name carries no attribute, and the row is refused.
 func (s *FlowStore) RegisterDeclarations(ctx context.Context, kinds []vocab.ProviderKind,
 	providers []vocab.ProviderDeclaration, now int64) error {
 	kindNames := make([]string, 0, len(kinds))
@@ -68,8 +69,9 @@ func (s *FlowStore) RegisterDeclarations(ctx context.Context, kinds []vocab.Prov
 		return fmt.Errorf("store: registering the kinds: %w", err)
 	}
 	if _, err := transaction.ExecContext(ctx,
-		"INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) "+
-			"SELECT k, p, n, false, $4 FROM unnest(CAST($1 AS TEXT[]), CAST($2 AS TEXT[]), CAST($3 AS TEXT[])) AS d (k, p, n) "+
+		"INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at) "+
+			"SELECT d.k, d.p, d.n, pk.concurrent, false, $4 FROM unnest(CAST($1 AS TEXT[]), CAST($2 AS TEXT[]), CAST($3 AS TEXT[])) AS d (k, p, n) "+
+			"LEFT JOIN provider_kind AS pk ON pk.kind = d.k "+
 			"ON CONFLICT (kind, provider_key) DO NOTHING", providerKinds, keys, names, now); err != nil {
 		return fmt.Errorf("store: registering the providers: %w", err)
 	}
@@ -135,8 +137,9 @@ func (s *FlowStore) EnsureProvider(ctx context.Context, kind, providerKey, displ
 		return 0, false, fmt.Errorf("store: registering the kind of %s/%s: %w", kind, providerKey, err)
 	}
 	result, err := transaction.ExecContext(ctx,
-		"INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) "+
-			"VALUES ($1, $2, $3, false, $4) ON CONFLICT (kind, provider_key) DO NOTHING",
+		"INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at) "+
+			"SELECT k.kind, $2, $3, k.concurrent, false, $4 FROM provider_kind AS k WHERE k.kind = $1 "+
+			"ON CONFLICT (kind, provider_key) DO NOTHING",
 		kind, providerKey, displayName, now)
 	if err != nil {
 		return 0, false, fmt.Errorf("store: registering provider %s/%s: %w", kind, providerKey, err)

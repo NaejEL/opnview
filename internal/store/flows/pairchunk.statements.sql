@@ -39,6 +39,7 @@ ORDER BY id;
 -- The `in` records one `out` record can be the second leg of. Two are enough to
 -- know it has more than one.
 -- statement: pairing_in_candidates
+-- plan-with: src_is_this_firewall=false
 SELECT i.id
 FROM flow AS i
 WHERE i.dst_address = :dst_address

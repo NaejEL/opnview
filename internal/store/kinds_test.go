@@ -32,8 +32,8 @@ func TestTwoSecurityEventProvidersCanBothBeActive(t *testing.T) {
 
 	// A second implementation of the kind is an INSERT and never a schema change.
 	if _, err := database.DB().ExecContext(ctx,
-		`INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-		 VALUES ('security_event', 'example-second-engine', 'Example second engine', false, 1750000000)`,
+		`INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at)
+		 VALUES ('security_event', 'example-second-engine', 'Example second engine', true, false, 1750000000)`,
 	); err != nil {
 		t.Fatalf("registering a second security-event provider: %v", err)
 	}

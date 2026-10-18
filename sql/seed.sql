@@ -124,22 +124,25 @@ INSERT INTO provider_kind (kind, concurrent) VALUES
     ('resolver_local_data', true), ('security_event', true)
 ON CONFLICT (kind) DO NOTHING;
 
-INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) VALUES
-    ('dhcp_lease', 'dnsmasq', 'Dnsmasq DHCP', false, :now),
-    ('dhcp_lease', 'isc', 'ISC dhcpd', false, :now),
-    ('dhcp_lease', 'kea', 'Kea DHCP', false, :now),
-    ('dns_lookup', 'dnsmasq', 'Dnsmasq resolver', false, :now),
-    ('dns_lookup', 'unbound', 'Unbound', false, :now),
-    ('firewall_log', 'pf', 'pf filter log', false, :now),
-    ('flow_volume', 'insight', 'NetFlow / Insight', false, :now),
-    ('ip_geolocation', 'maxmind_geolite2', 'MaxMind GeoLite2', false, :now),
-    ('measurement_sample', 'insight', 'NetFlow / Insight sampling', false, :now),
-    ('registrable_domain', 'public_suffix_list', 'Public Suffix List', false, :now),
-    ('resolver_cache', 'dnsmasq', 'Dnsmasq cache', false, :now),
-    ('resolver_cache', 'unbound', 'Unbound cache', false, :now),
-    ('resolver_local_data', 'dnsmasq', 'Dnsmasq local data', false, :now),
-    ('resolver_local_data', 'unbound', 'Unbound local data', false, :now),
-    ('security_event', 'suricata', 'Suricata', false, :now)
+INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at)
+SELECT d.kind, d.provider_key, d.display_name, k.concurrent, false, :now FROM (VALUES
+    ('dhcp_lease', 'dnsmasq', 'Dnsmasq DHCP'),
+    ('dhcp_lease', 'isc', 'ISC dhcpd'),
+    ('dhcp_lease', 'kea', 'Kea DHCP'),
+    ('dns_lookup', 'dnsmasq', 'Dnsmasq resolver'),
+    ('dns_lookup', 'unbound', 'Unbound'),
+    ('firewall_log', 'pf', 'pf filter log'),
+    ('flow_volume', 'insight', 'NetFlow / Insight'),
+    ('ip_geolocation', 'maxmind_geolite2', 'MaxMind GeoLite2'),
+    ('measurement_sample', 'insight', 'NetFlow / Insight sampling'),
+    ('registrable_domain', 'public_suffix_list', 'Public Suffix List'),
+    ('resolver_cache', 'dnsmasq', 'Dnsmasq cache'),
+    ('resolver_cache', 'unbound', 'Unbound cache'),
+    ('resolver_local_data', 'dnsmasq', 'Dnsmasq local data'),
+    ('resolver_local_data', 'unbound', 'Unbound local data'),
+    ('security_event', 'suricata', 'Suricata')
+) AS d (kind, provider_key, display_name)
+LEFT JOIN provider_kind AS k ON k.kind = d.kind
 ON CONFLICT (kind, provider_key) DO NOTHING;
 
 INSERT INTO source_availability (provider_id, state, outcome, probe, detail, checked_at)
@@ -185,8 +188,8 @@ WHERE NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id
 -- state-shaped source is written yet -- so this pretend-installation registers
 -- the one it pretends to run, which is the INSERT such a connector's cycle would
 -- add. The name is an example value in a fixture and matches no product.
-INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-VALUES ('reconciled_state', 'example-state-source', 'Example state source', false, :now)
+INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at)
+VALUES ('reconciled_state', 'example-state-source', 'Example state source', true, false, :now)
 ON CONFLICT (kind, provider_key) DO NOTHING;
 
 INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)

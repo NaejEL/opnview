@@ -167,9 +167,9 @@ func TestTwoProvidersReadingOneSubjectAtOneInstantAreTwoReadingsAndOneGaugeIsSti
 	ctx := context.Background()
 
 	if _, err := database.DB().ExecContext(ctx,
-		`INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
+		`INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at)
 		 VALUES ('measurement_sample', 'example-second-sampler', 'Example second sampler',
-		         true, 1750000000)`); err != nil {
+		         true, true, 1750000000)`); err != nil {
 		t.Fatalf("registering a second measurement provider: %v", err)
 	}
 	first, err := database.ProviderID(ctx, "measurement_sample", "insight")

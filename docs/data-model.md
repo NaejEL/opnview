@@ -123,7 +123,7 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | who sends syslog, who receives it | RFC 5424's **originator** and **collector** | the `sender` of a pushed message; `opnview` is the collector | RFC 5424, section 3 |
 | who sends NetFlow and its records | RFC 7011's **Exporter**, **Collector**, **Observation Domain**, **Information Element** | `exporterIPv4Address`, `observationDomainId`, the IANA registry's element names | RFC 7011, section 2; RFC 3954 |
 
-**Fifty-seven terms are `opnview`'s own, because OPNsense has no word for them.**
+**Sixty-eight terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -287,6 +287,7 @@ interface
 interface_address
 interface_map
 interface_network
+measure_interval
 measurement_sample
 opnsense.mirror_column
 opnsense.mirror_correction
@@ -382,9 +383,6 @@ client_volume_aggregate_30d
 client_volume_aggregate_7d
 collection_gap
 connection_measure
-declared_measure
-declared_measure_marker
-declared_measure_state
 dhcp_lease
 dns_resolution
 domain_attribution
@@ -437,11 +435,15 @@ blocklist
 capture_configuration
 capture_interface
 capture_interface_parent_of
+declared_measure
+declared_measure_marker
+declared_measure_state
 encrypted_credential
 eve_ingest_cursor
 interface
 interface_map
 interface_network
+measure_interval
 opnsense.mirror_column
 opnsense.mirror_correction
 opnsense.mirror_datum

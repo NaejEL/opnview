@@ -49,6 +49,8 @@ security_event
 | `resolver_cache` | the records a resolver holds in its cache — the answer addresses of the names it resolved, which the query report of `dns_lookup` does not carry | `resource_record_observation` (held in `cache`), feeding `domain_attribution`'s `resolver_cache_answer` method |
 | `resolver_local_data` | the records a resolver serves from its own local data, host overrides among them | `resource_record_observation` (held in `local_data`), feeding host-name resolution (`dns_resolution.client_resolution = 'local_data_hostname'`) and the exact evidence of a lookup answered from Local-data |
 
+The twelve above are the core kinds, one kind file each. A built-in plugin may also declare a kind of its own, writing into its own tables: `pf_state_rate` (the `pf_states` plugin's pf state table rates) and `unbound_query_log` (the `unbound` plugin's query log received over syslog). Their contracts are their manifests' tables (`docs/plugins.md`, *Kinds of the plugin's own*).
+
 **`measurement_sample` and `reconciled_state` are the survey's finding rather than a design instinct.** Of the
 ~34 data-producing sources the plugin ecosystem exposes, **eight of the ten that
 fit an existing shape fit `measurement_sample`** — per-peer transfer counters,
@@ -426,6 +428,8 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/push` — what the firewall sends to opnview: the listeners, the routing and the batching.
 - `internal/push/ipfixregistry` — the IANA IPFIX Information Elements registry.
 - `internal/push/protocols` — the generated link of every push protocol into the binary.
+- `internal/push/protocols/datagram` — the `datagram` push protocol: one UDP datagram per message, decoded by a plugin's script.
+- `internal/push/protocols/line` — the `line` push protocol: one newline-framed line per message, over TCP or UDP, decoded by a plugin's script.
 - `internal/push/protocols/netflow` — the NetFlow push protocol, version 9 and IPFIX.
 - `internal/push/protocols/syslog` — the syslog push protocol.
 - `internal/secret` — the key file beside the database, and the authenticated encryption of the credentials.

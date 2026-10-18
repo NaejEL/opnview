@@ -24,8 +24,8 @@ func exampleStateProvider(t *testing.T, database *store.Store) int64 {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := database.DB().ExecContext(ctx,
-		`INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-		 VALUES ('reconciled_state', 'example-state-source', 'Example state source', true, 1750000000)`,
+		`INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at)
+		 VALUES ('reconciled_state', 'example-state-source', 'Example state source', true, true, 1750000000)`,
 	); err != nil {
 		t.Fatalf("registering a reconciled-state provider: %v", err)
 	}

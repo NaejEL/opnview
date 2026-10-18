@@ -377,29 +377,19 @@ CREATE TABLE IF NOT EXISTS provider (
     kind          TEXT NOT NULL,
     provider_key  TEXT NOT NULL,
     display_name  TEXT NOT NULL,
-    concurrent    BOOLEAN NOT NULL,
+    concurrent    BOOLEAN NOT NULL DEFAULT false,
     is_active     BOOLEAN NOT NULL DEFAULT false,
     registered_at BIGINT NOT NULL CHECK (registered_at >= 0 AND registered_at < 4102444800),
     UNIQUE (kind, provider_key),
     FOREIGN KEY (kind, concurrent) REFERENCES provider_kind (kind, concurrent) ON UPDATE CASCADE
 );
 
--- A provider row takes its kind's attribute from provider_kind when the INSERT does not
--- name it, so registering an implementation stays an INSERT of its kind, key and
--- name. A kind no declaration registered leaves it NULL, and the row is refused.
-CREATE OR REPLACE FUNCTION provider_kind_attribute() RETURNS trigger
-LANGUAGE plpgsql
-AS $provider_kind_attribute$
-BEGIN
-    IF NEW.concurrent IS NULL THEN
-        SELECT k.concurrent INTO NEW.concurrent FROM provider_kind AS k WHERE k.kind = NEW.kind;
-    END IF;
-    RETURN NEW;
-END
-$provider_kind_attribute$;
-
-CREATE OR REPLACE TRIGGER provider_kind_attribute BEFORE INSERT ON provider
-    FOR EACH ROW EXECUTE FUNCTION provider_kind_attribute();
+-- A provider row carries its kind's attribute, which the store's registration copies from
+-- provider_kind as it inserts the row (store.RegisterDeclarations, EnsureProvider). No trigger
+-- fills it: no trigger but the row-id ones exists (VOC-AC4). The default is an exclusive kind's,
+-- and the foreign key refuses a row whose value is not its kind's -- a concurrent kind's row
+-- inserted without naming it is refused, never silently made exclusive -- and a row of a kind
+-- no declaration registered.
 
 
 -- At most one active provider per EXCLUSIVE kind, by the rule above. A partial
