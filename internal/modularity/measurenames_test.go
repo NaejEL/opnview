@@ -21,18 +21,9 @@ import (
 // values -- names none (PA-AC7 of the plugin-API amendment): a measure is a plugin's declaration. The
 // list may only shrink.
 var measureNameAllowed = map[string]string{
-	// The Go NetFlow join and its store: PA9 lists every one of these for removal in Lot 3, when the join
-	// moves into the netflow plugin's JavaScript. Until then they are the derivation filling the measure.
-	"internal/collect/derive/":            "the Go NetFlow join's derivation (PA9 removes it in Lot 3)",
-	"internal/store/netflow/":             "the Go NetFlow join's store (PA9 removes it in Lot 3)",
-	"internal/collect/kinds/flowrecords/": "the flow_record coordinator (PA9 removes it in Lot 3)",
-	"internal/collect/collecttest/":       "the harness of the Go join's tests, netflowfixture.go (PA9 removes it in Lot 3)",
-	"internal/collect/core/collector.go":  "the collector's NetFlow state, read by the Go join (PA9 removes it in Lot 3)",
-	"internal/collect/core/state.go":      "the collector's NetFlow state, read by the Go join (PA9 removes it in Lot 3)",
-	"internal/store/store.go":             "the store composing the Go join's store, store/netflow (PA9 removes it in Lot 3)",
-	"internal/store/purge/purge.go":       "the purge calling the Go join's purge, store/netflow (PA9 removes it in Lot 3)",
-	"internal/store/schema.sql": "the Go join's tables (PA9 removes them in Lot 3) and the push gap reasons " +
-		"named after the NetFlow protocol",
+	// The Go NetFlow join's paths left this list with the join in Lot 3 (PA9); these two name the protocol.
+	"internal/collect/collecttest/": "the fake firewall's endpoint names, insight's netflow_is_enabled among them",
+	"internal/store/schema.sql":     "the push gap reasons named after the NetFlow protocol",
 	// The protocol, not the measure: NetFlow v9 and IPFIX are push protocols, named after their RFCs.
 	"internal/push/protocols/": "the NetFlow push protocol's directory and the generated list linking it " +
 		"(PA20's allow-list)",

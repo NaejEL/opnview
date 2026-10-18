@@ -114,11 +114,11 @@ FROM every_slot;
 -- attribute, then the providers the core kinds have always been read through,
 -- each with its availability row -- the installation the checks below were
 -- written against, whose documented kinds are the core ones. A plugin's own
--- kind, and the flow_record exporter (registered below as this installation's
--- own), are left out of it, as they were.
+-- kind is left out of it -- the netflow plugin's flow_record and its provider
+-- are registered below, with the measure they feed.
 -- ---------------------------------------------------------------------------
 INSERT INTO provider_kind (kind, concurrent) VALUES
-    ('dhcp_lease', true), ('dns_lookup', false), ('firewall_log', false), ('flow_record', false),
+    ('dhcp_lease', true), ('dns_lookup', false), ('firewall_log', false),
     ('flow_volume', false), ('ip_geolocation', false), ('measurement_sample', true),
     ('reconciled_state', true), ('registrable_domain', false), ('resolver_cache', true),
     ('resolver_local_data', true), ('security_event', true)
@@ -2630,203 +2630,102 @@ WHERE m.n <= 1 + (
 );
 
 -- ---------------------------------------------------------------------------
--- NetFlow, and the push bookkeeping: the exporter's records, the capture
--- configurations they were read under, the join's decisions, the measured
--- volumes, the unmatched records, the push source periods and listeners, and
--- the `netflow` figures of the families and of the purged part (PS9, PS17 of
--- the spec, NJ2 to NJ8 and NJ10 of its amendment "the NetFlow join with every
--- interface captured", and Phase E).
+-- The `netflow` measure, and the push bookkeeping: the measure's declaration,
+-- its window intervals, the measured volumes, the push source periods and
+-- listeners, and the `netflow` figures of the families and of the purged part
+-- (PA5 and PA9 of the plugin-API amendment, NJ5 of the amendment "the NetFlow
+-- join with every interface captured", and Phase E).
 --
--- IN PROPORTION TO :flow_rows, at every size: one exporter record for every
--- eighth flow and one measured connection for each joined one. So the scale
--- seed's NetFlow tables are ten times the baseline's, as flow is, and the plans
--- read at both sizes read tables that grew together.
+-- The netflow plugin's own tables -- its flow records, capture runs and
+-- unmatched counters -- are plugin tables since PA9: the loader creates them and
+-- seeds them generically, as it does every plugin's (ci/plugintables, E21). What
+-- is seeded here is what the plugin writes into the core: the measure's rows.
 --
--- NO ADDRESS LITERAL: every address below is a flow's own, or a slot of the
--- address pool. Interfaces are identified by their position, never by a name:
--- every one is captured, the upstream one -- after the others -- on egress only;
--- the second is reported not exported; the first is the parent of the third.
+-- IN PROPORTION TO :flow_rows, at every size: one measured connection for three
+-- in every 56 flows, as the exporter's joined records were. So the scale seed's
+-- measure tables are ten times the baseline's, as flow is, and the plans read at
+-- both sizes read tables that grew together.
 -- ---------------------------------------------------------------------------
 
--- The exporter, a provider of the flow_record kind this pretend-installation
--- runs: an example value, as the reconciled_state source above is.
-INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-VALUES ('flow_record', 'example-exporter', 'Example exporter', true, :now)
+-- The netflow plugin's provider of its own flow_record kind, registered as the
+-- loader registers it (the provider key is the plugin's name) and active, as
+-- this pretend-installation runs it.
+INSERT INTO provider_kind (kind, concurrent) VALUES ('flow_record', false)
+ON CONFLICT (kind) DO NOTHING;
+INSERT INTO provider (kind, provider_key, display_name, concurrent, is_active, registered_at)
+VALUES ('flow_record', 'netflow', 'NetFlow export', false, true, :now)
 ON CONFLICT (kind, provider_key) DO NOTHING;
 
 INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
-SELECT p.id, 'reachable', 'example-exporter-probe', NULL, :now
+SELECT p.id, 'reachable', 'netflow-probe', NULL, :now
 FROM provider AS p
-WHERE p.kind = 'flow_record' AND p.provider_key = 'example-exporter'
+WHERE p.kind = 'flow_record' AND p.provider_key = 'netflow'
   AND NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);
-
--- Three runs of reads, one after the other over the whole history: the
--- configuration from before the oldest flow to 45 days ago; then five days whose
--- reads failed, an unreadable run; then the configuration again, up to :now. A
--- minute between two runs is a capture configuration unknown, as between any two
--- reads that differ, and both lie before the 30-day window, which the last run
--- covers whole.
-INSERT INTO capture_configuration (id, provider_id, first_read_at, last_read_at, fingerprint, outcome,
-                                   detail, enabled, export_version, active_timeout_seconds,
-                                   inactive_timeout_seconds)
-SELECT c.id, p.id, c.first_read_at, c.last_read_at, c.fingerprint,
-       CASE WHEN c.fingerprint IS NULL THEN 'unavailable' END,
-       CASE WHEN c.fingerprint IS NULL THEN 'example-unreadable-detail' END,
-       CASE WHEN c.fingerprint IS NOT NULL THEN true END,
-       CASE WHEN c.fingerprint IS NOT NULL THEN '9' END,
-       CASE WHEN c.fingerprint IS NOT NULL THEN 1800 END,
-       CASE WHEN c.fingerprint IS NOT NULL THEN 15 END
-FROM provider AS p,
-     (VALUES (1, least(:now - :flow_rows * 97, :now - 3888000 - 86400) - 3600, :now - 3888000,
-              'example-every-interface'),
-             (2, :now - 3888000 + 60, :now - 3456000, CAST(NULL AS TEXT)),
-             (3, :now - 3456000 + 60, :now, 'example-every-interface'))
-         AS c (id, first_read_at, last_read_at, fingerprint)
-WHERE p.kind = 'flow_record' AND p.provider_key = 'example-exporter';
-
-INSERT INTO capture_interface (capture_configuration_id, identifier, ingress, egress, exported,
-                               not_exported_reason)
-SELECT c.id, i.identifier,
-       i.id <> :interfaces + 1,
-       true,
-       CASE WHEN i.id = 2 THEN 'no' ELSE 'yes' END,
-       CASE WHEN i.id = 2 THEN 'example-no-export-point' END
-FROM capture_configuration AS c
-JOIN interface AS i ON i.id <= :interfaces + 1
-WHERE c.fingerprint IS NOT NULL;
-
-INSERT INTO capture_interface_parent_of (capture_configuration_id, identifier, of_identifier)
-SELECT c.id, parent.identifier, child.identifier
-FROM capture_configuration AS c
-JOIN interface AS parent ON parent.id = 1
-JOIN interface AS child ON child.id = 3
-WHERE c.fingerprint IS NOT NULL;
-
--- The records. Record n is the exporter's view of flow 8n: its start is the
--- flow's instant, its ends and family the flow's own, its ingress index the
--- flow's interface's, its egress index the upstream one's. Every role of NJ3 is
--- met -- a few records carry index 0, the loopback's role, or an index the map
--- does not hold -- and every join state: one in seven waits for the join, one is
--- unmatched, every reason in turn, one a translated copy of its flow (one in two
--- of them counted), one a parent copy, and the others are joined -- forward and
--- reverse in turn.
-WITH counter (n) AS (
-    SELECT generate_series(CAST(1 AS BIGINT), :flow_rows / 8)
-),
-recorded AS (
-    SELECT c.n, f.id AS flow_id, f.observed_at, f.ip_version, f.src_address, f.dst_address,
-           f.src_port, f.dst_port, f.packet_bytes,
-           CASE f.protocol WHEN 'tcp' THEN 6 ELSE 17 END AS protocol,
-           coalesce(f.src_interface_id, :interfaces + 1) AS interface_id,
-           CASE WHEN c.n % 37 = 0 THEN 'unmapped'
-                WHEN c.n % 31 = 0 THEN 'no_receiving_interface'
-                ELSE 'interface' END AS ingress_role,
-           CASE WHEN c.n % 29 = 0 THEN 'local_delivery' ELSE 'interface' END AS egress_role,
-           CASE c.n % 7 WHEN 0 THEN 'pending' WHEN 1 THEN 'unmatched' WHEN 2 THEN 'copy' WHEN 3 THEN 'copy'
-                        ELSE 'joined' END AS join_state
-    FROM counter AS c
-    JOIN flow AS f ON f.id = 8 * c.n
-)
-INSERT INTO flow_record (provider_id, identity, start_at, start_millisecond, end_at, end_millisecond,
-                         received_at, exporter_address, observation_domain, ingress_interface,
-                         egress_interface, ip_version, protocol, src_address, dst_address, src_port,
-                         dst_port, tcp_flags, octets, packets, ingress_role, ingress_identifier,
-                         ingress_device, egress_role, egress_identifier, egress_device, loss_detectable,
-                         tuple_key, join_state, joined_flow_id, copy_kind, copy_flow_id, orientation,
-                         counted_copy, unmatched_reason, decided_at)
-SELECT
-    (SELECT id FROM provider WHERE kind = 'flow_record' AND provider_key = 'example-exporter'),
-    encode(sha256(convert_to(format('example-record-%s', r.n), 'UTF8')), 'hex'),
-    r.observed_at, 0, r.observed_at + 30, 500, r.observed_at + 60,
-    CASE WHEN r.ip_version = 6 THEN exporter.address_v6 ELSE exporter.address_v4 END,
-    0,
-    CASE r.ingress_role WHEN 'no_receiving_interface' THEN 0 WHEN 'unmapped' THEN 999 ELSE 20 + r.interface_id END,
-    CASE r.egress_role WHEN 'local_delivery' THEN 19 ELSE 20 + :interfaces + 1 END,
-    r.ip_version, r.protocol, r.src_address, r.dst_address, r.src_port, r.dst_port,
-    CASE WHEN r.protocol = 6 THEN 27 END,
-    r.packet_bytes * 3, 3,
-    r.ingress_role,
-    CASE WHEN r.ingress_role = 'interface' THEN ingress.identifier END,
-    CASE WHEN r.ingress_role = 'interface' THEN ingress.device END,
-    r.egress_role,
-    CASE WHEN r.egress_role = 'interface' THEN upstream.identifier END,
-    CASE WHEN r.egress_role = 'interface' THEN upstream.device END,
-    NOT (r.observed_at BETWEEN :now - 3888000 + 60 AND :now - 3456000),
-    format('%s|%s|%s|%s', r.ip_version, r.protocol, least(r.src_address, r.dst_address),
-           greatest(r.src_address, r.dst_address)),
-    r.join_state,
-    CASE WHEN r.join_state = 'joined' THEN r.flow_id END,
-    CASE WHEN r.join_state = 'copy' AND r.n % 7 = 2 THEN 'translated_copy'
-         WHEN r.join_state = 'copy' THEN 'parent_copy' END,
-    CASE WHEN r.join_state = 'copy' AND r.n % 7 = 2 THEN r.flow_id END,
-    CASE WHEN r.join_state = 'joined' OR (r.join_state = 'copy' AND r.n % 7 = 2)
-         THEN CASE WHEN r.n % 2 = 0 THEN 'forward' ELSE 'reverse' END END,
-    r.join_state = 'copy' AND r.n % 14 = 2,
-    CASE WHEN r.join_state = 'unmatched'
-         THEN (ARRAY['no_logged_leg', 'ambiguous', 'beyond_flow_horizon', 'interface_index_unmapped',
-                     'reverse_unconfirmed'])[1 + (r.n / 7) % 5] END,
-    CASE WHEN r.join_state IN ('joined', 'copy', 'unmatched') THEN r.observed_at + 90 END
-FROM recorded AS r
-JOIN interface AS ingress ON ingress.id = r.interface_id
-JOIN interface AS upstream ON upstream.id = :interfaces + 1
-JOIN synth_address AS exporter ON exporter.slot = 900000 + :interfaces + 1;
 
 -- The `netflow` measure, as the netflow plugin's manifest declares it and the
 -- loader registers it (PA5 of the plugin-API amendment; plugins/netflow/plugin.json):
--- its twelve direction states in their declared order, the four covered, and its
--- one marker. A part is 6 + 12 + 1 = 19 figures wide.
+-- its fourteen direction states in their declared order, the five covered, and
+-- its one marker. A part is 6 + 14 + 1 = 21 figures wide.
 INSERT INTO declared_measure (name, provider_kind, complete_state, refused_state, zero_part, not_known_part,
                               registered_at)
 VALUES ('netflow', 'flow_record', 'measured', 'not_exported_when_refused',
-        array_fill(CAST(0 AS BIGINT), ARRAY[19]),
-        array_fill(CAST(0 AS BIGINT), ARRAY[5]) || ARRAY[CAST(1 AS BIGINT)] || array_fill(CAST(0 AS BIGINT), ARRAY[13]),
+        array_fill(CAST(0 AS BIGINT), ARRAY[21]),
+        array_fill(CAST(0 AS BIGINT), ARRAY[5]) || ARRAY[CAST(1 AS BIGINT)] || array_fill(CAST(0 AS BIGINT), ARRAY[15]),
         :now)
 ON CONFLICT (name) DO NOTHING;
 INSERT INTO declared_measure_state (measure, state, position, covered)
-SELECT 'netflow', s.state, s.position - 1, s.position <= 4
+SELECT 'netflow', s.state, s.position - 1, s.position <= 4 OR s.state = 'not_expected_when_refused'
 FROM unnest(ARRAY['measured', 'in_progress', 'awaiting_export', 'missing', 'export_gap',
                   'not_exported_when_refused', 'forwarding_export_unsettled', 'ingress_not_captured',
                   'parent_copies_only', 'interface_not_exported', 'interface_not_captured',
-                  'capture_configuration_unknown']) WITH ORDINALITY AS s (state, position)
+                  'capture_configuration_unknown', 'ambiguous_records',
+                  'not_expected_when_refused']) WITH ORDINALITY AS s (state, position)
 ON CONFLICT (measure, state) DO NOTHING;
 INSERT INTO declared_measure_marker (measure, marker, position)
 VALUES ('netflow', 'counted_copy', 0)
 ON CONFLICT (measure, marker) DO NOTHING;
 
--- The window intervals the Go join records from the capture configurations above
--- (internal/store/netflow, capture.go): each configuration in force from its
--- first read until the next one's, or the instant after its last read, the newest
--- for as long as no later read says otherwise.
+-- The window intervals the plugin records from its capture runs: three runs of
+-- reads, one after the other over the whole history -- the configuration from
+-- before the oldest flow to 45 days ago; then five days whose reads failed, an
+-- unrecorded run; then the configuration again, up to :now. Each interval lasts
+-- from its run's first read until the instant after its last, the newest for as
+-- long as no later read says otherwise; both changes lie before the 30-day
+-- window, which the last interval covers whole (E19).
 INSERT INTO measure_interval (measure, provider_id, starts_at, ends_at, state)
-SELECT 'netflow', c.provider_id, c.first_read_at,
-       CASE WHEN lead(c.first_read_at) OVER w IS NULL THEN NULL ELSE c.last_read_at + 1 END,
-       CASE WHEN c.fingerprint IS NULL THEN 'capture_configuration_unknown'
-            WHEN coalesce(c.enabled, false)
-                 AND EXISTS (SELECT 1 FROM capture_interface AS i
-                             WHERE i.capture_configuration_id = c.id AND (i.ingress OR i.egress))
-            THEN 'capture_configured'
-            ELSE 'netflow_not_configured' END
-FROM capture_configuration AS c
-WINDOW w AS (PARTITION BY c.provider_id ORDER BY c.first_read_at);
+SELECT 'netflow', p.id, i.starts_at, i.ends_at, i.state
+FROM provider AS p,
+     (VALUES (least(:now - :flow_rows * 97, :now - 3888000 - 86400) - 3600, :now - 3888000 + 1,
+              'capture_configured'),
+             (:now - 3888000 + 60, :now - 3456000 + 1, 'capture_configuration_unknown'),
+             (:now - 3456000 + 60, CAST(NULL AS BIGINT), 'capture_configured'))
+         AS i (starts_at, ends_at, state)
+WHERE p.kind = 'flow_record' AND p.provider_key = 'netflow';
 
--- The measured volume of every connection a record was joined to, both
--- directions, its state cycling through every state of NJ5, each with the
--- figures that state carries: records and bytes for a measured or an in-progress
--- direction, none for the others; counted from translated copies one in five
--- times where a figure is given; a final row has no due instant, an open one does.
+-- The measured volume of three connections in every 56 flows, both directions,
+-- each with the figures its state carries: records and bytes for a measured or
+-- an in-progress direction, none for the others; counted from translated copies
+-- one in five times where a figure is given; a final row has no due instant, an
+-- open one does. A connection of the last 30 days -- the widget budgets' windows
+-- (E19) -- is in a state the measure covers, cycling through the five; an older
+-- one cycles through all fourteen, so every state is seeded.
 WITH connection (flow_id, start_at, n) AS (
-    SELECT joined_flow_id, start_at, row_number() OVER (ORDER BY joined_flow_id)
-    FROM flow_record
-    WHERE join_state = 'joined'
+    SELECT f.id, f.observed_at, row_number() OVER (ORDER BY f.id)
+    FROM flow AS f
+    WHERE f.id % 8 = 0 AND (f.id / 8) % 7 >= 4
 ),
 directed AS (
     SELECT c.*, d.direction,
-           (ARRAY['measured', 'in_progress', 'awaiting_export', 'missing', 'export_gap',
-                  'not_exported_when_refused', 'forwarding_export_unsettled', 'ingress_not_captured',
-                  'parent_copies_only', 'interface_not_exported', 'interface_not_captured',
-                  'capture_configuration_unknown'])[1 + (c.n + d.shift) % 12] AS state
+           CASE WHEN c.start_at >= :now - 2592000
+                THEN (ARRAY['measured', 'in_progress', 'awaiting_export', 'missing',
+                            'not_expected_when_refused'])[1 + (c.n + d.shift) % 5]
+                ELSE (ARRAY['measured', 'in_progress', 'awaiting_export', 'missing', 'export_gap',
+                            'not_exported_when_refused', 'forwarding_export_unsettled', 'ingress_not_captured',
+                            'parent_copies_only', 'interface_not_exported', 'interface_not_captured',
+                            'capture_configuration_unknown', 'ambiguous_records',
+                            'not_expected_when_refused'])[1 + (c.n + d.shift) % 14] END AS state
     FROM connection AS c
-    CROSS JOIN (VALUES ('forward', 0), ('reverse', 5)) AS d (direction, shift)
+    CROSS JOIN (VALUES ('forward', 0), ('reverse', 3)) AS d (direction, shift)
 )
 INSERT INTO connection_measure (measure, connection_flow_id, direction, connection_start_at, state, bytes,
                                 packets, records, markers, final, due_at, computed_at)
@@ -2839,41 +2738,6 @@ SELECT 'netflow', d.flow_id, d.direction, d.start_at, d.state,
        CASE WHEN d.state IN ('in_progress', 'awaiting_export') THEN d.start_at + 3600 END,
        d.start_at + 120
 FROM directed AS d;
-
--- The unmatched records, per slot of their start in each period, per ingress and
--- egress interface -- an identifier, or the role of an index that names none --
--- protocol, version and reason: what the join adds as it decides each record
--- unmatched.
-CREATE TEMPORARY VIEW seed_unmatched AS
-SELECT start_at,
-       CASE WHEN ingress_role = 'interface' THEN coalesce(ingress_identifier, ingress_role) ELSE ingress_role END
-           AS ingress_name,
-       CASE WHEN egress_role = 'interface' THEN coalesce(egress_identifier, egress_role) ELSE egress_role END
-           AS egress_name,
-       protocol, ip_version, unmatched_reason, octets, packets
-FROM flow_record WHERE join_state = 'unmatched';
-INSERT INTO unmatched_record_aggregate_1h
-SELECT (start_at / 3600) * 3600, (start_at / 3600) * 3600 + 3600, ingress_name, egress_name,
-       protocol, ip_version, unmatched_reason, sum(octets), sum(packets), count(*), :now
-FROM seed_unmatched
-GROUP BY 1, 2, 3, 4, 5, 6, 7;
-INSERT INTO unmatched_record_aggregate_24h
-SELECT (start_at / 86400) * 86400, (start_at / 86400) * 86400 + 86400, ingress_name, egress_name,
-       protocol, ip_version, unmatched_reason, sum(octets), sum(packets), count(*), :now
-FROM seed_unmatched
-GROUP BY 1, 2, 3, 4, 5, 6, 7;
-INSERT INTO unmatched_record_aggregate_7d
-SELECT (start_at / 86400) * 86400 - (((start_at / 86400) + 3) % 7) * 86400,
-       (start_at / 86400) * 86400 - (((start_at / 86400) + 3) % 7) * 86400 + 604800,
-       ingress_name, egress_name, protocol, ip_version, unmatched_reason, sum(octets), sum(packets), count(*), :now
-FROM seed_unmatched
-GROUP BY 1, 2, 3, 4, 5, 6, 7;
-INSERT INTO unmatched_record_aggregate_30d
-SELECT month_start_at(start_at), next_month_start_at(start_at), ingress_name, egress_name,
-       protocol, ip_version, unmatched_reason, sum(octets), sum(packets), count(*), :now
-FROM seed_unmatched
-GROUP BY 1, 2, 3, 4, 5, 6, 7;
-DROP VIEW seed_unmatched;
 
 -- The filter log moved from polling to a push source a day before the
 -- retention's horizon: one closed pull period from the start of its history,
@@ -2901,8 +2765,8 @@ VALUES ('syslog', 'udp', :now - 30), ('netflow', 'udp', :now - 30);
 -- of each family carries them, in proportion as the exporter's records do: an
 -- UPDATE writes a new version of every row it touches, and rewriting every slot
 -- would double the families' size at the 1 000 000-row seed for no row a check
--- reads that one in eight does not give. A part is 19 figures wide (above):
--- bytes, packets, the four classes, the twelve states, the one marker.
+-- reads that one in eight does not give. A part is 21 figures wide (above):
+-- bytes, packets, the four classes, the fourteen states, the one marker.
 DO $seed_measure_families$
 DECLARE
     family TEXT;
@@ -2910,11 +2774,11 @@ DECLARE
     target TEXT;
     parts TEXT := 'jsonb_build_object(''netflow'', to_jsonb('
         'ARRAY[3 * allowed_bytes, 3 * allowed_connections, allowed_connections, 0, 0, 0, 2 * allowed_connections] '
-        '|| array_fill(CAST(0 AS BIGINT), ARRAY[12]) '
+        '|| array_fill(CAST(0 AS BIGINT), ARRAY[14]) '
         '|| ARRAY[3 * blocked_bytes, 3 * blocked_connections, blocked_connections, 0, 0, 0, 2 * blocked_connections] '
-        '|| array_fill(CAST(0 AS BIGINT), ARRAY[12]) '
+        '|| array_fill(CAST(0 AS BIGINT), ARRAY[14]) '
         '|| ARRAY[3 * unknown_bytes, 3 * unknown_connections, unknown_connections, 0, 0, 0, 2 * unknown_connections] '
-        '|| array_fill(CAST(0 AS BIGINT), ARRAY[12])))';
+        '|| array_fill(CAST(0 AS BIGINT), ARRAY[14])))';
 BEGIN
     FOREACH family IN ARRAY ARRAY['volume', 'rule', 'domain', 'peer', 'client', 'owner'] LOOP
         FOREACH period IN ARRAY ARRAY['1h', '24h', '7d', '30d'] LOOP
@@ -2928,7 +2792,7 @@ BEGIN
     UPDATE purged_flow_hour
     SET measure_parts = jsonb_build_object('netflow', to_jsonb(
         ARRAY[3 * bytes, 3 * connections, connections, 0, 0, 0, 2 * connections]
-        || array_fill(CAST(0 AS BIGINT), ARRAY[12 + 19 + 19])));
+        || array_fill(CAST(0 AS BIGINT), ARRAY[14 + 21 + 21])));
 END
 $seed_measure_families$;
 

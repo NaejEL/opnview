@@ -324,8 +324,8 @@ on the read connections in a read-only transaction.
 The listing never carries a set-aside table, `account`, `session`, `encrypted_credential`, a
 credential or secret setting, or `plugin_state`.
 
-**The core's datasets** are the five sources of `custom_chart`, the two NetFlow datasets and the four a
-plugin joining another source reads (`docs/plugins.md`, *Datasets a plugin reads*), each
+**The core's datasets** are the five sources of `custom_chart` and the seven a plugin joining another
+source reads (`docs/plugins.md`, *Datasets a plugin reads*), each
 declared as data in its own directory under `internal/dataset/core/` (its declaration, the `SELECT` it
 reads and its label), so adding one is adding a directory:
 
@@ -336,21 +336,23 @@ reads and its label), so adding one is adding a directory:
 | `interface_throughput` | sample | `sampled_at` | `increase`, `per_second` (the `counter` dimension names the unit) | `measurement_sample` |
 | `dns` | event | `looked_up_at` | `lookups`, `blocked` (lookup) | `dns_lookup` |
 | `security_event` | event | `occurred_at` | `events`, `blocked` (event) | `security_event` |
-| `flow_record` | event | `start_at` | `octets` (byte), `packets` (packet), `records` (record) | `flow_record` |
-| `unmatched_record` | event | `period_start_at` | `bytes` (byte), `packets` (packet), `records` (record) | `flow_record` |
 | `leg` | event | `observed_at` | `packet_bytes` (byte) | `firewall_log` |
 | `interface` | sample | none | none | none: discovery |
 | `this_firewall_address` | sample | none | none | none: discovery |
 | `provider_value` | sample | none | none | none: the active providers' exported values |
+| `collection_gap` | sample | none | none | none: the gaps every provider recorded |
+| `read_through` | sample | none | none | none: how far each provider's source has been read |
+| `retention_purge` | sample | none | none | none: how far back the purge has removed the flows |
 
-`flow_record` serves every flow record stored, whatever the capture configuration was, with what
-its two indexes named at reception (`ingress_role`, `ingress_identifier`, `egress_role`,
+The NetFlow datasets are the netflow plugin's tables since PA9 of the plugin-API amendment, named as
+every plugin table is (below). `netflow.flow_record` serves every flow record stored, whatever the
+capture configuration was, with what its two indexes named when the join mapped them (`ingress_role`, `ingress_identifier`, `egress_role`,
 `egress_identifier`), its `join_state`, `copy_kind`, `counted_copy` and `unmatched_reason`, and
 **`loss_detectable` per row**: 1 over the intervals whose configuration bounded the exporter's
 sequence counters, so that a loss would have been recorded as a gap, and 0 elsewhere. Its label states
 that a sum over records that are not joined counts copies -- a packet is exported again in its
 translated form, or by a VLAN's parent -- and no built-in widget serves such a sum.
-`unmatched_record` is the unmatched family's hour slots: the records that joined no logged leg and are
+`netflow.unmatched_record` is the unmatched counters' hour slots: the records that joined no logged leg and are
 no copy, by ingress and egress interface (an identifier, or the role of an index that names none),
 protocol, IP version and reason.
 

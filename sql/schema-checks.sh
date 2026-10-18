@@ -1597,7 +1597,7 @@ expect_sql_failure 'AC13 a traffic_scope disagreeing with interface membership i
 # with anything, it names a table. It is recognised by its whole form, the keyword, one table
 # name and an INCLUDING or EXCLUDING option, alone on its line, and only that form is left out;
 # the patterns below still catch a LIKE in any predicate, a copy clause carrying anything more
-# included (Phase E, 17 October 2026: unmatched_record_aggregate_* are declared that way).
+# included (Phase E, 17 October 2026: the schema then declared tables that way).
 name_matching_predicates() {
     sed 's/--.*$//' | grep -vE '^[[:space:]]*LIKE[[:space:]]+[a-z_][a-z0-9_.]*[[:space:]]+(INCLUDING|EXCLUDING)[[:space:]]+[A-Z]+[[:space:]]*$' |
         grep -inE '\b(like|ilike|similar|glob|regexp)\b|~'
@@ -1620,7 +1620,7 @@ for sample in "CHECK (description LIKE 'lan%')" "WHERE identifier ILIKE 'opt%'" 
         fail "AC14 the predicate check misses: $sample"
     fi
 done
-if printf -- '    LIKE unmatched_record_aggregate_1h INCLUDING ALL\n' | name_matching_predicates > /dev/null; then
+if printf -- '    LIKE example_hour_slots INCLUDING ALL\n' | name_matching_predicates > /dev/null; then
     fail 'AC14 the predicate check reads the copy clause of CREATE TABLE as a predicate'
 else
     pass 'AC14 the predicate check leaves the copy clause of CREATE TABLE alone, which names a table'
@@ -2867,27 +2867,18 @@ check 'AC32 the purge leaves no attribution without its lookup or its flow' '0' 
         WHERE NOT EXISTS (SELECT 1 FROM flow f WHERE f.id = a.flow_id)
            OR NOT EXISTS (SELECT 1 FROM dns_resolution r WHERE r.id = a.dns_resolution_id);')"
 # E21, E22: the purge.sql run above is the core's part of the retention purge; the product's whole
-# purge also purges the plugin tables by their declared retention and the NetFlow tables by theirs
+# purge also purges the plugin tables by their declared retention -- the netflow plugin's among them --
 # (internal/store/purge/purge.go). It is run here as the product runs it, at the same instant, and
 # then no row older than its horizon remains in a growing table added since Phase C, nor in a
 # growing plugin table -- each of which held such rows before, so the check proves something.
 "$WORK/bin/plugintables" -database "$(dsn "$PURGE_DB")" -now "$NOW" -data-dir "$PLUGIN_DATA" -older \
     > "$WORK/plugin_older_before.txt"
-E22_HORIZONS="flow_record:start_at:flow_record
-connection_measure:connection_start_at:installation unmatched_record_aggregate_1h:period_end_at:installation
-unmatched_record_aggregate_24h:period_end_at:installation unmatched_record_aggregate_7d:period_end_at:installation
-unmatched_record_aggregate_30d:period_end_at:installation provider_source_period:to_at:installation"
-# e22_horizon <installation|flow_record> — the horizon the product purges a table at: the flow
-# records' own retention where one is set, the installation's otherwise.
+# The netflow plugin's tables are plugin tables since PA9 of the plugin-API amendment: the E21 checks below
+# cover them, at their declared retention.
+E22_HORIZONS="connection_measure:connection_start_at:installation provider_source_period:to_at:installation"
+# e22_horizon <installation> — the horizon the product purges a table at: the installation's.
 e22_horizon() {
-    if [ "$1" = 'flow_record' ]; then
-        q "$PURGE_DB" "SELECT $NOW - coalesce(
-            (SELECT CAST(value AS BIGINT) FROM setting WHERE key = 'netflow_retention_flow_record_seconds'
-                 AND CAST(value AS BIGINT) > 0),
-            (SELECT CAST(value AS BIGINT) FROM setting WHERE key = 'retention_seconds'));"
-    else
-        q "$PURGE_DB" "SELECT $NOW - CAST(value AS BIGINT) FROM setting WHERE key = 'retention_seconds';"
-    fi
+    q "$PURGE_DB" "SELECT $NOW - CAST(value AS BIGINT) FROM setting WHERE key = 'retention_seconds';"
 }
 for entry in $E22_HORIZONS; do
     table="${entry%%:*}"; rest="${entry#*:}"; column="${rest%%:*}"
@@ -3301,14 +3292,14 @@ check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
 # eleven. Restated again by the plugin cycle (specs/SPEC-backend-completion-plugins.md, A3): the
 # kind set is open -- a plugin brings kinds of its own, the core kinds being the eleven listed --
 # so the registry refuses a kind that is not a snake_case name, no longer one it does not know.
-# Restated by the NetFlow addendum (PS17): flow_record is a core kind, whose example exporter the
-# seed registers (E.6.1), so eleven became twelve.
+# Restated by the NetFlow addendum (PS17), which made flow_record a twelfth core kind, and by PA9 of the
+# plugin-API amendment, which made it the netflow plugin's own: eleven core kinds again.
 expect_sql_failure 'PN-AC9 a registry row whose kind is not a snake_case name is rejected' "$FRESH_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
      VALUES ('Tele-Pathy', 'pn-ac9', 'PN-AC9', false, $NOW);"
 extract_block "$ARCH_DOC" '<!-- provider-kinds:begin -->' '<!-- provider-kinds:end -->' |
     sort > "$WORK/doc_kinds.txt"
-check 'PN-AC9 the document lists exactly twelve kinds' '12' \
+check 'PN-AC9 the document lists exactly eleven kinds' '11' \
     "$(wc -l < "$WORK/doc_kinds.txt" | tr -d ' ')"
 q "$MAIN_DB" 'SELECT DISTINCT kind FROM provider ORDER BY kind;' | sort > "$WORK/db_kinds.txt"
 # Restated by PA2 of the plugin-API amendment: the core kinds are the kind files of
@@ -3346,7 +3337,7 @@ printf -- '  the registry:\n'
 q "$MAIN_DB" 'SELECT kind, provider_key, is_active FROM provider ORDER BY kind, provider_key;' |
     sed 's/^/    /'
 
-# The core kinds the registry holds (PN-AC9 above): a built-in plugin's own kind is its own, not one of the twelve.
+# The core kinds the registry holds (PN-AC9 above): a built-in plugin's own kind is its own, not one of the eleven.
 KIND_COUNT="$(wc -l < "$WORK/db_core_kinds.txt" | tr -d ' ')"
 # PN-AC12, RESTATED AGAINST THE RULE THAT REPLACED UNIVERSAL EXCLUSIVITY. These
 # assertions named a property the model deliberately changed, not one that stopped
@@ -3366,7 +3357,7 @@ KIND_COUNT="$(wc -l < "$WORK/db_core_kinds.txt" | tr -d ' ')"
 # Restated by PA2 of the plugin-API amendment: the attribute is data -- each kind file's `concurrent`,
 # which provider_kind holds and every provider row carries -- so the predicate reads it from the row.
 EXCLUSIVE_PREDICATE="NOT p.concurrent"
-check 'PN-AC12 the registry holds a provider of every one of the twelve kinds' '12' "$KIND_COUNT"
+check 'PN-AC12 the registry holds a provider of every one of the eleven core kinds' '11' "$KIND_COUNT"
 # The active set is asserted as a SET rather than as a count derived from the kind
 # count, and that is the restatement: the seed used to activate exactly one provider
 # per kind, and it now models a two-DHCP-server estate, so a count alone would no
@@ -3374,12 +3365,13 @@ check 'PN-AC12 the registry holds a provider of every one of the twelve kinds' '
 # drifts -- a server that stopped being read, or one that started. Restated against the
 # renamed kinds: geo_asn is ip_geolocation and public_suffix is registrable_domain in the
 # registry the seed fills. Restated by the NetFlow addendum: the seed's example exporter of the
-# flow_record kind (E.6.1) is active, as the pretend-installation runs it.
+# flow_record kind (E.6.1) is active, as the pretend-installation runs it; and by PA9 of the plugin-API
+# amendment, which made flow_record the netflow plugin's own kind, read through the plugin's provider.
 EXPECTED_ACTIVE='dhcp_lease/dnsmasq
 dhcp_lease/kea
 dns_lookup/unbound
 firewall_log/pf
-flow_record/example-exporter
+flow_record/netflow
 ip_geolocation/maxmind_geolite2
 measurement_sample/insight
 reconciled_state/example-state-source
@@ -4460,6 +4452,7 @@ sweep_task() {
         return
     fi
     printf -- 'planned\n'
+    awk -F'\t' '$4 != "" { print "index\t" $4 }' "$plan"
     scanned="$(scanned_growing "$db" "$plan" | tr '\n' ' ')"
     if [ -n "$scanned" ]; then
         printf -- 'scanning\t%s@%s:%s\n' "$label" "$(tag_of "$db")" "$scanned"
@@ -4501,6 +4494,30 @@ check_ge 'S5A-AC35 every statement and every period of every template was planne
 check 'S5A-AC35 every statement plans against the schema' '' "$UNPLANNABLE"
 check 'S5A-AC35 no derivation or read statement scans a growing table, at either seed size' \
     '' "$SCANNING"
+
+# Every index of flow serves a plan (Lot 3 of the plugin-API amendment, budget item 2). flow is the
+# largest growing table and every ingested record writes each of its indexes, so an index no plan
+# reads is a write cost for nothing: the indexes the screens' plans and the sweep's read, at either
+# seed and in either plan space, are gathered, and every index of flow but the ones its constraints
+# own -- its primary key and its unique log digest -- must be among them. An index serving only a read
+# compiled at run time, which no statement file holds, names that read here, by its index.
+# idx_flow_join serves the leg dataset's key reads by device and canonical addresses
+# (host.datasets.rows with keys, docs/plugins.md), compiled by the dataset reader per call.
+RUNTIME_READ_INDEXES='idx_flow_join'
+{
+    awk -F'\t' '$1 == "index" { print $2 }' "$WORK/sweep/verdicts.txt"
+    find "$WORK" -maxdepth 1 \( -name 'plan_*.txt' -o -name 'scale_plan_*.txt' -o -name 'scale_paths_*.txt' \) \
+        -type f -exec awk -F'\t' '$4 != "" { print $4 }' {} +
+    printf -- '%s\n' $RUNTIME_READ_INDEXES
+} | LC_ALL=C sort -u > "$WORK/indexes_read.txt"
+q "$SCALE_DB" "SELECT c.relname FROM pg_index AS x JOIN pg_class AS c ON c.oid = x.indexrelid
+    WHERE x.indrelid = to_regclass('flow')
+      AND NOT EXISTS (SELECT 1 FROM pg_constraint AS k WHERE k.conindid = x.indexrelid)
+    ORDER BY 1;" | LC_ALL=C sort > "$WORK/flow_indexes.txt"
+check_ge 'BUDGET-2 flow carries indexes of its own beside its constraints' 1 \
+    "$(wc -l < "$WORK/flow_indexes.txt" | tr -d ' ')"
+check 'BUDGET-2 every index of flow serves a plan the checks read' '' \
+    "$(LC_ALL=C comm -23 "$WORK/flow_indexes.txt" "$WORK/indexes_read.txt" | paste -sd ' ' -)"
 
 # E18: every statement of a declared measure, at both seeds. flow_measures, and the reader of one
 # connection it calls, connection_measure_parts, are SQL functions PostgreSQL inlines where called (a single SELECT, LANGUAGE sql, STABLE, no SET clause --
@@ -4926,48 +4943,36 @@ for db in "$MAIN_DB" "$ALT_DB"; do
             WHERE subject_kind = 'interface_endpoint';")"
     check "S5A-AC35 $tag: the seed is consistent" '' "$(fk_violations "$db")"
 done
-# E17: the NetFlow tables, the push bookkeeping and the mirror's are seeded at both sizes, in
-# proportion to the flows, in both address families where a table carries an address.
+# E17: the netflow measure's tables, the push bookkeeping and the mirror's are seeded at both sizes, in
+# proportion to the flows. The netflow plugin's own tables -- its flow records, capture runs and unmatched
+# counters -- are plugin tables since PA9 of the plugin-API amendment, created and seeded by the loader with
+# every other plugin's (E21).
 for db in "$MAIN_DB" "$SCALE_DB"; do
     tag="$(tag_of "$db")"
-    for t in capture_configuration capture_interface capture_interface_parent_of flow_record connection_measure measure_interval \
-             unmatched_record_aggregate_1h unmatched_record_aggregate_24h unmatched_record_aggregate_7d \
-             unmatched_record_aggregate_30d provider_source_period push_listener \
+    for t in connection_measure measure_interval provider_source_period push_listener \
              opnsense.mirror_endpoint opnsense.mirror_parameter opnsense.mirror_datum opnsense.mirror_table \
              opnsense.mirror_column opnsense.mirror_schema_version opnsense.mirror_read opnsense.mirror_correction \
              opnsense.mirror_gap; do
         check_ge "E17 $tag: $t holds rows" 1 "$(q "$db" "SELECT count(*) FROM $t;")"
     done
-    check "E17 $tag: flow_record carries both families" '4,6' \
-        "$(q "$db" "SELECT string_agg(CAST(ip_version AS text), ',' ORDER BY ip_version) FROM
-            (SELECT DISTINCT ip_version FROM flow_record ORDER BY 1);")"
-    check "E17 $tag: flow_record's addresses are of the family the record names" '0' \
-        "$(q "$db" "SELECT count(*) FROM flow_record
-            WHERE (strpos(src_address, ':') > 0) <> (ip_version = 6) OR (strpos(dst_address, ':') > 0) <> (ip_version = 6)
-               OR (strpos(exporter_address, ':') > 0) <> (ip_version = 6);")"
-    check "E17 $tag: every capture shape of NJ10: egress only, not exported, a parent, and an unreadable run" \
-        'egress_only,not_exported,parent_of,unreadable' \
-        "$(q "$db" "SELECT string_agg(shape, ',' ORDER BY shape) FROM (
-            SELECT 'egress_only' AS shape WHERE EXISTS (SELECT 1 FROM capture_interface WHERE NOT ingress AND egress)
-            UNION ALL SELECT 'not_exported' WHERE EXISTS (SELECT 1 FROM capture_interface WHERE exported = 'no')
-            UNION ALL SELECT 'parent_of' WHERE EXISTS (SELECT 1 FROM capture_interface_parent_of)
-            UNION ALL SELECT 'unreadable' WHERE EXISTS (SELECT 1 FROM capture_configuration WHERE fingerprint IS NULL)
-            ) AS s;")"
     check "E17 $tag: connection_measure carries every state the netflow measure declares, and a counted copy" \
-        'awaiting_export,capture_configuration_unknown,export_gap,forwarding_export_unsettled,in_progress,ingress_not_captured,interface_not_captured,interface_not_exported,measured,missing,not_exported_when_refused,parent_copies_only:1' \
+        'ambiguous_records,awaiting_export,capture_configuration_unknown,export_gap,forwarding_export_unsettled,in_progress,ingress_not_captured,interface_not_captured,interface_not_exported,measured,missing,not_expected_when_refused,not_exported_when_refused,parent_copies_only:1' \
         "$(q "$db" "SELECT string_agg(state, ',' ORDER BY state) || ':' ||
             (SELECT CAST(max(markers) AS text) FROM connection_measure WHERE measure = 'netflow') FROM
             (SELECT DISTINCT state FROM connection_measure WHERE measure = 'netflow') AS s;")"
-    check "E17 $tag: flow_record carries every join state, copy kind, unmatched reason and role, and a counted copy" \
-        'copy,joined,pending,unmatched|parent_copy,translated_copy|ambiguous,beyond_flow_horizon,interface_index_unmapped,no_logged_leg,reverse_unconfirmed|interface,no_receiving_interface,unmapped|interface,local_delivery|1' \
-        "$(q "$db" "SELECT (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT join_state AS v FROM flow_record) AS a)
-            || '|' || (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT copy_kind AS v FROM flow_record
-                       WHERE copy_kind IS NOT NULL) AS b)
-            || '|' || (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT unmatched_reason AS v FROM flow_record
-                       WHERE unmatched_reason IS NOT NULL) AS c)
-            || '|' || (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT ingress_role AS v FROM flow_record) AS d)
-            || '|' || (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT egress_role AS v FROM flow_record) AS e)
-            || '|' || (SELECT CAST(CAST(bool_or(counted_copy) AS INTEGER) AS text) FROM flow_record);")"
+    # E19: the timing windows of the widget budgets -- the last day and the last 30 days -- are covered by the
+    # netflow measure, so every type offering a volume measure answers a non-empty netflow there: the window's
+    # interval is capture_configured throughout, and its connections are in covered states.
+    check "E19 $tag: the last 30 days lie in one capture_configured interval" '1' \
+        "$(q "$db" "SELECT count(*) FROM measure_interval WHERE measure = 'netflow' AND state = 'capture_configured'
+            AND starts_at <= $NOW - 2592000 AND (ends_at IS NULL OR ends_at > $NOW);")"
+    check "E19 $tag: no connection of the last 30 days is in a state the netflow measure does not cover" '0' \
+        "$(q "$db" "SELECT count(*) FROM connection_measure AS v
+            JOIN declared_measure_state AS s ON s.measure = v.measure AND s.state = v.state
+            WHERE v.measure = 'netflow' AND v.connection_start_at >= $NOW - 2592000 AND NOT s.covered;")"
+    check_ge "E19 $tag: the last day holds measured connections" 1 \
+        "$(q "$db" "SELECT count(*) FROM connection_measure WHERE measure = 'netflow' AND state = 'measured'
+            AND connection_start_at >= $NOW - 86400;")"
     check "E17 $tag: one pull period and one push period, the push one open" 'pull:closed,push:open' \
         "$(q "$db" "SELECT string_agg(path || ':' || CASE WHEN to_at IS NULL THEN 'open' ELSE 'closed' END, ','
             ORDER BY path) FROM provider_source_period;")"
@@ -4981,9 +4986,9 @@ for db in "$MAIN_DB" "$SCALE_DB"; do
     check_ge "E17 $tag: purged_flow_hour fills the netflow measure's parts" 1 \
         "$(q "$db" "SELECT count(*) FROM purged_flow_hour WHERE measure_total_bytes(measure_parts, 'netflow') > 0;")"
 done
-check_ge 'E17 the NetFlow tables grow with the flows: the scale seed holds more records than the baseline' \
-    "$(( $(q "$MAIN_DB" 'SELECT count(*) FROM flow_record;') + 1 ))" \
-    "$(q "$SCALE_DB" 'SELECT count(*) FROM flow_record;')"
+check_ge 'E17 the measure grows with the flows: the scale seed holds more measured connections than the baseline' \
+    "$(( $(q "$MAIN_DB" "SELECT count(*) FROM connection_measure WHERE measure = 'netflow';") + 1 ))" \
+    "$(q "$SCALE_DB" "SELECT count(*) FROM connection_measure WHERE measure = 'netflow';")"
 
 # ===========================================================================
 section 'S5A-AC19, S5A-AC25, S5A-AC26 — the seeded aggregates, refusals and directions'

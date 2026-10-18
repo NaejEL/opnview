@@ -6,6 +6,16 @@
     "plugin.netflow.setting.retention_flow_record_seconds": "Flow record retention, in seconds (0 follows the retention)",
     "plugin.netflow.page.join": "Joining flow records to logged connections",
     "plugin.netflow.page.join_help": "How far after a logged connection a flow record may start and still be counted for it, and how long the flow records are kept. A volume measured by NetFlow is a second measure beside the logged one, never summed with it, and traffic between two clients behind one interface is in neither.",
-    "plugin.netflow.measure.netflow": "NetFlow"
+    "plugin.netflow.measure.netflow": "NetFlow",
+    "plugin.netflow.dataset.flow_record": "NetFlow flow records, as exported, each with its join state: a sum over records that are not joined counts copies, the translated and parent copies a packet is exported again as",
+    "plugin.netflow.dataset.unmatched_record": "Unmatched NetFlow records per hour, by ingress and egress interface and reason",
+    "plugin.netflow.dataset.unmatched_record_24h": "Unmatched NetFlow records per day, by ingress and egress interface and reason",
+    "plugin.netflow.dataset.unmatched_record_7d": "Unmatched NetFlow records per week, by ingress and egress interface and reason",
+    "plugin.netflow.dataset.unmatched_record_30d": "Unmatched NetFlow records per month, by ingress and egress interface and reason",
+    "plugin.netflow.dataset.capture_configuration": "NetFlow capture configurations, one per run of reads that found the same one",
+    "plugin.netflow.dataset.capture_interface": "The interfaces each NetFlow capture configuration captures, and in which directions",
+    "plugin.netflow.dataset.interface_index": "The interface index map the NetFlow join reads, as last read",
+    "plugin.netflow.dataset.measure_due": "The NetFlow measure rows due to be computed again, and when",
+    "plugin.netflow.dataset.join_progress": "How far the NetFlow join has read"
   }
 }
