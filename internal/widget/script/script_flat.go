@@ -55,6 +55,8 @@ type flatLayout struct {
 	fields []flatField
 	byName map[string]int
 	folded map[string]bool
+	// indexKeys says a member's name looks like an array index, which an ordinary object lists first.
+	indexKeys bool
 }
 
 // flatLayouts caches each type's layout; nil marks a type that is not flat.
@@ -114,6 +116,7 @@ func layoutOf(structType reflect.Type) *flatLayout {
 		}
 		layout.byName[name] = len(layout.fields)
 		layout.folded[strings.ToLower(name)] = true
+		layout.indexKeys = layout.indexKeys || isIndexKey(name)
 		layout.fields = append(layout.fields, member)
 	}
 	flatLayouts.Store(structType, layout)
@@ -150,9 +153,10 @@ var (
 	textUnmarshaler = reflect.TypeFor[encoding.TextUnmarshaler]()
 )
 
-// flatValue hands a value to the script member by member when it is a struct with a flat layout, a
-// pointer to one, or a slice of them, and reports false for anything else, which Value hands
-// through JSON.
+// flatValue hands a value to the script as host objects (script_hostobject.go) when it is a struct
+// with a flat layout, a pointer to one, or a slice of them, and reports false for anything else,
+// which Value hands through JSON. The struct is copied first: the script reads what the core handed
+// it, whatever the core does with its own value afterwards.
 func (c *ScriptCall) flatValue(value reflect.Value) (goja.Value, bool) {
 	switch value.Kind() {
 	case reflect.Pointer:
@@ -170,9 +174,12 @@ func (c *ScriptCall) flatValue(value reflect.Value) (goja.Value, bool) {
 		if value.IsNil() {
 			return goja.Null(), true
 		}
-		rows := make([]any, value.Len())
+		layout := layoutOf(value.Type().Elem())
+		copied := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+		reflect.Copy(copied, value)
+		rows := make([]any, copied.Len())
 		for index := range rows {
-			rows[index] = c.memberValue(value.Index(index))
+			rows[index] = c.newHostObject(layout, copied.Index(index))
 		}
 		return c.VM.NewArray(rows...), true
 	case reflect.Struct:
@@ -183,72 +190,9 @@ func (c *ScriptCall) flatValue(value reflect.Value) (goja.Value, bool) {
 	if layout == nil {
 		return nil, false
 	}
-	object := c.VM.NewObject()
-	for _, field := range layout.fields {
-		member := value.FieldByIndex(field.index)
-		switch field.kind {
-		case flatInteger:
-			if field.omitEmpty && member.Int() == 0 {
-				continue
-			}
-			_ = object.Set(field.name, c.VM.ToValue(member.Int()))
-		case flatText:
-			if field.omitEmpty && member.String() == "" {
-				continue
-			}
-			_ = object.Set(field.name, c.VM.ToValue(member.String()))
-		case flatIntegerPointer, flatTextPointer:
-			switch {
-			case member.IsNil() && field.omitEmpty:
-				continue
-			case member.IsNil():
-				_ = object.Set(field.name, goja.Null())
-			case field.kind == flatTextPointer:
-				_ = object.Set(field.name, c.VM.ToValue(member.Elem().String()))
-			default:
-				_ = object.Set(field.name, c.VM.ToValue(member.Elem().Int()))
-			}
-		case flatFloat, flatFloatPointer:
-			number := member
-			if field.kind == flatFloatPointer {
-				if member.IsNil() {
-					if !field.omitEmpty {
-						_ = object.Set(field.name, goja.Null())
-					}
-					continue
-				}
-				number = member.Elem()
-			}
-			if field.kind == flatFloat && field.omitEmpty && number.Float() == 0 {
-				continue
-			}
-			if math.IsNaN(number.Float()) || math.IsInf(number.Float(), 0) {
-				// JSON refuses it, and the JSON path says so.
-				_ = object.Set(field.name, c.jsonValue(member.Interface()))
-				continue
-			}
-			_ = object.Set(field.name, c.VM.ToValue(number.Float()))
-		case flatIntegers:
-			switch {
-			case field.omitEmpty && member.Len() == 0:
-				continue
-			case member.IsNil():
-				_ = object.Set(field.name, goja.Null())
-			default:
-				numbers := make([]any, member.Len())
-				for index := range numbers {
-					numbers[index] = member.Index(index).Int()
-				}
-				_ = object.Set(field.name, c.VM.NewArray(numbers...))
-			}
-		case flatRows, flatOther:
-			if field.omitEmpty && emptyForJSON(member) {
-				continue
-			}
-			_ = object.Set(field.name, c.memberValue(member))
-		}
-	}
-	return object, true
+	copied := reflect.New(value.Type()).Elem()
+	copied.Set(value)
+	return c.newHostObject(layout, copied), true
 }
 
 // decodeIntegers reads an array of whole numbers into a []int64 member, and reports whether it read it
@@ -364,7 +308,8 @@ func plainScalar(member goja.Value) bool {
 	return false
 }
 
-// decodeFlat reads a plain object into a flat struct, and reports whether it read it as JSON would.
+// decodeFlat reads a plain object into a flat struct, and reports whether it read it as JSON would. A
+// host object the script left unchanged is read from the struct it holds (hostObject.decodeInto).
 func (c *ScriptCall) decodeFlat(value goja.Value, target reflect.Value) bool {
 	object, isObject := value.(*goja.Object)
 	if !isObject || object.ClassName() != "Object" {
@@ -376,6 +321,9 @@ func (c *ScriptCall) decodeFlat(value goja.Value, target reflect.Value) bool {
 	layout := layoutOf(target.Type())
 	if layout == nil {
 		return false
+	}
+	if host := c.hostObjectOf(object); host != nil && host.own == nil {
+		return host.decodeInto(target, layout)
 	}
 	for _, key := range object.Keys() {
 		member := object.Get(key)
@@ -400,60 +348,67 @@ func (c *ScriptCall) decodeFlat(value goja.Value, target reflect.Value) bool {
 			destination.SetZero()
 			continue
 		}
-		switch field.kind {
-		case flatRows, flatOther:
+		if !decodeScriptMember(member, field, destination) {
 			return false
-		case flatIntegers:
-			if !decodeIntegers(member, destination) {
+		}
+	}
+	return true
+}
+
+// decodeScriptMember reads one member of an object, neither undefined nor null, into a member of a
+// flat struct, and reports whether it read it as JSON would.
+func decodeScriptMember(member goja.Value, field flatField, destination reflect.Value) bool {
+	switch field.kind {
+	case flatRows, flatOther:
+		return false
+	case flatIntegers:
+		return decodeIntegers(member, destination)
+	case flatInteger, flatIntegerPointer:
+		if _, isObject := member.(*goja.Object); isObject {
+			return false
+		}
+		number, whole := WholeNumber(member.Export())
+		if !whole {
+			return false
+		}
+		if field.kind == flatInteger {
+			destination.SetInt(number)
+		} else {
+			destination.Set(reflect.ValueOf(&number))
+		}
+	case flatFloat, flatFloatPointer:
+		if _, isObject := member.(*goja.Object); isObject {
+			return false
+		}
+		var number float64
+		switch typed := member.Export().(type) {
+		case int64:
+			number = float64(typed)
+		case float64:
+			if math.IsNaN(typed) || math.IsInf(typed, 0) {
 				return false
 			}
-		case flatInteger, flatIntegerPointer:
-			if _, isObject := member.(*goja.Object); isObject {
-				return false
-			}
-			number, whole := WholeNumber(member.Export())
-			if !whole {
-				return false
-			}
-			if field.kind == flatInteger {
-				destination.SetInt(number)
-			} else {
-				destination.Set(reflect.ValueOf(&number))
-			}
-		case flatFloat, flatFloatPointer:
-			if _, isObject := member.(*goja.Object); isObject {
-				return false
-			}
-			var number float64
-			switch typed := member.Export().(type) {
-			case int64:
-				number = float64(typed)
-			case float64:
-				if math.IsNaN(typed) || math.IsInf(typed, 0) {
-					return false
-				}
-				number = typed
-			default:
-				return false
-			}
-			if field.kind == flatFloat {
-				destination.SetFloat(number)
-			} else {
-				destination.Set(reflect.ValueOf(&number))
-			}
-		case flatText, flatTextPointer:
-			text, isText := member.Export().(string)
-			if !isText {
-				return false
-			}
-			if _, isObject := member.(*goja.Object); isObject {
-				return false
-			}
-			if field.kind == flatText {
-				destination.SetString(text)
-			} else {
-				destination.Set(reflect.ValueOf(&text))
-			}
+			number = typed
+		default:
+			return false
+		}
+		if field.kind == flatFloat {
+			destination.SetFloat(number)
+		} else {
+			destination.Set(reflect.ValueOf(&number))
+		}
+	case flatText, flatTextPointer:
+		text, isText := member.Export().(string)
+		if !isText {
+			return false
+		}
+		if _, isObject := member.(*goja.Object); isObject {
+			return false
+		}
+		if field.kind == flatText {
+			destination.SetString(text)
+		} else {
+			destination.Set(reflect.ValueOf(&text))
 		}
 	}
 	return true

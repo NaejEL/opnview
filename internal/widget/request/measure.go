@@ -1,6 +1,7 @@
 package request
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -602,6 +603,13 @@ func holdsMeasure(data any, measure string) bool {
 	}
 	encoded, err := json.Marshal(data)
 	if err != nil {
+		return false
+	}
+	// encoding/json writes compact JSON, and writes a member "measure" holding the measure as these
+	// bytes wherever it is: data that does not hold them holds no figure of the measure, and the tree
+	// below is read only for data that does.
+	quoted, _ := json.Marshal(measure)
+	if !bytes.Contains(encoded, append([]byte(`"measure":`), quoted...)) {
 		return false
 	}
 	var tree any

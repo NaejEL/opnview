@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -245,7 +246,7 @@ func (c VolumeCoverage) MarshalJSON() ([]byte, error) {
 		if out.Len() > 1 {
 			out.WriteByte(',')
 		}
-		fmt.Fprintf(&out, "%q:%d", name, value)
+		writeCount(&out, name, value)
 	}
 	out.WriteByte('{')
 	field(measure.Classes.Complete, c.counts.Complete)
@@ -257,7 +258,7 @@ func (c VolumeCoverage) MarshalJSON() ([]byte, error) {
 		if index > 0 {
 			out.WriteByte(',')
 		}
-		fmt.Fprintf(&out, "%q:%d", state.Name, c.counts.States[index])
+		writeCount(&out, state.Name, c.counts.States[index])
 	}
 	out.WriteByte('}')
 	for index, marker := range measure.Markers {
@@ -265,6 +266,14 @@ func (c VolumeCoverage) MarshalJSON() ([]byte, error) {
 	}
 	out.WriteByte('}')
 	return out.Bytes(), nil
+}
+
+// writeCount writes one named count, "name":value, the name quoted as fmt's %q quotes it.
+func writeCount(out *bytes.Buffer, name string, value int64) {
+	var scratch [64]byte
+	encoded := strconv.AppendQuote(scratch[:0], name)
+	encoded = append(encoded, ':')
+	out.Write(strconv.AppendInt(encoded, value, 10))
 }
 
 // UnmarshalJSON keeps a coverage object a script handed back, for StoreCoverage to read in its measure.

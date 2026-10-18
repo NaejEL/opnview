@@ -97,6 +97,9 @@ func (c *ScriptCall) encodeArray(buffer *bytes.Buffer, array *goja.Object, depth
 
 // encodeObject writes an object: in the order its members were set, or sorted as a map.
 func (c *ScriptCall) encodeObject(buffer *bytes.Buffer, object *goja.Object, depth int) error {
+	if host := c.hostObjectOf(object); host != nil && host.own == nil {
+		return c.encodeHostObject(buffer, host, depth)
+	}
 	keys := object.Keys()
 	if c.isMap(object, keys) {
 		sorted := append([]string(nil), keys...)
@@ -113,14 +116,12 @@ func (c *ScriptCall) encodeObject(buffer *bytes.Buffer, object *goja.Object, dep
 		if written > 0 {
 			buffer.WriteByte(',')
 		}
-		encodedKey, err := json.Marshal(key)
-		if err != nil {
+		if err := appendJSONString(buffer, key); err != nil {
 			return err
 		}
-		buffer.Write(encodedKey)
 		buffer.WriteByte(':')
 		if err := c.encodeValue(buffer, member, depth+1); err != nil {
-			return fmt.Errorf("%s: %w", key, err)
+			return memberError(key, err)
 		}
 		written++
 	}
@@ -131,6 +132,9 @@ func (c *ScriptCall) encodeObject(buffer *bytes.Buffer, object *goja.Object, dep
 // isMap reports whether an object is written as a Go map: marked by the script, or holding a key
 // that looks like an array index.
 func (c *ScriptCall) isMap(object *goja.Object, keys []string) bool {
+	if host := c.hostObjectOf(object); host != nil && host.mapped {
+		return true
+	}
 	if c.MapMarker != nil {
 		if marker := object.GetSymbol(c.MapMarker); marker != nil && marker.ToBoolean() {
 			return true
@@ -165,16 +169,24 @@ func encodeScalar(buffer *bytes.Buffer, value any) error {
 	case nil:
 		buffer.WriteString("null")
 		return nil
-	case bool, string, int64:
-		encoded, err := json.Marshal(typed)
-		if err != nil {
-			return err
-		}
-		buffer.Write(encoded)
+	case bool:
+		buffer.WriteString(strconv.FormatBool(typed))
+		return nil
+	case string:
+		return appendJSONString(buffer, typed)
+	case int64:
+		var digits [24]byte
+		buffer.Write(strconv.AppendInt(digits[:0], typed, 10))
 		return nil
 	case float64:
 		if math.IsNaN(typed) || math.IsInf(typed, 0) {
 			return fmt.Errorf("%v is not a JSON number", typed)
+		}
+		if typed == math.Trunc(typed) && math.Abs(typed) < 1e15 && !(typed == 0 && math.Signbit(typed)) {
+			// A whole number, which encoding/json writes as its digits, as it writes the int64.
+			var digits [24]byte
+			buffer.Write(strconv.AppendInt(digits[:0], int64(typed), 10))
+			return nil
 		}
 		encoded, err := json.Marshal(typed)
 		if err != nil {
@@ -184,4 +196,30 @@ func encodeScalar(buffer *bytes.Buffer, value any) error {
 		return nil
 	}
 	return fmt.Errorf("a %T is not data", value)
+}
+
+// appendJSONString writes a string exactly as encoding/json writes it: a string of printable ASCII in
+// which it escapes nothing is written between quotes as it is, and any other by encoding/json itself.
+func appendJSONString(buffer *bytes.Buffer, text string) error {
+	for index := 0; index < len(text); index++ {
+		character := text[index]
+		if character < 0x20 || character >= 0x7f || character == '"' || character == '\\' || character == '<' ||
+			character == '>' || character == '&' {
+			encoded, err := json.Marshal(text)
+			if err != nil {
+				return err
+			}
+			buffer.Write(encoded)
+			return nil
+		}
+	}
+	buffer.WriteByte('"')
+	buffer.WriteString(text)
+	buffer.WriteByte('"')
+	return nil
+}
+
+// memberError names the member of an object under which a value that is not data was found.
+func memberError(key string, err error) error {
+	return fmt.Errorf("%s: %w", key, err)
 }

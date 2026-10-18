@@ -148,6 +148,9 @@ func (c *ScriptCall) jsonValue(v any) goja.Value {
 	if c.parse == nil {
 		return c.VM.ToValue(string(encoded))
 	}
+	if read, isRead := c.parseJSON(encoded); isRead {
+		return read
+	}
 	parsed, err := c.parse(goja.Undefined(), c.VM.ToValue(string(encoded)))
 	if err != nil {
 		c.Throw("a host value cannot be handed to the script: %v", err)
@@ -281,5 +284,10 @@ func Describe(value goja.Value) string {
 	case goja.IsNull(value):
 		return "null"
 	}
-	return fmt.Sprintf("%T %s", value.Export(), value.String())
+	exported := value.Export()
+	if _, isHost := exported.(*hostObject); isHost {
+		// A host object is described as the object it reads as.
+		exported = map[string]any{}
+	}
+	return fmt.Sprintf("%T %s", exported, value.String())
 }

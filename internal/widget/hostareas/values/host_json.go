@@ -19,8 +19,7 @@ func init() {
 			if !isObject || object.ClassName() != "Object" {
 				call.Throw("json.map takes a plain object, and was handed %s", script.Describe(arguments.Argument(0)))
 			}
-			if err := object.DefineDataPropertySymbol(call.MapMarker, call.VM.ToValue(true), goja.FLAG_FALSE,
-				goja.FLAG_FALSE, goja.FLAG_FALSE); err != nil {
+			if err := call.MarkMap(object); err != nil {
 				call.Throw("json.map: %v", err)
 			}
 			return object
