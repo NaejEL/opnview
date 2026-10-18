@@ -141,6 +141,11 @@ func (c *ScriptCall) jsonValue(v any) goja.Value {
 	if v == nil {
 		return goja.Null()
 	}
+	if listed, isListed := scriptMembersOf(reflect.ValueOf(v)); isListed {
+		if read, isRead := c.membersValue(listed); isRead {
+			return read
+		}
+	}
 	encoded, err := json.Marshal(v)
 	if err != nil {
 		c.Throw("a host value cannot be handed to the script: %v", err)

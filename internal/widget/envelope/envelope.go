@@ -268,6 +268,51 @@ func (c VolumeCoverage) MarshalJSON() ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// ScriptMembers lists the coverage's members exactly as MarshalJSON writes them -- the class counts,
+// direction_states, the marker counts, each in its declared order -- for a widget script's host, which
+// builds from them the object the script would read from the JSON without writing and reading it
+// (internal/widget/script, ScriptMembers). ok is false for a coverage MarshalJSON writes otherwise: one
+// a script handed back, or one of a measure not declared, which it refuses.
+func (c VolumeCoverage) ScriptMembers() (names []string, values []any, ok bool) {
+	measure, found := vocab.MeasureNamed(c.measure)
+	if !found {
+		return nil, nil, false
+	}
+	names = make([]string, 0, 5+len(measure.Markers))
+	values = make([]any, 0, 5+len(measure.Markers))
+	for _, class := range []struct {
+		name  string
+		count int64
+	}{{measure.Classes.Complete, c.counts.Complete}, {measure.Classes.Partial, c.counts.Partial},
+		{measure.Classes.Unmeasured, c.counts.Unmeasured}, {measure.Classes.NotKnown, c.counts.NotKnown}} {
+		names, values = append(names, class.name), append(values, class.count)
+	}
+	states := stateCounts{names: make([]string, len(measure.States)), counts: c.counts.States[:]}
+	for index, state := range measure.States {
+		states.names[index] = state.Name
+	}
+	names, values = append(names, "direction_states"), append(values, states)
+	for index, marker := range measure.Markers {
+		names, values = append(names, marker), append(values, c.counts.Markers[index])
+	}
+	return names, values, true
+}
+
+// stateCounts is a coverage's direction_states object, for ScriptMembers.
+type stateCounts struct {
+	names  []string
+	counts []int64
+}
+
+// ScriptMembers lists the states' counts in their declared order, as MarshalJSON writes them.
+func (s stateCounts) ScriptMembers() (names []string, values []any, ok bool) {
+	values = make([]any, len(s.names))
+	for index := range s.names {
+		values[index] = s.counts[index]
+	}
+	return s.names, values, true
+}
+
 // writeCount writes one named count, "name":value, the name quoted as fmt's %q quotes it.
 func writeCount(out *bytes.Buffer, name string, value int64) {
 	var scratch [64]byte

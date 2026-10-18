@@ -11,6 +11,7 @@ import (
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/params"
@@ -105,6 +106,11 @@ func New(database *store.Store, options Options) (*Service, error) {
 	}
 	fromPlugins, refused, err := loadPluginWidgets(context.Background(), database, sources, service.presets)
 	if err != nil {
+		return nil, err
+	}
+	// Every statements file registered, the built-in widgets' included: a file refused at registration is
+	// refused here, when the service is built, rather than at the first read of a statement.
+	if _, err := sqldb.StatementNames(); err != nil {
 		return nil, err
 	}
 	service.refusals = append(service.refusals, refused...)

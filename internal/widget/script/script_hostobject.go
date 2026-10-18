@@ -95,9 +95,15 @@ func (c *ScriptCall) newHostObject(layout *flatLayout, value reflect.Value) goja
 				continue
 			}
 			// Written now, so a member JSON cannot write is refused now; read when the script reads it.
-			encoded, err := json.Marshal(member.Interface())
-			if err != nil {
-				return c.jsonValue(member.Interface())
+			encoded, written := []byte(nil), false
+			if listed, isListed := scriptMembersOf(member); isListed {
+				encoded, written = membersJSON(listed)
+			}
+			if !written {
+				var err error
+				if encoded, err = json.Marshal(member.Interface()); err != nil {
+					return c.jsonValue(member.Interface())
+				}
 			}
 			if host.encoded == nil {
 				host.encoded = make([][]byte, len(layout.fields))

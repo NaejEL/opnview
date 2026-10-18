@@ -43,6 +43,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/widget"
 	"github.com/NaejEL/opnview/internal/widget/datasets"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
@@ -293,12 +294,15 @@ func timeDatasets(ctx context.Context, service *widget.Service, label string, bu
 				parameters = `{"period": "` + period + `"}`
 			}
 			var (
-				response datasets.DatasetResponse
-				refusal  *dataset.Refusal
+				response   datasets.DatasetResponse
+				refusal    *dataset.Refusal
+				statements int64
 			)
 			median, err := medianOfThree(func() error {
 				var queryErr error
+				before := reads.CatalogueStatementCount()
 				response, refusal, queryErr = service.QueryDataset(ctx, declaration.Name, parameters)
+				statements = reads.CatalogueStatementCount() - before
 				return queryErr
 			})
 			if err != nil {
@@ -312,9 +316,11 @@ func timeDatasets(ctx context.Context, service *widget.Service, label string, bu
 				verdict += "; EMPTY: " + reason
 				counts.empty++
 			}
-			fmt.Printf("  dataset-budget %s %-30s %-3s %8.1f ms (budget %v, condition %s) %s\n", label,
-				declaration.Name, period, float64(median.Microseconds())/1000, budgets[period], response.Condition,
-				verdict)
+			// The catalogue statements the last of the three answers ran: a query is one statement whatever
+			// its size, and the figure beside its time says so.
+			fmt.Printf("  dataset-budget %s %-30s %-3s %8.1f ms (budget %v, condition %s, %d catalogue statements) %s\n",
+				label, declaration.Name, period, float64(median.Microseconds())/1000, budgets[period],
+				response.Condition, statements, verdict)
 		}
 	}
 	return nil

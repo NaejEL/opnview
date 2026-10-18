@@ -3,6 +3,7 @@ package script
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strconv"
 
 	"github.com/dop251/goja"
@@ -184,4 +185,94 @@ func (r *jsonReader) array(depth int) (goja.Value, bool) {
 		}
 	}
 	return nil, false
+}
+
+// ScriptMembers is implemented by a type that writes its own JSON as an object of whole numbers and of
+// such objects -- a Volume's coverage (envelope.VolumeCoverage): it lists the members its JSON writes,
+// in order, each an int64 or another ScriptMembers, and the host builds from them the object the
+// script's JSON.parse would read from that JSON, without writing and reading it. ok is false for a
+// value the JSON path is to write, or refuse.
+type ScriptMembers interface {
+	ScriptMembers() (names []string, values []any, ok bool)
+}
+
+// membersValue is the object JSON.parse reads from a ScriptMembers value's JSON: its members defined in
+// order, each whole number read as a JSON number is (a float64, which goja holds as an integer up to
+// 2^53). It reports false for a value whose members, or a nested object's, are not listed.
+func (c *ScriptCall) membersValue(value ScriptMembers) (goja.Value, bool) {
+	names, values, ok := value.ScriptMembers()
+	if !ok || len(names) != len(values) {
+		return nil, false
+	}
+	object := c.VM.NewObject()
+	for index, name := range names {
+		var member goja.Value
+		switch typed := values[index].(type) {
+		case int64:
+			member = c.VM.ToValue(float64(typed))
+		case ScriptMembers:
+			nested, isRead := c.membersValue(typed)
+			if !isRead {
+				return nil, false
+			}
+			member = nested
+		default:
+			return nil, false
+		}
+		if object.DefineDataProperty(name, member, goja.FLAG_TRUE, goja.FLAG_TRUE, goja.FLAG_TRUE) != nil {
+			return nil, false
+		}
+	}
+	return object, true
+}
+
+// scriptMembersOf is a member's ScriptMembers, when it has members to list: not a nil pointer, which
+// JSON writes as null.
+func scriptMembersOf(member reflect.Value) (ScriptMembers, bool) {
+	if (member.Kind() == reflect.Pointer || member.Kind() == reflect.Interface) && member.IsNil() {
+		return nil, false
+	}
+	listed, isListed := member.Interface().(ScriptMembers)
+	return listed, isListed
+}
+
+// membersJSON writes a ScriptMembers value's JSON as encoding/json writes the value -- compact, every
+// name a JSON string, every whole number its digits -- and reports false when it lists no members.
+func membersJSON(value ScriptMembers) ([]byte, bool) {
+	var buffer bytes.Buffer
+	if !appendMembers(&buffer, value) {
+		return nil, false
+	}
+	return buffer.Bytes(), true
+}
+
+// appendMembers writes one ScriptMembers object.
+func appendMembers(buffer *bytes.Buffer, value ScriptMembers) bool {
+	names, values, ok := value.ScriptMembers()
+	if !ok || len(names) != len(values) {
+		return false
+	}
+	var digits [24]byte
+	buffer.WriteByte('{')
+	for index, name := range names {
+		if index > 0 {
+			buffer.WriteByte(',')
+		}
+		if appendJSONString(buffer, name) != nil {
+			return false
+		}
+		buffer.WriteByte(':')
+		switch typed := values[index].(type) {
+		case int64:
+			buffer.Write(strconv.AppendInt(digits[:0], typed, 10))
+		case ScriptMembers:
+			if !appendMembers(buffer, typed) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	buffer.WriteByte('}')
+	return true
 }

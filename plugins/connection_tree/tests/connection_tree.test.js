@@ -96,6 +96,26 @@ test("limit_per_level folds the rest into a remainder node that keeps the level 
   t.equal([clients[1].remainder_members, clients[1].bytes.value], [1, 200], "the remainder");
 });
 
+test("a connection to this firewall lands in the this_firewall node, with nothing below it", function (t) {
+  seed(t);
+  // Client 10 reaches the firewall's own address on its interface: an end that is this firewall records
+  // the interface its address belongs to, and never a client.
+  t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+    "interface_lookup_state, src_interface_id, src_client_id, dst_interface_id, dst_is_this_firewall, " +
+    "src_address, dst_address, protocol, ip_version, action, direction, packet_bytes, rule_lookup_state, " +
+    "traffic_scope) VALUES (4, 'd4', :at, :at, 'vlan0.10', 'resolved', 1, 10, 1, true, '192.0.2.10', " +
+    "'192.0.2.1', 'udp', 4, 'pass', 'in', 90, 'pending', 'this_firewall')", { at: AT - 590 });
+  var data = t.widget("connection_tree", { period: "1h", depth: 3 }).body.data;
+  t.equal(data.total.bytes.value, 3790, "the total counts it");
+  var firewall = data.outside.filter(function (node) { return node.key === "this_firewall"; });
+  t.equal(firewall.map(function (node) { return [node.key, node.bytes.value, node.connections.value]; }),
+    [["this_firewall", 90, 1]], "one this_firewall node on the outside side, holding the connection");
+  t.assert(!("children" in firewall[0]), "no destination, site or service below this firewall");
+  t.equal([sum(data.inside), sum(data.outside)], [3790, 3790], "both roots still sum to the total");
+  t.equal(data.inside[0].children.map(function (node) { return [node.key, node.bytes.value]; }),
+    [["client:10", 3590], ["client:11", 200]], "the client that reached it, on the inside side");
+});
+
 test("with no source probed and nothing stored, the answer is no data, never an empty tree", function (t) {
   t.clock(AT);
   var answer = t.widget("connection_tree");

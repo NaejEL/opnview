@@ -4094,25 +4094,15 @@ BEGIN
 END
 $measure_parts_add_flow$;
 
--- measure_parts_written is measure_parts_total's result: the parts as a JSON array, as
--- measure_parts_sum(...) -> measure writes them (json rather than jsonb: the readers read the text, and
--- building a jsonb of every group's array cost as much as the sum).
-CREATE OR REPLACE FUNCTION measure_parts_written(total BIGINT[])
-RETURNS JSON
-LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE
-AS $measure_parts_written$
-BEGIN
-    RETURN array_to_json(total);
-END
-$measure_parts_written$;
-
 -- measure_parts_total is the parts of the flows a group of a twin counts, read through flow_measure:
 -- what measure_parts_sum(flow_measures(...).parts) -> measure answers for them; NULL over no flow and
--- for a measure not declared.
+-- for a measure not declared. Its result is the parts as a JSON array, as measure_parts_sum(...) -> measure
+-- writes them: json rather than jsonb, which the readers read as the same text, because building a jsonb
+-- of every group's array cost as much as the sum.
 CREATE OR REPLACE AGGREGATE measure_parts_total(BIGINT[], INTEGER, INTEGER) (
     SFUNC = measure_parts_add_flow,
     STYPE = BIGINT[],
-    FINALFUNC = measure_parts_written
+    FINALFUNC = array_to_json
 );
 
 -- measure_markers is the markers a direction carries -- its bits in connection_measure.markers -- as an

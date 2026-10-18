@@ -223,15 +223,6 @@ func decodeIntegers(member goja.Value, destination reflect.Value) bool {
 	return true
 }
 
-// memberValue is one member handed to the script: member by member when it can be, through JSON
-// otherwise.
-func (c *ScriptCall) memberValue(member reflect.Value) goja.Value {
-	if crossed, flat := c.flatValue(member); flat {
-		return crossed
-	}
-	return c.jsonValue(member.Interface())
-}
-
 // emptyForJSON reports whether omitempty leaves a member out, as encoding/json decides it: false, 0,
 // a nil pointer or interface, and an empty array, slice, map or string.
 func emptyForJSON(member reflect.Value) bool {

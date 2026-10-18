@@ -560,18 +560,29 @@ func volumeKeyString(key VolumeKey) string {
 		key.TrafficScope, key.TrafficDirection, exit}, "\x1f")
 }
 
-// sortedVolumeRows returns the rows in a stable order: by bytes, then by key.
+// sortedVolumeRows returns the rows in a stable order: by bytes, then by key. The keys are sorted with
+// their rows' bytes beside them, and each row is copied once: a row carries every measure's parts, and
+// moving rows while sorting was most of what ordering a 30-day window cost.
 func sortedVolumeRows(sums map[string]*VolumeRow) []VolumeRow {
-	keys := make([]string, 0, len(sums))
-	for key := range sums {
-		keys = append(keys, key)
+	type keyed struct {
+		key   string
+		bytes int64
+		row   *VolumeRow
 	}
-	sort.Strings(keys)
-	rows := make([]VolumeRow, 0, len(keys))
-	for _, key := range keys {
-		rows = append(rows, *sums[key])
+	order := make([]keyed, 0, len(sums))
+	for key, row := range sums {
+		order = append(order, keyed{key: key, bytes: row.Bytes, row: row})
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Bytes > rows[j].Bytes })
+	sort.Slice(order, func(i, j int) bool {
+		if order[i].bytes != order[j].bytes {
+			return order[i].bytes > order[j].bytes
+		}
+		return order[i].key < order[j].key
+	})
+	rows := make([]VolumeRow, 0, len(order))
+	for _, entry := range order {
+		rows = append(rows, *entry.row)
+	}
 	return rows
 }
 
