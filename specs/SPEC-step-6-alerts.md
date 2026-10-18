@@ -242,3 +242,13 @@ Cycle kind: interface
 8. **D8:** the mockup's `alerts_by_signature` card returns to the default dashboard. Existing installations are not re-seeded.
 9. **D9:** two lots, routed as stated at the top.
 10. **D10:** `lower_bound: true`, stated in the payload and never printed.
+
+## Amendment: everything in JavaScript (orchestrator, 18 October 2026, on the maintainer's instruction)
+
+The maintainer's rule is absolute: widgets, collectors and everything Suricata-specific are written in JavaScript. This amendment supersedes D1, S6-3, S6-4's core edits, S6-7 and S6-12's core changes.
+
+- **Suricata alerts are a plugin-own kind** of `plugins/suricata`, with its own tables in schema `plugin_suricata`: events, the rule-info cache (`found` / `not_found`; an absent row means not fetched) and the watermark. It uses the open plugin API: own kinds, tables, datasets, derivations and measures.
+- **Rule info:** the plugin's JS calls the verified endpoint and fills its own cache. A core change is allowed only if no declarable read endpoint serves the fields and the `argument` vocabulary cannot express the path. That change must be minimal, generic and reported.
+- **Correlation at both ends:** a JS derivation of the plugin reads the core datasets set-wise (interface, clients and leases, `this_firewall_address`) and writes the source and destination client and interface into the plugin's event table. Core classification is not changed.
+- **The three widgets read the plugin's tables and datasets.** The acceptance criteria stand, read against the plugin's tables. S6-AC3, S6-AC7, S6-AC8 and S6-AC16 apply to the plugin's own contract, tables, derivation and dataset.
+- **S6-AC15** becomes: a second IDS is a second plugin with its own kind, and the three widgets read a declared dataset shape that both can feed.
