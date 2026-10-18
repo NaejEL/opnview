@@ -149,10 +149,24 @@ if [ -n "${OPNVIEW_TEST_BREAKDOWN:-}" ]; then
   export OPNVIEW_TEST_TIMING_DIR="$breakdown_dir"
 fi
 
+# AS MANY TEST BINARIES AT ONCE AS THE MACHINE HAS PHYSICAL CORES, not logical CPUs. go test's -p
+# defaults to the logical CPU count, and every test binary runs its own parallel tests against the
+# test database, so on a machine whose logical CPUs are hyperthreads the suite ran twice as many
+# database-bound binaries as there are cores to run them. Measured on 18 October 2026 on 8 cores and
+# 16 hyperthreads, the suite bound by database CPU: 64.5 s at -p 16 (twice), 58.5 s and 58.9 s at
+# -p 8, 57.8 s at -p 4, 61.3 s at -p 6, 75.3 s at -p 2. A topology lscpu cannot read keeps the
+# default.
+test_parallelism=()
+physical_cores="$(lscpu -p=CORE,SOCKET 2>/dev/null | grep -v '^#' | sort -u | wc -l)"
+if [ "${physical_cores:-0}" -gt 0 ]; then
+  test_parallelism=(-p "$physical_cores")
+fi
+
 test_started="$(date +%s%N)"
-printf -- '== go test -count=1 -timeout %ds %s\n' "$TEST_BUDGET_SECONDS" "${test_packages[*]}"
-go test -count=1 -timeout "${TEST_BUDGET_SECONDS}s" "${test_packages[@]}"
-report "go test -count=1 -timeout ${TEST_BUDGET_SECONDS}s ${test_packages[*]}" "$?"
+printf -- '== go test -count=1 -timeout %ds %s %s\n' "$TEST_BUDGET_SECONDS" "${test_parallelism[*]}" \
+  "${test_packages[*]}"
+go test -count=1 -timeout "${TEST_BUDGET_SECONDS}s" "${test_parallelism[@]}" "${test_packages[@]}"
+report "go test -count=1 -timeout ${TEST_BUDGET_SECONDS}s ${test_parallelism[*]} ${test_packages[*]}" "$?"
 test_elapsed_ms=$(( ( $(date +%s%N) - test_started ) / 1000000 ))
 
 if [ -n "$breakdown_dir" ]; then
@@ -164,8 +178,9 @@ if [ -n "$breakdown_dir" ]; then
 fi
 
 cpus="$(nproc)"
-printf -- '-- go test wall time: %d.%03d s on %s CPUs (test budget: %d s)\n' \
-  $(( test_elapsed_ms / 1000 )) $(( test_elapsed_ms % 1000 )) "$cpus" "$TEST_BUDGET_SECONDS"
+printf -- '-- go test wall time: %d.%03d s on %s CPUs, %s physical cores (test budget: %d s)\n' \
+  $(( test_elapsed_ms / 1000 )) $(( test_elapsed_ms % 1000 )) "$cpus" "${physical_cores:-unknown}" \
+  "$TEST_BUDGET_SECONDS"
 if [ "$test_elapsed_ms" -gt $(( TEST_BUDGET_SECONDS * 1000 )) ]; then
   printf -- 'checks: go test took %d.%03d s on %s CPUs, over the test budget of %d s.\n' \
     $(( test_elapsed_ms / 1000 )) $(( test_elapsed_ms % 1000 )) "$cpus" "$TEST_BUDGET_SECONDS" >&2

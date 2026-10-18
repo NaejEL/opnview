@@ -196,7 +196,10 @@ maintainer's test budget of 7 October 2026,
   constant `TEST_BUDGET_SECONDS` in `ci/checks.sh`: the script measures the time,
   prints it beside the container's CPU count so a slower or busier machine is
   identifiable, and fails above the budget with a message that names it. `-count=1`
-  makes the time the suite's rather than a cache hit's. The everyday suite's
+  makes the time the suite's rather than a cache hit's. `go test` runs as many
+  test binaries at once as the machine has physical cores (`-p`), not logical
+  CPUs: the suite is bound by the test database's CPU, and on hyperthreads twice
+  as many binaries only queue (measured in `ci/checks.sh`). The everyday suite's
   PostgreSQL test instance keeps its data on a tmpfs with durability off, and runs
   with autovacuum off and `wal_level = minimal` (each measured in
   `docker-compose.yml`), which nothing the suite asserts depends on; the
