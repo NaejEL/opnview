@@ -250,24 +250,43 @@ type destinationRow struct {
 // the core reads no site name at all, so every destination is in address form and the answer is
 // the one the database would give with no attribution stored. The outside peers of its rows are
 // placed (request.Place), so their geolocations are read together at the first a script asks for.
+//
+// THE LOGGED ROWS ARE READ ONCE. A measured twin reads, beside the measure's bytes, the logged bytes of
+// the same rows -- the same flows, grouped the same way -- and the request keeps them: when
+// best_available does not serve the measured attempt and the logged answer follows it
+// (request/measure.go), that run is handed the rows already read instead of reading the window a
+// second time (PA18.2 of the open-plugin-API amendment).
 func DestinationRows(r *request.Request) ([]destinationRow, error) {
 	name := "widget_flow_destinations"
 	if r.NoDomains() {
 		name = "widget_flow_destinations_no_domains"
 	}
-	name = r.InMeasure(name)
+	kept := "traffic.destinations:" + name + ":" + strconv.FormatInt(r.Window.From, 10) + ":" +
+		strconv.FormatInt(r.Window.To, 10)
+	measure := r.MeasureRead()
+	if held, found := r.Kept(kept); found && measure == "" {
+		rows := append([]destinationRow{}, held.([]destinationRow)...)
+		for _, row := range rows {
+			if row.PeerAddress != nil {
+				r.Place(*row.PeerAddress)
+			}
+		}
+		return rows, nil
+	}
 	rows := []destinationRow{}
-	err := r.Db.WidgetRows(r.Ctx, name, vocab.Period{}, r.WithMeasure(r.WindowParameters()), func(row reads.RowScanner) error {
+	var logged []destinationRow
+	err := r.Db.WidgetRows(r.Ctx, r.InMeasure(name), vocab.Period{}, r.WithMeasure(r.WindowParameters()), func(row reads.RowScanner) error {
 		var (
 			item                                        destinationRow
 			iface, client, owner, asn, port, bytes, blk reads.NullInt64
+			loggedBytes, loggedBlocked                  reads.NullInt64
 			peer, state, site, protocol                 reads.NullString
 			measured                                    reads.VolumeFigures
 		)
 		targets := []any{&iface, &client, &owner, &item.TrafficDirection, &peer, &state, &asn, &site, &port,
 			&protocol, &item.Connections, &bytes, &item.Blocked, &blk, &item.Newest}
-		if measure := r.MeasureRead(); measure != "" {
-			targets = append(targets, measured.MeasureTarget(measure))
+		if measure != "" {
+			targets = append(targets, measured.MeasureTarget(measure), &loggedBytes, &loggedBlocked)
 		}
 		if err := row.Scan(targets...); err != nil {
 			return err
@@ -276,6 +295,11 @@ func DestinationRows(r *request.Request) ([]destinationRow, error) {
 		item.PeerAddress, item.LookupState, item.ASN = request.NullableText(peer), request.NullableText(state), request.NullableNumber(asn)
 		item.SiteName, item.Port, item.Protocol = request.NullableText(site), request.NullableNumber(port), request.NullableText(protocol)
 		item.Bytes, item.BlockedBytes = bytes.Int64, blk.Int64
+		if measure != "" {
+			plain := item
+			plain.Bytes, plain.BlockedBytes = loggedBytes.Int64, loggedBlocked.Int64
+			logged = append(logged, plain)
+		}
 		item.MeasureMembers = Summable(measured).MeasureMembers
 		if item.PeerAddress != nil {
 			r.Place(*item.PeerAddress)
@@ -283,5 +307,8 @@ func DestinationRows(r *request.Request) ([]destinationRow, error) {
 		rows = append(rows, item)
 		return nil
 	})
+	if err == nil && measure != "" {
+		r.Keep(kept, append([]destinationRow{}, logged...))
+	}
 	return rows, err
 }

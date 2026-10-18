@@ -123,8 +123,8 @@ var stepSixTypes = []string{"security_alerts_over_time", "alerts_by_signature", 
 func TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets(t *testing.T) {
 	t.Parallel()
 	entries, index := parseCatalogue(t)
-	if len(index) != 29 {
-		t.Fatalf("the preset index holds %d types, not the 29 it documents", len(index))
+	if len(index) != 30 {
+		t.Fatalf("the preset index holds %d types, not the 30 it documents", len(index))
 	}
 	service, err := widget.New(nil, widget.Options{})
 	if err == nil || service != nil {
@@ -140,8 +140,8 @@ func TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets(t *testing.T) {
 	for _, preset := range servedPresets(t) {
 		served[preset.Type] = true
 	}
-	if len(served) != 26 {
-		t.Errorf("%d types are served, not 26", len(served))
+	if len(served) != 27 {
+		t.Errorf("%d types are served, not 27", len(served))
 	}
 	for widgetType := range expected {
 		if !served[widgetType] {

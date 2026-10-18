@@ -254,7 +254,7 @@ var namedStates = []string{"matrix_rules_beyond_flow_horizon", "records_beyond_f
 	"client_left_beyond_flow_horizon", "joins_beyond_flow_horizon", "site_methods_not_recorded_beyond_flow_horizon",
 	"series_read_from_hour_slots_beyond_flow_horizon", "registrable_domain_grouping_unavailable",
 	"unnamed_destinations_beyond_flow_horizon", "netflow_not_configured", "capture_configuration_unknown",
-	"netflow_not_covering_window", "netflow_not_served_by_type", "resolver_window_bounded"}
+	"netflow_not_covering_window", "netflow_not_served_by_type", "resolver_window_bounded", "window_out_of_range"}
 
 // usedKeys scans the front's files for every key they ask for: literal, plural and composed, each
 // composed prefix expanded over the values the data can reach.

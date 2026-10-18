@@ -181,6 +181,16 @@ function decisions(host, window, buckets, width, now, gaps) {
   });
 }
 
+// stored says whether anything stored falls in the strip: a sampled bucket or a counted decision.
+function stored(data) {
+  var sampled = data.throughput.some(function (series) {
+    return series.buckets.some(function (bucket) { return bucket.samples > 0; });
+  });
+  return sampled || data.decisions.some(function (series) {
+    return series.buckets.some(function (bucket) { return bucket.value !== null && bucket.value > 0; });
+  });
+}
+
 exports.widget = {
   serve: function (host) {
     var now = host.request.now;
@@ -201,8 +211,9 @@ exports.widget = {
       decisions: decisions(host, window, buckets, width, now, gaps),
       gaps: gaps
     };
-    // The strip always draws its buckets: a bucket with nothing in it is a gap or a measured zero, so
-    // the answer always holds rows.
-    return { data: data, has_rows: true };
+    // The strip always draws its buckets, a bucket with nothing in it being a gap or a measured zero;
+    // it holds rows when a sample or a decision falls in its window, and a degraded source with none
+    // answers no data at all, never a strip of zeros.
+    return { data: data, has_rows: stored(data) };
   }
 };

@@ -179,6 +179,7 @@ code (`internal/widget/widgets/catalogue_test.go`), so it cannot drift from what
 | `aggregate_freshness` | `periods` | data | `["1h","24h","7d","30d"]` |
 | `aggregate_freshness` | `show_bytes` | data | `true` |
 | `aggregate_freshness` | `compact` | rendering | `false` |
+| `live_strip` | `window_seconds` | data | none |
 | `unresolved_joins` | `period` | data | `"24h"` |
 | `unresolved_joins` | `counters` | data | `["interface","rule","client_identity","geo"]` |
 | `unresolved_joins` | `interfaces` | data | none |

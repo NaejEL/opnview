@@ -202,15 +202,15 @@ as an operator-installed backend plugin is.
 
 A widget manifest with a `renderer` and neither `queries` nor a `script`. Nothing on the server
 answers it: `GET /api/widget/{type}` answers `404` `{"condition": "front_only_widget"}`, and its
-renderer asks the core for what it draws, limited to `GET /api/widget/{type}`, `/api/datasets`,
-`/api/datasets/{name}/query` and `/api/live/strip`.
+renderer asks the core for what it draws, limited to `GET /api/widget/{type}`, `/api/datasets` and
+`/api/datasets/{name}/query`; the rolling strip is the widget `live_strip`, read through the first.
 
 Its renderer registers a `requests` function beside `render`. `requests({parameters})` answers the
-list of paths to read, each one of the four routes above with its query string; the core reads
+list of paths to read, each one of the three routes above with its query string; the core reads
 them on this server, on the canvas's schedule, and calls `render` with `input.data` holding one
 `{path, status, body}` per path, in the order asked. A path is matched as written: a `.` or `..`
-component, or any escape (`%`) in the route, is outside the four routes whatever it would resolve to,
-and a dataset's name is dot-separated words. A path outside the four routes, a `requests`
+component, or any escape (`%`) in the route, is outside the three routes whatever it would resolve to,
+and a dataset's name is dot-separated words. A path outside the three routes, a `requests`
 that throws or answers something other than a list, and the card draws its failure panel without
 reading anything. The parameters are the widget's manifest parameters, the canvas's period and
 scope applied as for any widget.

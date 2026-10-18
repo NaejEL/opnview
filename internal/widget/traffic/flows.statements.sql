@@ -154,7 +154,10 @@ GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
 -- measure's bytes for them in place of the logged bytes, then the measure's
 -- parts, measure_parts (internal/store, schema.sql). A flow's figure is its connection's, read through
 -- flow_measures and counted on its first leg's row (no second leg is read here), as the aggregate
--- refresh counts it (internal/store, insert_volume).
+-- refresh counts it (internal/store, insert_volume). The two destination reads also carry the logged
+-- bytes of the same rows, logged_bytes and logged_blocked_bytes, never summed with the measure's: the
+-- logged answer that may follow a measured attempt is handed those rows rather than reading the window
+-- again (flows.go, DestinationRows).
 -- ---------------------------------------------------------------------------
 
 -- statement: widget_flow_parts_measured
@@ -246,7 +249,9 @@ SELECT f.local_interface_id AS interface_id,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS blocked_bytes,
        max(f.observed_at) AS newest,
-       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts,
+       sum(f.packet_bytes) AS logged_bytes,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END) AS logged_blocked_bytes
 FROM classified_flow AS f
 LEFT JOIN client AS c ON c.id = f.local_client_id
 LEFT JOIN geo_asn AS g ON g.address = f.peer_address
@@ -276,7 +281,9 @@ SELECT f.local_interface_id AS interface_id,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS blocked_bytes,
        max(f.observed_at) AS newest,
-       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts,
+       sum(f.packet_bytes) AS logged_bytes,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END) AS logged_blocked_bytes
 FROM classified_flow AS f
 LEFT JOIN client AS c ON c.id = f.local_client_id
 LEFT JOIN geo_asn AS g ON g.address = f.peer_address

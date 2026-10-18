@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/live/strip"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/samples"
 )
@@ -13,9 +12,9 @@ import (
 // timeLive times the live part of a response (C-AC14 of specs/SPEC-backend-completion-plugins.md:
 // a median of at most 100 ms at the 1 000 000-row seed): the read every live figure of a widget
 // answer makes -- the current rates of every subject, split by direction, device, client and owner
-// -- and the rolling strip at its default window and the live cadence's default, each the median of
-// three, beside its budget, at the seed's newest sample. A live part with no sample in the seed measures nothing, and is counted
-// as an empty answer.
+// -- the median of three, beside its budget, at the seed's newest sample. The rolling strip is the
+// live_strip widget, timed with every other served type (timeWidgets). A live part with no sample in
+// the seed measures nothing, and is counted as an empty answer.
 func timeLive(ctx context.Context, database *store.Store, now int64, label string, budget time.Duration,
 	counts *tally) error {
 	// The live part is read at the seed's newest sample, so it reads samples: the seed spreads its
@@ -42,23 +41,6 @@ func timeLive(ctx context.Context, database *store.Store, now int64, label strin
 		verdict, counts.empty = verdict+" (no current sample: measures nothing)", counts.empty+1
 	}
 	fmt.Printf("  live-budget %s %-30s %8.1f ms (budget %v) %s\n", label, "current_rates",
-		float64(median.Microseconds())/1000, budget, verdict)
-
-	var drawn *strip.Strip
-	median, err = medianOfThree(func() error {
-		var err error
-		drawn, err = strip.Read(ctx, database, strip.Request{Now: time.Unix(now, 0), CadenceSeconds: 10,
-			WindowSeconds: strip.DefaultWindowSeconds})
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("the rolling strip: %w", err)
-	}
-	verdict = judge(median, budget, counts)
-	if drawn == nil || len(drawn.Decisions) == 0 {
-		verdict, counts.empty = verdict+" (no series)", counts.empty+1
-	}
-	fmt.Printf("  live-budget %s %-30s %8.1f ms (budget %v) %s\n", label, "rolling_strip",
 		float64(median.Microseconds())/1000, budget, verdict)
 	return nil
 }

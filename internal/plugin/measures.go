@@ -67,3 +67,47 @@ func (l *Loaded) Measures() []vocab.DeclaredMeasure {
 	}
 	return measures
 }
+
+// The sample metrics a plugin declares (PA11 of the plugin-API amendment; docs/plugins.md, "Sample
+// metrics"): which subject kind and which measures of a kind's readings serve a health metric. A
+// declaration is checked whole at load -- its shape, a provider of its provider_kind in the same plugin,
+// no metric declared twice, none another plugin declares -- and, once the plugin is accepted by a load
+// given a store, registered for the process.
+
+// checkSampleMetrics checks the sample metrics a manifest declares.
+func checkSampleMetrics(manifest contract.Manifest) *contract.Refusal {
+	provided := map[string]bool{}
+	for _, declaration := range manifest.Providers {
+		provided[declaration.Kind] = true
+	}
+	seen := map[string]bool{}
+	for _, metric := range manifest.SampleMetrics {
+		if reason := metric.Validate(); reason != "" {
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "%s", reason)
+		}
+		switch held, taken := vocab.SampleMetricNamed(metric.Name); {
+		case !provided[metric.ProviderKind]:
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the sample metric %s reads the "+
+				"kind %s, which none of the plugin's providers is", metric.Name, metric.ProviderKind)
+		case seen[metric.Name]:
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the sample metric %s is declared "+
+				"twice", metric.Name)
+		case taken && held.Plugin != manifest.Name:
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the sample metric %s is declared "+
+				"by the plugin %s", metric.Name, held.Plugin)
+		}
+		seen[metric.Name] = true
+	}
+	return nil
+}
+
+// registerSampleMetrics records an accepted plugin's sample metrics for the process.
+func registerSampleMetrics(manifest contract.Manifest) *contract.Refusal {
+	for _, metric := range manifest.SampleMetrics {
+		metric.Plugin = manifest.Name
+		if err := vocab.RegisterSampleMetric(metric); err != nil {
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "%v", err)
+		}
+	}
+	return nil
+}

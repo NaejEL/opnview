@@ -83,7 +83,7 @@ func newNetflowWorld(t *testing.T, interfacesInfo map[string]any, offered []stri
 	t.Helper()
 	ctx := context.Background()
 	fake := providertest.NewFirewall(t)
-	database := collecttest.NewTestStore(t)
+	database := collecttest.NewPluginStore(t)
 	clock := collecttest.NewFixedClock(time.Unix(CaptureStartAt, 0).UTC())
 	loaded, err := plugin.Load(ctx, plugin.Options{DataDir: t.TempDir(), Store: database})
 	if err != nil {

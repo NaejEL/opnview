@@ -137,15 +137,26 @@ func (s *PluginTableStore) EnsurePluginTable(ctx context.Context, table pluginde
 	}
 	now := time.Now().UTC().Unix()
 	declaration := table.Declaration()
-	var recorded string
-	err := s.SQL.QueryRowContext(ctx, "SELECT declaration FROM plugin_table WHERE plugin = $1 AND table_name = $2",
-		table.Plugin, table.Table).Scan(&recorded)
+	var (
+		recorded, recordedTime string
+		recordedRetention      int64
+	)
+	err := s.SQL.QueryRowContext(ctx, `SELECT declaration, coalesce(time_column, ''), retention_seconds
+		FROM plugin_table WHERE plugin = $1 AND table_name = $2`,
+		table.Plugin, table.Table).Scan(&recorded, &recordedTime, &recordedRetention)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("store: reading the declaration of %s: %w", table.SQLName(), err)
 	}
 	exists, err := s.relationExists(ctx, plugindecl.PluginSchema(table.Plugin), table.Table)
 	if err != nil {
 		return nil, err
+	}
+	if exists && recorded == declaration && recordedTime == table.TimeColumn &&
+		recordedRetention == table.RetentionSeconds {
+		// The table is the one declared, recorded as declared: a restart, or a test database cloned
+		// with the plugins already loaded. Nothing is created and nothing recorded again; the read role
+		// is still granted, since a role recreated since would hold nothing.
+		return s.keepPluginTable(ctx, table)
 	}
 	transaction, err := s.SQL.BeginTx(ctx, nil)
 	if err != nil {
@@ -177,6 +188,14 @@ func (s *PluginTableStore) EnsurePluginTable(ctx context.Context, table pluginde
 	if err := transaction.Commit(); err != nil {
 		return nil, fmt.Errorf("store: creating %s: %w", table.SQLName(), err)
 	}
+	if _, err := s.keepPluginTable(ctx, table); err != nil {
+		return nil, err
+	}
+	return event, nil
+}
+
+// keepPluginTable grants the read role a plugin table's schema and records the table as this store's.
+func (s *PluginTableStore) keepPluginTable(ctx context.Context, table plugindecl.PluginTable) (*PluginTableEvent, error) {
 	if err := s.GrantReadOnSchema(ctx, plugindecl.PluginSchema(table.Plugin)); err != nil {
 		return nil, err
 	}
@@ -186,7 +205,7 @@ func (s *PluginTableStore) EnsurePluginTable(ctx context.Context, table pluginde
 	}
 	s.Plugins.ByName[table.SQLName()] = table
 	s.Plugins.Unlock()
-	return event, nil
+	return nil, nil
 }
 
 // relationExists reports whether a table exists in a schema.

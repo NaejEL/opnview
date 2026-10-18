@@ -121,13 +121,13 @@
     }
   ],
   "sample_metrics": [
-    { "name": "cpu", "subject_kind": "firewall", "measures": ["cpu_use_ratio"] },
-    { "name": "disk", "subject_kind": "firewall", "measures": ["disk_use_ratio"] },
-    { "name": "gateway_latency", "subject_kind": "gateway", "measures": ["delay_milliseconds"] },
-    { "name": "gateway_loss", "subject_kind": "gateway", "measures": ["loss_ratio"] },
-    { "name": "memory", "subject_kind": "firewall", "measures": ["memory_use_ratio"] },
-    { "name": "swap", "subject_kind": "firewall", "measures": ["swap_used_bytes", "swap_total_bytes"] },
-    { "name": "temperature", "subject_kind": "firewall", "measures": ["temperature_celsius"] },
-    { "name": "uptime", "subject_kind": "firewall", "measures": ["uptime_seconds"] }
+    { "name": "cpu", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["cpu_use_ratio"] },
+    { "name": "disk", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["disk_use_ratio"] },
+    { "name": "gateway_latency", "provider_kind": "measurement_sample", "subject_kind": "gateway", "measures": ["delay_milliseconds"] },
+    { "name": "gateway_loss", "provider_kind": "measurement_sample", "subject_kind": "gateway", "measures": ["loss_ratio"] },
+    { "name": "memory", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["memory_use_ratio"] },
+    { "name": "swap", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["swap_used_bytes", "swap_total_bytes"] },
+    { "name": "temperature", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["temperature_celsius"] },
+    { "name": "uptime", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["uptime_seconds"] }
   ]
 }

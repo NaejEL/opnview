@@ -151,6 +151,7 @@ nobody could decompose.
 | `dns_lookup` | `dns_resolution.lookup_key` | no |
 | `ip_geolocation` | `geo_asn.address` | no |
 | `measurement_sample` | `(subject, measure, sampled_at, provider)` | **yes** |
+| `neighbour` | no row of its own: a MAC-level `client`, whose identity carries no provider | no |
 | `reconciled_state` | `(provider_id, set_key, captured_at)` | **yes** |
 | `registrable_domain` | one list file on disk, no row | no |
 | `resolver_cache` | `(provider_id, owner_name, rrtype, value, first_seen_at)` of `resource_record_observation` | **yes** |
@@ -180,11 +181,11 @@ second provider would overwrite the first's answer rather than add to it.
 a lookup that transited two resolvers would be two records nothing could tell
 apart from two lookups.
 
-It is enforced by a partial unique index over `kind` where `is_active = 1` **and
-the kind is not one of the six marked yes above**, and mirrored in `internal/store/kinds.go` so
-the probe round can activate every qualifying provider of a concurrent kind
-instead of discovering the constraint by failing. The database is the authority,
-and a test reads the index's own definition back and asserts the two agree.
+It is data: each kind file says `concurrent` (PA2 of the plugin-API amendment), the built-ins'
+declarations write it into `provider_kind` at load, and a partial unique index over the active
+providers of the kinds that are not concurrent refuses a second one (`internal/store/schema.sql`,
+naming no kind). The probe round reads the same attribute, so it activates every qualifying provider
+of a concurrent kind instead of discovering the constraint by failing.
 
 On a freshly applied schema **no provider is active**. Activeness is determined
 by runtime detection, never by the schema: a schema file has no way to know what
@@ -235,7 +236,7 @@ into a temporary operator directory and reaches it over HTTP.
 A widget reads the database only through named statements, embedded beside the code that
 runs them and registered by name (the core's in `internal/widget/*.statements.sql`, each
 preset's in its own plugin directory, checked when the plugin loads), run by
-`Store.WidgetRows` on the store's read-only connections (`internal/store/readpool.go`), so
+`Store.WidgetRows` on the store's read-only connections (`internal/store/sqldb/readers.go`), so
 `sql/schema-checks.sh` plans every statement the API runs, found by walking the tree, and no
 widget can write. The three alert presets have no directory until step 6, and
 answer `unknown_widget_type` like any type with none.
@@ -387,7 +388,7 @@ because it orders text by its bytes and folds case on ASCII alone, as the previo
 **The read role.** Every widget, plugin and catalogue query runs as `<database>_reader`, a role
 created at start with a password generated then and held in memory only, in read-only
 transactions under a statement timeout, with no privilege on `account`, `session`,
-`encrypted_credential` or `plugin_state` (`internal/store/readers.go`).
+`encrypted_credential` or `plugin_state` (`internal/store/sqldb/readers.go`).
 
 **The driver.** `github.com/jackc/pgx/v5` v5.11.0, pure Go, through `database/sql`, so `opnview`
 builds with `CGO_ENABLED=0`. Its transitive modules, as the build resolves them:
@@ -486,9 +487,10 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/collect/identity` — the arithmetic of the client identity cascade.
 - `internal/collect/kinds/declared` — the coordinator of the kinds plugins declare, and of the reconciled state.
 - `internal/collect/kinds/filterlog` — the coordinator of the firewall_log kind, pulled and pushed.
-- `internal/collect/kinds/leases` — the coordinator of the dhcp_lease kind, and of the neighbour table.
+- `internal/collect/kinds/leases` — the coordinator of the dhcp_lease kind.
 - `internal/collect/kinds/lookups` — the coordinator of the dns_lookup kind.
 - `internal/collect/kinds/measurements` — the coordinator of the measurement_sample kind, baseline and live.
+- `internal/collect/kinds/neighbours` — the coordinator of the neighbour kind: the ARP and NDP tables the `neighbours` plugin reads, through the client identity cascade.
 - `internal/collect/kinds/resolverrecords` — the coordinators of the resolver_cache and resolver_local_data kinds.
 - `internal/collect/kinds/securityevents` — the coordinator of the security_event kind.
 - `internal/collect/provider` — every kind's declaration as data (`kinds/<kind>.json`: contract and attributes), the provider set every implementation is registered in, and the session an implementation is handed.
@@ -503,8 +505,7 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/front` — the front's index: the shell, the assets served, the themes, the languages and the widget registry.
 - `internal/front/frontjs` — runs the front's own files in the interpreter over a minimal document, for the front's tests.
 - `internal/layout` — the tests that keep this map, the fifteen-file limit and the package comments true.
-- `internal/live` — the live-interest lease.
-- `internal/live/strip` — the rolling strip.
+- `internal/live` — the live-interest lease; the rolling strip is a widget plugin.
 - `internal/measurecost` — the LV-C measuring tool.
 - `internal/modularity` — the tests that keep the modular rule true: an implementation is a directory, never a hand-kept list.
 - `internal/opnsense` — the only package that constructs an HTTP request: the client and the endpoints it may call.

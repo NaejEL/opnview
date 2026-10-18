@@ -215,19 +215,6 @@ type SettingReader interface {
 func Load(ctx context.Context, reader SettingReader) (Config, error) {
 	loaded := Defaults()
 
-	if value, present, err := reader.Setting(ctx, KeyRetentionSeconds); err != nil {
-		return loaded, err
-	} else if present {
-		seconds, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return loaded, fmt.Errorf("config: %s is not an integer: %w", KeyRetentionSeconds, err)
-		}
-		if seconds < 0 {
-			return loaded, fmt.Errorf("config: %s is negative", KeyRetentionSeconds)
-		}
-		loaded.RetentionSeconds = seconds
-	}
-
 	if value, present, err := reader.Setting(ctx, KeyAggregateMode); err != nil {
 		return loaded, err
 	} else if present {
@@ -237,158 +224,29 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		loaded.AggregateMode = value
 	}
 
-	// The core's own loops and every core kind's cadences are read the same way: a kind's under the key
-	// its kind file declares (internal/collect/provider/kinds), its default the file's.
-	intervals := []struct {
-		key    string
-		target *time.Duration
-	}{
-		{KeyDiscoveryInterval, &loaded.DiscoveryInterval},
-		{KeyPurgeInterval, &loaded.PurgeInterval},
-	}
-	for _, cadence := range provider.Cadences() {
-		target := new(time.Duration)
-		*target = cadence.Default()
-		intervals = append(intervals, struct {
-			key    string
-			target *time.Duration
-		}{cadence.Setting, target})
-	}
-	for _, interval := range intervals {
-		value, present, err := reader.Setting(ctx, interval.key)
-		if err != nil {
-			return loaded, err
-		}
-		if !present {
-			continue
-		}
-		seconds, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return loaded, fmt.Errorf("config: %s is not an integer: %w", interval.key, err)
-		}
-		if seconds <= 0 {
-			return loaded, fmt.Errorf("config: %s must be a positive number of seconds, got %d", interval.key, seconds)
-		}
-		if seconds > MaxIntervalSeconds {
-			return loaded, fmt.Errorf("config: %s is %d seconds, which no duration represents (the largest is %d)",
-				interval.key, seconds, MaxIntervalSeconds)
-		}
-		*interval.target = time.Duration(seconds) * time.Second
-	}
-	for _, interval := range intervals[2:] {
-		loaded.Intervals[interval.key] = *interval.target
-	}
-
-	// The page sizes are read the same way. A page size that is not a positive count is refused; one
-	// above what the firewall serves is not: it is stored and reported as above the ceiling on the
-	// collection surface, where the operator can see that the firewall will not honour it.
-	for _, pageSize := range provider.PageSizes() {
-		value, present, err := reader.Setting(ctx, pageSize.Setting)
-		if err != nil {
-			return loaded, err
-		}
-		if !present {
-			continue
-		}
-		count, err := strconv.Atoi(value)
-		if err != nil {
-			return loaded, fmt.Errorf("config: %s is not an integer: %w", pageSize.Setting, err)
-		}
-		if count <= 0 {
-			return loaded, fmt.Errorf("config: %s must be a positive number of records, got %d", pageSize.Setting, count)
-		}
-		loaded.PageSizes[pageSize.Setting] = count
-	}
-
-	if value, present, err := reader.Setting(ctx, KeyAttributionMaxDelay); err != nil {
-		return loaded, err
-	} else if present {
-		seconds, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return loaded, fmt.Errorf("config: %s is not a whole number of seconds: %w", KeyAttributionMaxDelay, err)
-		}
-		if seconds <= 0 {
-			return loaded, fmt.Errorf("config: %s must be a positive whole number of seconds, got %d",
-				KeyAttributionMaxDelay, seconds)
-		}
-		loaded.AttributionMaxDelaySeconds = seconds
-	}
-
-	// The cache-answer cap is a positive whole number of seconds, like the delay above.
-	if value, present, err := reader.Setting(ctx, KeyCacheAnswerDelay); err != nil {
-		return loaded, err
-	} else if present {
-		seconds, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return loaded, fmt.Errorf("config: %s is not a whole number of seconds: %w", KeyCacheAnswerDelay, err)
-		}
-		if seconds <= 0 {
-			return loaded, fmt.Errorf("config: %s must be a positive whole number of seconds, got %d",
-				KeyCacheAnswerDelay, seconds)
-		}
-		loaded.CacheAnswerDelaySeconds = seconds
-	}
-
-	// The pairing window is a whole number of seconds, 0 included -- the two records
-	// logged in the same second -- and anything else is refused.
-	if value, present, err := reader.Setting(ctx, KeyLegPairingWindow); err != nil {
-		return loaded, err
-	} else if present {
-		seconds, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return loaded, fmt.Errorf("config: %s is not a whole number of seconds: %w", KeyLegPairingWindow, err)
-		}
-		if seconds < 0 {
-			return loaded, fmt.Errorf("config: %s must be 0 or more whole seconds, got %d",
-				KeyLegPairingWindow, seconds)
-		}
-		if seconds > MaxLegPairingWindowSeconds {
-			return loaded, fmt.Errorf("config: %s must be at most %d seconds, got %d",
-				KeyLegPairingWindow, MaxLegPairingWindowSeconds, seconds)
-		}
-		loaded.LegPairingWindowSeconds = seconds
-	}
-
-	// The failure limit is a count of lease passes, one or more, and anything else is
-	// refused.
-	if value, present, err := reader.Setting(ctx, KeyLeaseBackendFailurePassLimit); err != nil {
-		return loaded, err
-	} else if present {
-		passes, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return loaded, fmt.Errorf("config: %s is not a whole number of lease passes: %w",
-				KeyLeaseBackendFailurePassLimit, err)
-		}
-		if passes <= 0 {
-			return loaded, fmt.Errorf("config: %s must be one lease pass or more, got %d",
-				KeyLeaseBackendFailurePassLimit, passes)
-		}
-		loaded.LeaseBackendFailurePassLimit = passes
-	}
-
-	// The heartbeat interval and the downtime threshold are positive whole numbers of
-	// seconds, and the threshold must exceed the interval: a running service leaves up to
-	// one interval between two beats, so a threshold at or below it would record the
-	// service's own cadence as downtime (SPEC-step-5b-widget-api.md, D2).
+	// Every other core setting is a whole number within bounds, refused with its key otherwise:
+	//   - the retention horizon, 0 or more seconds;
+	//   - the attribution delay and the cache-answer cap, positive seconds;
+	//   - the pairing window, 0 included -- the two records logged in the same second -- to its maximum;
+	//   - the lease failure limit, one lease pass or more;
+	//   - the heartbeat interval and the downtime threshold, positive seconds, the threshold longer than
+	//     the interval: a running service leaves up to one interval between two beats, so a threshold at
+	//     or below it would record the service's own cadence as downtime (SPEC-step-5b-widget-api.md, D2).
 	for _, setting := range []struct {
-		key    string
-		target *int64
+		key      string
+		min, max int64
+		target   *int64
 	}{
-		{KeyHeartbeatInterval, &loaded.HeartbeatIntervalSeconds},
-		{KeyDowntimeThreshold, &loaded.DowntimeThresholdSeconds},
+		{KeyRetentionSeconds, 0, math.MaxInt64, &loaded.RetentionSeconds},
+		{KeyAttributionMaxDelay, 1, MaxIntervalSeconds, &loaded.AttributionMaxDelaySeconds},
+		{KeyCacheAnswerDelay, 1, MaxIntervalSeconds, &loaded.CacheAnswerDelaySeconds},
+		{KeyLegPairingWindow, 0, MaxLegPairingWindowSeconds, &loaded.LegPairingWindowSeconds},
+		{KeyLeaseBackendFailurePassLimit, 1, math.MaxInt64, &loaded.LeaseBackendFailurePassLimit},
+		{KeyHeartbeatInterval, 1, MaxIntervalSeconds, &loaded.HeartbeatIntervalSeconds},
+		{KeyDowntimeThreshold, 1, MaxIntervalSeconds, &loaded.DowntimeThresholdSeconds},
 	} {
-		if value, present, err := reader.Setting(ctx, setting.key); err != nil {
+		if _, err := readWhole(ctx, reader, setting.key, setting.min, setting.max, setting.target); err != nil {
 			return loaded, err
-		} else if present {
-			seconds, err := strconv.ParseInt(value, 10, 64)
-			if err != nil {
-				return loaded, fmt.Errorf("config: %s is not a whole number of seconds: %w", setting.key, err)
-			}
-			if seconds <= 0 || seconds > MaxIntervalSeconds {
-				return loaded, fmt.Errorf("config: %s must be a positive whole number of seconds no "+
-					"larger than %d, got %d", setting.key, MaxIntervalSeconds, seconds)
-			}
-			*setting.target = seconds
 		}
 	}
 	if loaded.DowntimeThresholdSeconds <= loaded.HeartbeatIntervalSeconds {
@@ -396,11 +254,70 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 			"own heartbeat cadence would read as downtime", KeyDowntimeThreshold,
 			loaded.DowntimeThresholdSeconds, KeyHeartbeatInterval, loaded.HeartbeatIntervalSeconds)
 	}
+
+	// The core's own loops and every core kind's cadences are read the same way: a kind's under the key
+	// its kind file declares (internal/collect/provider/kinds), its default the file's. Each is a positive
+	// number of seconds that a duration can hold.
+	for _, interval := range []struct {
+		key    string
+		target *time.Duration
+	}{
+		{KeyDiscoveryInterval, &loaded.DiscoveryInterval},
+		{KeyPurgeInterval, &loaded.PurgeInterval},
+	} {
+		if err := readInterval(ctx, reader, interval.key, interval.target); err != nil {
+			return loaded, err
+		}
+	}
+	for _, cadence := range provider.Cadences() {
+		interval := cadence.Default()
+		if err := readInterval(ctx, reader, cadence.Setting, &interval); err != nil {
+			return loaded, err
+		}
+		loaded.Intervals[cadence.Setting] = interval
+	}
+
+	// The page sizes are read the same way. A page size that is not a positive count is refused; one
+	// above what the firewall serves is not: it is stored and reported as above the ceiling on the
+	// collection surface, where the operator can see that the firewall will not honour it.
+	for _, pageSize := range provider.PageSizes() {
+		var count int64
+		if present, err := readWhole(ctx, reader, pageSize.Setting, 1, math.MaxInt32, &count); err != nil {
+			return loaded, err
+		} else if present {
+			loaded.PageSizes[pageSize.Setting] = int(count)
+		}
+	}
 	if err := loadLive(ctx, reader, &loaded); err != nil {
 		return loaded, err
 	}
-
 	return loaded, nil
+}
+
+// readWhole reads one setting that is a whole number from min to max into target, which keeps its
+// value when no row holds the setting, and reports whether one did. A value outside that is refused
+// with the setting's key.
+func readWhole(ctx context.Context, reader SettingReader, key string, min, max int64, target *int64) (bool, error) {
+	value, present, err := reader.Setting(ctx, key)
+	if err != nil || !present {
+		return false, err
+	}
+	number, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || number < min || number > max {
+		return true, fmt.Errorf("config: %s must be a whole number from %d to %d, got %q", key, min, max, value)
+	}
+	*target = number
+	return true, nil
+}
+
+// readInterval reads one setting that is a positive number of seconds into a duration.
+func readInterval(ctx context.Context, reader SettingReader, key string, target *time.Duration) error {
+	seconds := int64(*target / time.Second)
+	if _, err := readWhole(ctx, reader, key, 1, MaxIntervalSeconds, &seconds); err != nil {
+		return err
+	}
+	*target = time.Duration(seconds) * time.Second
+	return nil
 }
 
 // ErrNoDataDir is returned when --data-dir was not given. There is deliberately

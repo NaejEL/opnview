@@ -108,6 +108,7 @@ function written(measure, node) {
 // still sums to its parent.
 function truncate(host, nodes, limit) {
   var order = host.params.text("sort");
+  var measure = host.params.text("measure");
   nodes.sort(function (a, b) {
     var difference = 0;
     switch (order) {
@@ -120,7 +121,7 @@ function truncate(host, nodes, limit) {
         difference = b.newest - a.newest;
         break;
       default:
-        difference = nodeValue(host.params.text("measure"), b) - nodeValue(host.params.text("measure"), a);
+        difference = nodeValue(measure, b) - nodeValue(measure, a);
     }
     return difference !== 0 ? (difference > 0 ? 1 : -1) : host.figures.compare(a.key, b.key);
   });
@@ -201,6 +202,8 @@ exports.widget = {
   serve: function (host) {
     coverFlows(host, "tree_beyond_flow_horizon");
     MEASURE = host.figures.measure;
+    var measured = MEASURE !== "logged";
+    var services = host.params.integer("depth") >= 3;
     var directions = host.volume.directions;
     var root = host.params.text("root");
     var interfaces = idSet(host.refs.ids("interfaces"));
@@ -230,8 +233,11 @@ exports.widget = {
         }
       }
       hasRows = true;
-      // The core judges every row the tree counts, as it judges a Volume.
-      host.figures.cover(row);
+      // The core judges every row the tree counts, as it judges a Volume. A logged answer has nothing
+      // to judge: the core records a judgement only while the answer is read in a declared measure.
+      if (measured) {
+        host.figures.cover(row);
+      }
       var direction = row.traffic_direction;
       var firewall = direction === directions.to_this_firewall || direction === directions.from_this_firewall;
       var looked = row.lookup_state !== null;
@@ -277,7 +283,10 @@ exports.widget = {
       var service = "";
       if (row.peer_address !== null && !firewallOutside && direction !== directions.inter_interface) {
         named = row.site_name !== null ? "site:" + row.site_name : "address:" + row.peer_address;
-        service = host.flows.serviceKey(row.protocol, row.port);
+        // The service is the third level, which only a tree of depth 3 draws.
+        if (services) {
+          service = host.flows.serviceKey(row.protocol, row.port);
+        }
       }
       addToLevels(outside, [destination, named, service], bytes, connections, blocked, row.newest);
       total.bytes += bytes;

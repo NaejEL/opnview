@@ -329,6 +329,7 @@
     "named_state.netflow_not_covering_window": "NetFlow covers part",
     "named_state.netflow_not_served_by_type": "NetFlow not served",
     "named_state.resolver_window_bounded": "names from recent lookups only",
+    "named_state.window_out_of_range": "window adjusted to what the live cadence allows",
     "measure.logged": "logged",
     "measure.netflow": "NetFlow",
     "measure.sampled": "sampled",

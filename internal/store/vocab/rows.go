@@ -112,11 +112,11 @@ const (
 	// batch that could not be committed, a listener that was not listening, a parse function that
 	// threw or timed out, and a source that stopped sending. A push protocol's decoder adds the
 	// reasons its own numbering reveals (internal/push/protocols/<name>).
-	GapPushBufferOverflow     GapReason = "push_buffer_overflow"
-	GapPushStoreFailed        GapReason = "push_store_failed"
-	GapPushListenerDown       GapReason = "push_listener_down"
-	GapPushScriptFailed       GapReason = "push_script_failed"
-	GapPushNotAlive           GapReason = "push_not_alive"
+	GapPushBufferOverflow GapReason = "push_buffer_overflow"
+	GapPushStoreFailed    GapReason = "push_store_failed"
+	GapPushListenerDown   GapReason = "push_listener_down"
+	GapPushScriptFailed   GapReason = "push_script_failed"
+	GapPushNotAlive       GapReason = "push_not_alive"
 )
 
 // LogReasons is the established value set of the filter log's `reason` field,

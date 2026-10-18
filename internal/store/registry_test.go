@@ -24,6 +24,7 @@ var todaysRegistry = []string{
 	"flow_volume|insight|NetFlow / Insight",
 	"ip_geolocation|maxmind_geolite2|MaxMind GeoLite2",
 	"measurement_sample|insight|NetFlow / Insight sampling",
+	"neighbour|neighbours|Neighbour tables",
 	"pf_state_rate|pf_states|pf state table",
 	"registrable_domain|public_suffix_list|Public Suffix List",
 	"resolver_cache|dnsmasq|Dnsmasq cache",

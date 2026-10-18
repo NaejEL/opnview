@@ -68,6 +68,7 @@ double underscore. A plugin directory holds no Go file; a test of the repository
 | `push` | no | The push sources the plugin receives: syslog lines and NetFlow records the firewall sends, and datagrams and lines its script decodes (see *Push sources*). |
 | `datasets` | no | The data-catalogue names its scripts read through `host.datasets` -- core datasets and other plugins' `<plugin>.<table>` (*Datasets a plugin reads*). Its own tables need no entry. |
 | `derivations` | no | Functions of the script the core runs after collection passes, push batches and on a cadence, writing tables, counters and measures (*Derivations*). |
+| `sample_metrics` | no | Which subject kind and which measures of a kind's readings serve a health metric of the catalogue (`cpu`, `memory`...): `{name, provider_kind, subject_kind, measures}`, each a snake_case word, one measure at least and none twice, `provider_kind` one the plugin provides, and a metric declared by one plugin only, else `manifest_invalid`. `host.samples.metrics` answers them; `plugins/insight/plugin.json` declares the built-in ones. |
 
 ### Endpoints
 
@@ -1066,6 +1067,8 @@ the drops of the same reason less than ten seconds apart:
 | `netflow_sequence_gap` | a jump in an exporter's sequence numbers, between the export times on either side of it |
 | `netflow_template_missing` | NetFlow data whose template never arrived within the bound |
 
+The last two are the NetFlow decoder's own: a protocol declares the gap reasons it records (`GapReasons()`), and the core composes their catalogue keys, `gap_reason.<reason>`, from that declaration.
+
 **Loss on the wire.** Syslog over UDP carries no sequence number, so every dataset a push entry feeds
 carries `loss_detectable`: true when every transport it accepts detects loss (TCP syslog, NetFlow).
 One NetFlow observation domain may carry several sequence counters -- OPNsense runs one per exporting
@@ -1144,7 +1147,7 @@ calling its function directly:
 | Function | What it does |
 |---|---|
 | `t.deliverSyslog(lines, {transport, sender})` | Delivers syslog messages, one per line; TCP by default, from the test world's firewall address. |
-| `t.deliverNetflow(packets, {sender})` | Delivers NetFlow or IPFIX packets, each hexadecimal text. |
+| `t.deliverPackets(protocol, packets, {sender})` | Delivers datagrams, each hexadecimal text, over UDP through the named protocol's decoder (`netflow`, `datagram`, `line`). |
 | `t.acceptSender(address)` | Adds an address to the accepted senders. |
 | `t.pushed(entry)` | What the entry stored: rows (instants as epoch seconds, addresses as text), or records of its kind. |
 | `t.pushCounters(entry)`, `t.listenerCounters(protocol, transport)` | The counters. |

@@ -559,7 +559,7 @@ foreign key, which a hypertable cannot be.
 | `geo_asn`, `address_classification`, `interface_address` | no | keyed on the address, mutable | row `DELETE` | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
 | `collection_gap`, `opnview_downtime` | no | `id` is unique without the interval | row `DELETE` | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
 | `state_snapshot`, `state_item` | no | `state_item` references its snapshot | row `DELETE` of whole snapshots | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
-| `connection_measure` | no | keyed on the measure, the connection's first leg and the direction, not on time; rewritten in place as a figure grows | row `DELETE` with its connection, at the flows' horizon (`sql/purge.sql`) | `TestTheJoinWithEveryInterfaceCaptured` (NJ-AC12) |
+| `connection_measure` | no | keyed on the measure, the connection's first leg and the direction, not on time; rewritten in place as a figure grows | row `DELETE` with its connection, at the flows' horizon (`internal/store/purge/purge.sql`) | `TestTheJoinWithEveryInterfaceCaptured` (NJ-AC12) |
 | `provider_source_period` | no | keyed on the provider and the period's start, a period spanning any length of time | row `DELETE` of closed periods ended before the flows' horizon; the open period kept | `sql/schema-checks.sh`, E21 and E22 |
 | a plugin's table with a time column | **yes**, chunked by day | its declaration may not hold a unique key without the time column (`unique_key_without_time`) | `drop_chunks` of the whole chunks past the horizon, then row `DELETE` to the exact second | `TestAPluginHypertableIsPurgedByChunkToTheExactSecond` |
 
@@ -1403,7 +1403,7 @@ traffic_scope
 | `traffic_scope` | Overview, Matrix, Interface, Client, Blocked; the aggregate refresh |
 | `log_reason` | no screen query; the `blocked_decision` view, which places it in `engine_kind`. It stays: it is the filter log's own answer to *why was this line written*, and it is the only thing that separates a packet a rule denied from a packet the firewall dropped for a reason no rule expresses. Without it a malformed-packet drop and a policy denial are the same row, and the denial screens would attribute the first to a rule that made no decision. It is projected by the `blocked_event` view, where that distinction is read |
 | `src_is_this_firewall`, `dst_is_this_firewall` | `classified_flow`, which gives a flow with such an end the directions `to_this_firewall` and `from_this_firewall` and takes it out of the inside and outside ends; the `traffic_scope` `CHECK`; attribution, which never attributes a flow to this firewall; the pairing, which recognises a NATed second leg by its source. Classification writes them (step-5A live corrections) |
-| `ip_id`, `tcp_seq` | the pairing alone (`internal/store/pairchunk.statements.sql`, `pairing_*_candidates`): the filter log's `id` and `seq`, the two fields verified to cross the firewall unchanged. Nothing else reads them, and they stay for that one purpose |
+| `ip_id`, `tcp_seq` | the pairing alone (`internal/store/flows/pairchunk.statements.sql`, `pairing_*_candidates`): the filter log's `id` and `seq`, the two fields verified to cross the firewall unchanged. Nothing else reads them, and they stay for that one purpose |
 | `pair_outcome`, `paired_flow_id` | `classified_flow.exit_leg_device`, which keeps a second leg out of every total but its own interface's; attribution; the per-pair volume. `paired_flow_id` names the other record of the pair and carries no foreign key, because the retention purge can remove one record of a pair and keep the other |
 
 Three columns — `log_digest`, `src_port` and `ip_version` — are read by no
@@ -1809,8 +1809,8 @@ attribution.
 Client query returns it with its address, country and operator and a null site
 name.
 
-**The rule, written once in `internal/store/attribute.go` and
-`internal/store/attribute.statements.sql`.** The query report carries **no answer address** —
+**The rule, written once in `internal/store/attribution/attribute.go` and
+`internal/store/attribution/attribute.statements.sql`.** The query report carries **no answer address** —
 `search_queries` reports who asked and for what, never what the answer was (survey,
 data source 5, *Response shape*) — and the resolver's **cache** does: it holds the
 A, AAAA and CNAME records of the names it resolved, with the seconds each has left
@@ -1844,12 +1844,12 @@ falls back on timing:
   `redirect`); a CNAME the iterator follows is resolved by recursion, not from local
   data, so treating its target's local data as the answer would name a flow from
   evidence Unbound never used. **Three places read the rule**, and all three stop at the
-  looked-up name: `exactCandidates` (`internal/store/attribute.go`), which builds the
-  exact candidates above; `answerAddresses` (`internal/store/records.go`), which counts
+  looked-up name: `exactCandidates` (`internal/store/attribution/attribute.go`), which builds the
+  exact candidates above; `answerAddresses` (`internal/store/attribution/records.go`), which counts
   the local data of the name itself and never of a name a CNAME reached; and the
   diagnostic `live_timing_fallback_other_family_cached`
   (`sql/queries/diagnostics.sql`). The code states it once, beside `MaxCNAMELinks` in
-  `internal/store/records.go`;
+  `internal/store/attribution/records.go`;
 - **timing, `lookup_timing`, the fallback.** With no exact candidate, the 5A rule
   unchanged: a flow gets an attribution **exactly when** the eligible lookups by the
   same client in `[observed_at − max delay, observed_at]` name **exactly one
@@ -2218,7 +2218,7 @@ collector writes this table and none will. The only per-pair endpoint the survey
 found carries **neither a port nor a protocol**, and `flow` carries both exactly,
 from the filter log — so these rows are **step 5's to compute from `flow`**, and
 nobody should go looking for the collector that fills them. Since step 5A the
-derivation exists: `insert_pair_volume` in `internal/store/pairvolume.statements.sql`, run with
+derivation exists: `insert_pair_volume` in `internal/store/aggregates/pairvolume.statements.sql`, run with
 the rest of a day's slot. A test fails if any non-test code other than that
 statement and the retention purge writes the table.
 
@@ -2259,7 +2259,7 @@ constraint, plus `idx_pair_volume_day`.
 ### The aggregate families — six keys, four calendar periods each
 
 Twenty-four materialised tables in six families, all computed from `opnview`'s own
-`flow` by `internal/store/aggregate.statements.sql` and refreshed **together, slot by slot**, on
+`flow` by `internal/store/aggregates/aggregate.statements.sql` and refreshed **together, slot by slot**, on
 the one contract below:
 
 | Family | Key, within a period slot | Closes |
@@ -2361,7 +2361,7 @@ ingesting concurrently, which passes `now` as the watermark:
    owner invalidates every slot holding one of its flows, because ownership is an
    attribute of the person and not of the flow, and no flow's `ingested_at` moves,
    so rule 4 cannot see it. **The write that changes ownership records those slots
-   itself** (`internal/store/owners.go`): assigning, reassigning or unassigning a
+   itself** (`internal/store/owners/owners.go`): assigning, reassigning or unassigning a
    client records, in the same transaction, every kept 1 h slot of the client family
    holding the client's traffic -- beyond the flow horizon as well as inside it --
    in `owner_reassigned_hour`, and deleting a person records every slot of the
@@ -2543,7 +2543,7 @@ reads has owners. **Retention:** bounded, emptied by the refresh, never purged.
 ### Classification — which interface an address sits behind
 
 `flow` is stored with neither end placed, and **classification** places both, in
-`internal/store/classify.go` over the statements of `classify.statements.sql`.
+`internal/store/flows/classify.go` over the statements of `classify.statements.sql`.
 
 **This firewall comes first** (step-5A live corrections, item 1). Before any
 on-link evidence is read, an end of a `flow`, the source of a `security_event` or
@@ -2626,7 +2626,7 @@ client's connection to the Internet is logged `in` on the client's interface and
 per interface with no translation. 5A counted every record (Scope A2, OQ4), and on
 the live firewall most of its outbound volume was counted twice.
 
-**The rule** (`internal/store/pair.go` over the `pairing_*` statements of
+**The rule** (`internal/store/flows/pair.go` over the `pairing_*` statements of
 `pairchunk.statements.sql`). An `out` record on an interface is the **second leg** of an `in`
 record on another interface when:
 
@@ -2741,7 +2741,7 @@ seconds, and treats a window as half-open, `[from, to)`.
 
 **Where the read functions run (decision 10 and B8d of `specs/SPEC-step-5b-widget-api.md`).**
 Every read function above, and every widget statement, runs on a small pool of read-only
-connections (`internal/store/readpool.go`): four connections opened with
+connections (`internal/store/sqldb/readers.go`): four connections opened with
 `PRAGMA query_only`, after the schema is applied, beside the single read-write connection
 every write and derivation uses. Under WAL a reader sees the last committed transaction and
 neither side blocks the other, so a widget read no longer queues behind
@@ -2765,7 +2765,7 @@ machines and the addresses seen, not with the traffic.
 purge horizon in seconds, so it is as easy to set to a few hours as to months.
 It defaults to `7776000` — 90 days — and `0` means unlimited, which purges
 nothing. No retention duration appears as a literal in any query, in any index,
-or in `internal/store/purge.sql`: every statement reads the horizon from this row through
+or in `internal/store/purge/purge.sql`: every statement reads the horizon from this row through
 a scalar subquery that yields `NULL` when the horizon is unlimited, so every
 comparison is `NULL` and nothing is deleted.
 
@@ -3399,7 +3399,7 @@ remove. What the columns still enforce is the **shape** of a term rather than it
 membership of a list — non-empty, lower-case, no space — so a typo, a
 free-text sentence, or two spellings of one measure are still rejected. The terms
 `opnview`'s own sampler uses are the named constants in
-`internal/store/rows.go`; a provider's term is an ordinary value beside them, and
+`internal/store/vocab/rows.go`; a provider's term is an ordinary value beside them, and
 a test adds one and reads it back while asserting that no DDL moved.
 
 This is still **not** an entity-attribute-value table. The tier-1 rule of *The
@@ -3414,6 +3414,12 @@ reporting on itself — and attributing it to a source would say that source
 measured the temperature. That is recorded here rather than papered over with a
 foreign key that means something else. The per-pair readings **do** name the
 `measurement_sample` provider, because that volume is its material.
+
+**The subject's parts are columns, never a key the core composes.** `interface_device`,
+`local_address` and `peer_address`, nullable and non-empty when set, are the parts the provider reports:
+an `interface_endpoint` subject carries the device and the local address, an `interface_endpoint_pair`
+the peer as well. `subject_key` is the provider's own name for the subject, part of the identity, and
+nothing in the core composes or parses it (PA11 of the plugin-API amendment).
 
 **Identity:** `(subject_kind, subject_key, measure, sampled_at, provider)`.
 Re-reading the same instant is a no-op, which is what a sampler restarting inside
@@ -3837,7 +3843,7 @@ as the observation-point limit.
 
 ## Purge
 
-`internal/store/purge.sql` is the documented purge. It takes `:now`, reads the
+`internal/store/purge/purge.sql` is the documented purge. It takes `:now`, reads the
 horizon from `setting`, and removes rows older than it from every growing table:
 `flow`, `dns_resolution`, `domain_attribution`, `security_event`, `dhcp_lease`,
 `client`, `pair_volume_observation`, `geo_asn`, `collection_gap`,

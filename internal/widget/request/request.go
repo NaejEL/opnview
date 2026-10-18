@@ -138,6 +138,9 @@ type Request struct {
 	Measure measureRun
 	// measureWindows are what the window says of each declared measure, once read (measure.go).
 	measureWindows map[string]measureWindow
+	// kept is what a host function read once and hands again within the request, whichever measure the
+	// run is answered under (Keep).
+	kept map[string]any
 }
 
 // Prepare reads what every response carries: the aggregate mode, the window, the
@@ -315,6 +318,24 @@ func JsonTexts(values []string) any {
 // WindowParameters are the bounds every windowed statement takes.
 func (r *Request) WindowParameters() map[string]any {
 	return map[string]any{"from": r.Window.From, "to": r.Window.To}
+}
+
+// Keep holds a value a host function read for the request, under a key of its own, so a later run of
+// the same request -- the logged answer that follows a measured attempt best_available did not serve
+// (measure.go) -- hands it again rather than reading it a second time. What is kept must be what the
+// later run would read: a host function keeps a reading of the request's window and mode, never of
+// what a run built.
+func (r *Request) Keep(key string, value any) {
+	if r.kept == nil {
+		r.kept = map[string]any{}
+	}
+	r.kept[key] = value
+}
+
+// Kept is a value Keep holds, and whether one is held.
+func (r *Request) Kept(key string) (any, bool) {
+	value, held := r.kept[key]
+	return value, held
 }
 
 // Cover records the covered part of the window.

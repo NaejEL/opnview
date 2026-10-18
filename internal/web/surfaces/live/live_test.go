@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/live"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
 	surface "github.com/NaejEL/opnview/internal/web/surfaces/live"
 	"github.com/NaejEL/opnview/internal/web/webtest"
@@ -134,6 +135,20 @@ func TestLiveFieldsAndStripTheStripRenewsTheLeaseAtTheLiveCadence(t *testing.T) 
 	t.Parallel()
 	harness := webtest.New(t)
 	harness.CompleteSetup()
+	// A reachable filter log with nothing stored: the strip is drawn, its buckets measured zeros or gaps.
+	ctx := t.Context()
+	if _, err := harness.Store.DB().ExecContext(ctx,
+		"UPDATE provider SET is_active = true WHERE kind = 'firewall_log' AND provider_key = 'pf'"); err != nil {
+		t.Fatal(err)
+	}
+	pf, err := harness.Store.ProviderID(ctx, "firewall_log", "pf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := harness.Store.SetAvailability(ctx, pf, vocab.StateReachable, vocab.OutcomeHealthy, "GET /", nil,
+		harness.Clock.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
 	interest := live.New(nil)
 	harness.Server.Widgets().SetLiveInterest(interest)
 	answer := harness.Get(stripPath)
@@ -141,11 +156,11 @@ func TestLiveFieldsAndStripTheStripRenewsTheLeaseAtTheLiveCadence(t *testing.T) 
 		t.Fatalf("the strip answered %d: %.300s", answer.StatusCode, webtest.ReadBody(t, answer))
 	}
 	type stripData struct {
-		CadenceSeconds    int64           `json:"cadence_seconds"`
+		CadenceSeconds    int64                    `json:"cadence_seconds"`
 		Window            struct{ From, To int64 } `json:"window"`
-		LiveInterestUntil *int64          `json:"live_interest_until"`
-		Throughput        json.RawMessage `json:"throughput"`
-		Decisions         json.RawMessage `json:"decisions"`
+		LiveInterestUntil *int64                   `json:"live_interest_until"`
+		Throughput        json.RawMessage          `json:"throughput"`
+		Decisions         json.RawMessage          `json:"decisions"`
 	}
 	var strip struct {
 		States []string  `json:"states"`

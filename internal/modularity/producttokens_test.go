@@ -69,9 +69,9 @@ var productTokenAllowed = map[string]allowedToken{
 		"names through discovery's endpoint, as discovery reads them", false},
 	"internal/web/surfaces/": {[]string{apiPathToken}, "opnview's own HTTP API routes, which share the /api/ " +
 		"prefix with OPNsense's: none is a firewall path", false},
-	"internal/web/webtest/": {[]string{apiPathToken}, "the web test support calls opnview's own HTTP API routes", false},
+	"internal/web/webtest/":      {[]string{apiPathToken}, "the web test support calls opnview's own HTTP API routes", false},
 	"internal/widget/service.go": {[]string{apiPathToken}, "the route prefix of opnview's own widget API", false},
-	"cmd/opnview/review.go": {[]string{apiPathToken}, "the review command reads opnview's own widget API", false},
+	"cmd/opnview/review.go":      {[]string{apiPathToken}, "the review command reads opnview's own widget API", false},
 }
 
 // TestNoGoFileNamesAProduct is PA-AC28: the token test of PA20 passes over the tree.
@@ -133,14 +133,14 @@ func TestAGoFileNamingAProductOutsideTheAllowListFails(t *testing.T) {
 // TestWordsCutIdentifiersAndLiterals: the cutting the token test rests on.
 func TestWordsCutIdentifiersAndLiterals(t *testing.T) {
 	for text, want := range map[string]string{
-		"ARPTable":             "arp table",
-		"collectNeighbours":    "collect neighbours",
-		"flow_record":          "flow record",
-		"KindFlowRecord":       "kind flow record",
-		"tcp.established":      "tcp established",
-		"lo0":                  "lo0",
-		"Discovery":            "discovery",
-		"HTTPServer2Ready":     "http server2 ready",
+		"ARPTable":              "arp table",
+		"collectNeighbours":     "collect neighbours",
+		"flow_record":           "flow record",
+		"KindFlowRecord":        "kind flow record",
+		"tcp.established":       "tcp established",
+		"lo0":                   "lo0",
+		"Discovery":             "discovery",
+		"HTTPServer2Ready":      "http server2 ready",
 		"capture-configuration": "capture configuration",
 	} {
 		if got := strings.Join(words(text), " "); got != want {

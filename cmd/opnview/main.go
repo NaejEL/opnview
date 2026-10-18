@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
-	"strings"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/auth"

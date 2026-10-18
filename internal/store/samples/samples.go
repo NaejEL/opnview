@@ -210,8 +210,8 @@ type pairKey struct{ device, local, peer string }
 // rateRow is one row of read_pair_rates.
 type rateRow struct {
 	kind, device, local, peer, measure string
-	value              float64
-	sampledAt          int64
+	value                              float64
+	sampledAt                          int64
 	// cadence is the live cadence of a fine sample, or the measurement interval.
 	cadence int64
 }

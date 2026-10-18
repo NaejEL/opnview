@@ -251,6 +251,7 @@ live-interest lease.
 | `byPeer()` | Every peer address an inside local address was read with in a current sample: an object from the address to its rate, `in_bits_per_second` what the peer sent, `out_bits_per_second` what was sent to it -- measured only for a local address read with that one peer, since `traffic/top` reports a local address's sending only as its total over every peer, and otherwise `null` with `out_measured` false. A reading whose local end is outside -- the firewall's upstream address, the same conversation read again after NAT -- is not summed. A peer with no current reading is absent, never a rate of 0. |
 | `clientPeers(id)` | The same for one client: an object from each peer address it was read with to its rate; empty when it has none. |
 | `none()` | The named absence of a rate, what a subject with no current sample reads. |
+| `series(window)` | Every sampling instant of `[from, to)`, fine and baseline, oldest first, split per direction as the current rates are: `{span_seconds, instants: [{at, by_direction, outbound_unsplit}]}`, `by_direction` an object from each direction read at that instant to `{in_bits_per_second, out_bits_per_second}`. A direction absent from an instant read nothing there, a measured 0 at a sampled instant; an instant absent from the list was not sampled -- never a rate of 0. It reads history, and renews no lease. |
 
 **A rate a widget builds from another source keeps this shape.** A figure the source cannot fill is
 `null`, `out_measured` false for the outbound one, never a rate of `0`. `traffic_composition` builds
@@ -326,6 +327,16 @@ is an id list, or `null` for no restriction, as `host.refs.ids` answers it.
 | `bins(reasons, true)` | The same bins, listing their addresses: `addAddress(reason, address, figures)` adds one address's figures, an address counting once however often it is added, and each bin of `list()` also carries `members`, `[{address, volume}]` by bytes then address, summing to the bin. A destination nothing names is shown by its address, never folded into a count alone. |
 | `reasons` | The unplaced bins, by name: `miss`, `pending`, `no_row`, `no_coordinates`, `east_west`, `this_firewall` (`this_firewall_without_outside_end`), `other_endpoint`. |
 
+#### `host.live`
+
+The live mode a live figure is drawn in (`docs/widget-api.md`, *Live figures*). It never calls the
+firewall; the built-in `live_strip` widget is drawn from it and `host.rates.series`.
+
+| Function | What it answers |
+|---|---|
+| `cadence()` | The live cadence in force, in seconds: the finest cadence of the live passes the loaded plugins declare, or the measurement interval where none declares one. |
+| `renew()` | Renews the live-interest lease, and answers the instant it lapses, epoch seconds, or `null` when the service holds no lease. |
+
 #### `host.mapfilters`
 
 | Function | What it answers |
@@ -347,7 +358,7 @@ sample is a gap, never a `0`.
 
 | Function | What it answers |
 |---|---|
-| `metrics` | Per health metric (`uptime`, `cpu`, `memory`, `swap`, `disk`, `temperature`, `gateway_latency`, `gateway_loss`), the subject kind and the measures it is stored under: `{kind, measures}`. |
+| `metrics` | Per health metric the loaded plugins declare (`sample_metrics`, `docs/plugins.md`; the built-in `insight` declares `uptime`, `cpu`, `memory`, `swap`, `disk`, `temperature`, `gateway_latency`, `gateway_loss`), the subject kind and the measures it is stored under: `{kind, measures}`. |
 | `subjects(metric)` | The subjects that reported one of a metric's measures in the window: `[{kind, key, measure, unit}]`, by measure then key. |
 | `points(subject)` | One subject's samples over the window, oldest first: `[{at, value}]`. |
 | `throughput(device, measure, direction)` | One interface counter as points: `{points, resets}`. `measure` is `bits_per_second`, `bytes`, `packets` or `errors`, `direction` is `in` or `out`. A point is the per-second rate (times 8 for bits) or the increase between two samples, stamped at the later one; a counter that went down is a reset, counted and never a point. |

@@ -344,6 +344,47 @@ func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T
 	}
 }
 
+// TestTheLoggedTreeAfterAMeasuredAttemptReadsTheWindowOnce is PA18.2's shared read: a connection tree
+// best_available falls back from is handed the destination rows the measured attempt read beside its
+// own, and never reads the window's logged destinations again; it answers what the logged tree answers,
+// byte for byte apart from the admitted differences.
+func TestTheLoggedTreeAfterAMeasuredAttemptReadsTheWindowOnce(t *testing.T) {
+	t.Parallel()
+	f := newMeasureWorld(t)
+	f.configureNetflow(t, "example_if_a")
+	f.measured(t, measureFlowA, "forward", "measured", 4000, 10)
+	f.measured(t, measureFlowA, "reverse", "measured", 9000, 12)
+	f.measured(t, measureFlowB, "forward", "measured", 1500, 3)
+	f.measured(t, measureFlowB, "reverse", "ingress_not_captured", 0, 0)
+	// The logged destinations read is the one destinations read of the tree's statements without the
+	// measured twin's logged columns.
+	loggedRead := func() bool {
+		for _, text := range f.db.Reader.RunTexts() {
+			if strings.Contains(text, "AS lookup_state") && strings.Contains(text, "sum(f.packet_bytes) AS bytes") &&
+				!strings.Contains(text, "logged_bytes") {
+				return true
+			}
+		}
+		return false
+	}
+	best := f.respond(t, "connection_tree", map[string]any{"period": "1h"})
+	if !params.Contains(best.States, stateNetflowNotCoveringWindow) {
+		t.Fatalf("best_available did not fall back to logged: states %v", best.States)
+	}
+	if loggedRead() {
+		t.Error("the logged tree after the measured attempt read the window's logged destinations again")
+	}
+	logged := f.respond(t, "connection_tree", map[string]any{"period": "1h", "volume_measure": "logged"})
+	if !loggedRead() {
+		t.Error("the logged tree did not read the logged destinations: the test's reading of the texts is wrong")
+	}
+	if string(withoutMeasureDifferences(t, best, stateNetflowNotCoveringWindow)) !=
+		string(withoutMeasureDifferences(t, logged, stateNetflowNotCoveringWindow)) {
+		t.Errorf("the tree best_available falls back from is not logged's answer with the state\nlogged: %s\ngot:    %s",
+			encoded(t, logged), encoded(t, best))
+	}
+}
+
 // TestUnderAnUnknownConfigurationBestAvailableIsLoggedAndNetflowCarriesNoFigure is PS-AC37's addition as
 // the amendment "the NetFlow join with every interface captured" keeps it (decided question 5): a window
 // whose configuration could not be read throughout makes best_available answer byte for byte what logged

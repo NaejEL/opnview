@@ -116,3 +116,28 @@ test("a live pass and a baseline pass read the same capture at the same instant"
       " as the live pass did, so the store would keep the capture twice rather than promote it");
   });
 });
+
+// The subjects read on one interface are reported by their parts (PA11 of the plugin-API amendment):
+// the device, the local address and, for a pair, the peer -- which is what the host reads of them. The
+// subject key is this plugin's own name for the subject, and nothing in the core composes or parses it.
+test("every reading of an address on an interface carries its parts beside its key", function (t) {
+  var live = t.call("measurement_sample", "live", liveWorld(t), t.now());
+  var seen = { interface_endpoint: 0, interface_endpoint_pair: 0 };
+  live.readings.forEach(function (reading) {
+    if (!(reading.subject_kind in seen)) {
+      t.assert(reading.interface_device === undefined && reading.local_address === undefined &&
+        reading.peer_address === undefined, reading.subject_kind + " carries no part");
+      return;
+    }
+    seen[reading.subject_kind]++;
+    var pair = reading.subject_kind === "interface_endpoint_pair";
+    t.assert(typeof reading.interface_device === "string" && reading.interface_device !== "", "the device of " +
+      reading.subject_key);
+    t.assert(typeof reading.local_address === "string" && reading.local_address !== "", "the local address of " +
+      reading.subject_key);
+    t.equal(typeof reading.peer_address, pair ? "string" : "undefined", "the peer of " + reading.subject_key);
+    var parts = [reading.interface_device, reading.local_address].concat(pair ? [reading.peer_address] : []);
+    t.equal(reading.subject_key, parts.join(" "), "the key the plugin names the subject by");
+  });
+  t.assert(seen.interface_endpoint > 0 && seen.interface_endpoint_pair > 0, "the snapshot read no address");
+});

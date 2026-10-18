@@ -263,11 +263,84 @@ func (s measurePartsScanner) Scan(source any) error {
 	default:
 		return fmt.Errorf("store: a measure's parts are %T, not JSON", source)
 	}
-	var array []int64
-	if err := json.Unmarshal(text, &array); err != nil {
-		return fmt.Errorf("store: reading the parts of the measure %s: %w", s.measure, err)
+	array, plain := plainIntegers(text)
+	if !plain {
+		array = nil
+		if err := json.Unmarshal(text, &array); err != nil {
+			return fmt.Errorf("store: reading the parts of the measure %s: %w", s.measure, err)
+		}
 	}
 	return s.figures.SetPartsArray(s.measure, array)
+}
+
+// plainIntegers reads the text PostgreSQL writes for a JSON array of whole numbers -- "[1, 0, 42]",
+// "[]" -- without the reflective JSON decoder: a measured read crosses one such array per row, and the
+// decoder was most of what reading one cost (PA18.2 of the open-plugin-API amendment). It reports false
+// for anything else -- a member that is not a plain whole number, a number out of range, any other
+// shape -- and the JSON decoder then reads it, with its errors.
+func plainIntegers(text []byte) ([]int64, bool) {
+	index, length := 0, len(text)
+	skip := func() {
+		for index < length && (text[index] == ' ' || text[index] == '\n' || text[index] == '\t' || text[index] == '\r') {
+			index++
+		}
+	}
+	skip()
+	if index >= length || text[index] != '[' {
+		return nil, false
+	}
+	index++
+	skip()
+	numbers := make([]int64, 0, 64)
+	if index < length && text[index] == ']' {
+		index++
+		skip()
+		return numbers, index == length
+	}
+	for {
+		negative := false
+		// limit is the largest magnitude the number may reach: one more for a negative one.
+		limit := uint64(1<<63 - 1)
+		if index < length && text[index] == '-' {
+			negative, limit = true, 1<<63
+			index++
+		}
+		start := index
+		var value uint64
+		for index < length && text[index] >= '0' && text[index] <= '9' {
+			digit := uint64(text[index] - '0')
+			if value > limit/10 || value*10 > limit-digit {
+				return nil, false
+			}
+			value = value*10 + digit
+			index++
+		}
+		digits := index - start
+		// JSON writes no leading zero, and a number with none of its digits is not one.
+		if digits == 0 || (digits > 1 && text[start] == '0') {
+			return nil, false
+		}
+		if negative {
+			numbers = append(numbers, -int64(value-1)-1)
+		} else {
+			numbers = append(numbers, int64(value))
+		}
+		skip()
+		if index >= length {
+			return nil, false
+		}
+		switch text[index] {
+		case ',':
+			index++
+			skip()
+		case ']':
+			index++
+			skip()
+			return numbers, index == length
+		default:
+			return nil, false
+		}
+	}
 }
 
 // Add sums other into f. Figures of a measure stay of it: the reads of one answer are all of one

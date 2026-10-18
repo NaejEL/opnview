@@ -83,7 +83,7 @@ They bind the *model*: they govern what a figure means. They are **not** UI copy
 
 **Twelve.** Each one is a drawing with a data requirement; the subject is a
 parameter. The count is derived from what the presets in Part 2 actually need,
-not assumed: the nine shapes `ROADMAP.md` names draw 24 of the 29 presets, and
+not assumed: the nine shapes `ROADMAP.md` names draw 25 of the 30 presets, and
 the other five force `feed` and `cards` and make `repeat` a shape parameter. The
 derivation, and the check against sources not yet built, are in *Why twelve* at
 the end of this part.
@@ -529,6 +529,7 @@ the build, not a decoration in this document, and
 | `source_availability` | `table` | Source availability | `-- diagnostic: Source availability`, unchanged | — |
 | `aggregate_freshness` | `table` | Aggregate freshness | `-- diagnostic: Aggregate coverage per period`, unchanged | — |
 | `unresolved_joins` | `figure` (repeated) | Unresolved joins | adapts `-- screen: Matrix` for the rule counter | — |
+| `live_strip` | `figure` | Rolling strip | none applies | — |
 
 **The seven queries in `sql/queries/screens.sql` remain authoritative and are not
 deleted** (`ROADMAP.md` step 7). The column above is the mapping step 5 must not
@@ -1571,6 +1572,32 @@ values, defaulting to unset — **no default threshold is assumed**, because a
 sensible temperature or disk figure depends on the hardware and assuming one
 would be a hardcoded assumption about the installation); `layout` (`tiles` |
 `rows`); `show_last_sampled` (boolean, default true).
+
+### Rolling strip
+
+**Type** — `live_strip`
+
+**Shape** — `figure`
+
+**Question** — What is crossing the firewall in the last minutes, and what is it refusing?
+
+**Binding** — A trailing series at the live cadence: the sampled throughput by traffic direction
+(outbound, inbound, between interfaces, and the outbound sending no sample splits), and the logged
+decisions per engine (allowed, refused by a firewall rule, refused with no rule, refused for a reason not
+recorded, refused by a resolver's list), counted from the records' own timestamps. The two measures are
+never summed. Each decision series carries `complete_until`, its source's last healthy pass: a bucket past
+it, or meeting a gap of its kind, is a gap and never a zero. Providers: `firewall_log`, `dns_lookup`; the
+throughput reads `measurement_sample`. It renews the live-interest lease and never calls the firewall.
+*Coverage row 8 of the mockup; moved from a route of its own to a widget by PA13 of the plugin-API
+amendment.*
+
+**Data** — `measurement_sample` (`interface_endpoint`, `interface_endpoint_pair`, rates), `flow`
+(`classified_flow`), `blocked_decision`, `dns_resolution`, `collection_gap`, `opnview_downtime`.
+
+**Parameters** — `window_seconds` (how far back the strip reaches; two minutes by default, from two
+cadences to an hour and at most 1 000 buckets).
+
+**Gaps** — none.
 
 ### Interface throughput
 

@@ -72,8 +72,8 @@ func TestNoWidgetIsCompiledIntoThisPackage(t *testing.T) {
 func TestEveryBuiltinWidgetIsADirectoryWithAValidSelfContainedManifest(t *testing.T) {
 	t.Parallel()
 	directories := builtinDirectories(t)
-	if len(directories) != 26 {
-		t.Errorf("%d built-in widget directories, not the 26 presets of the catalogue", len(directories))
+	if len(directories) != 27 {
+		t.Errorf("%d built-in widget directories, not the 27 presets of the catalogue", len(directories))
 	}
 	seen := map[string]bool{}
 	for _, directory := range directories {

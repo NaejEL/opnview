@@ -113,6 +113,7 @@ history stored answers that history under the degraded condition. A type that re
 | `netflow_not_configured` | a volume answer is not of the `netflow` measure, or carries no figure: no `netflow` provider is active, or the capture configuration in force names no interface or has the export disabled |
 | `capture_configuration_unknown` | the same: the capture configuration could not be read, or lies between two reads that differ |
 | `netflow_not_covering_window` | the same: the window mixes intervals in different states, or the answer counts a connection that is not covered (*Volumes and the observation-point limit*). Its detail, `state_details.netflow_not_covering_window.interval_states`, lists the capture states of the intervals the window meets, in name order: `capture_configured` for an interval with a readable capture configuration whose export is enabled and captures an interface (`opnview`'s own term: no product names it), and `netflow_not_configured` or `capture_configuration_unknown` for the others. A window with a configuration throughout whose answer counts an uncovered connection lists `capture_configured` alone |
+| `window_out_of_range` | `live_strip`: the `window_seconds` asked for lies outside what the live cadence allows, and the strip is drawn at the nearest bound |
 | `netflow_not_served_by_type` | the same: the type built a figure the core did not read in the `netflow` measure, so its answer cannot be given in it (`docs/plugins.md`, *Volume figures and their measure*) |
 
 ## Windows, horizon, buckets and freshness
@@ -412,16 +413,12 @@ broker learned carries a domain name says so, and under `no_domains` a query tou
 
 ## API catalogue
 
-**`GET /api/firewall/catalogue`** answers what the broker learned of every endpoint it called (A15
-of the broker amendment): for each endpoint its path and method, its parameters and their roles,
-each datum's nature, row set, key, cursor and schema versions -- each with the OPNsense version
-that produced it --, the readers and the fields each read, the tables it fills, its costs (calls,
-median latency, median size), its freshness floor, whether it was seen to answer as a stream and
-for how long a connection lasts, the plugins that read it without a survey citation (`uncited`),
-and its counters; and every stream subscription held, with its subscribers and whether it feeds a
-table. It is authenticated like every route here: without a session it answers `401` with a JSON
-condition. **It never carries a field value, a credential, the firewall's address or an
-authorisation header.** A plugin reads the same content with `host.catalogue()`.
+**`GET /api/firewall/catalogue`**, authenticated, answers what the broker learned of every endpoint
+it called (A15 of the broker amendment; `docs/plugins.md`, *The API catalogue*): per endpoint its
+path, method, parameters and roles, each datum's nature, row set, key, cursor and schema versions by
+OPNsense version, readers and fields read, tables, costs, freshness floor, stream behaviour, the
+plugins reading it uncited and its counters; and every stream subscription held. **It never carries a
+field value, a credential, the firewall's address or an authorisation header.**
 
 Its `push` part is what `opnview` receives rather than calls (`docs/plugins.md`, *Push sources*):
 `listeners[]` -- each `{protocol, transport, state, received, decoded, connections, counters, seen,
@@ -465,13 +462,14 @@ reading of `traffic/top`, its outbound figure measured only when the local addre
 one peer, and otherwise `null` with `out_measured` false; a peer with no current reading is absent,
 never a rate of 0 (`docs/widget-host.md`, *`host.rates`*).
 
-**The rolling strip.** `GET /api/live/strip`, authenticated, takes `parameters` as a widget does:
-`{"window_seconds": n}`, 120 by default, from two cadences to 3 600 and at most 1 000 buckets; a value
-outside that is `400` `{"condition": "window_out_of_range", "key", "minimum", "maximum"}`, and a
-`parameters` that is not that object `400` `{"condition": "malformed_parameters"}`. Its buckets are
-`cadence_seconds` wide -- the finest live cadence in force, or the measurement interval where no
-plugin declares a live pass -- aligned on UTC multiples from the epoch, and it answers
-`{cadence_seconds, window, live_interest_until, throughput, decisions, gaps}`:
+**The rolling strip** is the built-in widget `live_strip` (`plugins/live_strip`, PA13 of the
+plugin-API amendment), served as every widget is: `GET /api/widget/live_strip` with
+`{"window_seconds": n}`, 120 seconds by default, from two cadences to 3 600 and at most 1 000 buckets.
+A window asked for outside those bounds is drawn at the nearest one, with the named state
+`window_out_of_range`. Its buckets are `cadence_seconds` wide -- the finest live cadence in force, or the
+measurement interval where no plugin declares a live pass (`host.live.cadence()`) -- aligned on UTC
+multiples from the epoch, and its `data` is `{cadence_seconds, window, live_interest_until, throughput,
+decisions, gaps}`:
 
 - `throughput[]`, keyed `outbound`, `inbound`, `inter_interface` and `outbound_unsplit`, each with
   `measure` `sampled`, `unit` `bit_per_second`, `span_seconds`, `cadence_seconds`, `lower_bound` and
@@ -548,13 +546,11 @@ API, and asking it again is what renews the live-interest lease (*Live figures*)
 window meets one of its `ranges` -- the current slot is in every refresh, so in practice every
 windowed widget; `hello` after a reconnection and `resync` concern every widget on the canvas shown.
 
-**Bounds.** A comment line (`: heartbeat`) is written every `heartbeat_seconds`, 15, so an
-intermediary does not close an idle stream and a reader that went away is found. After
-`lifetime_seconds`, 300, the stream sends `end` and closes; the browser opens it again after the
-`retry` the stream states, 2 000 ms, through the session check like any request, so a stream never
-outlives its session by more than one lifetime. An event is never replayed: a reader that opens the
-stream again asks again what it shows. Nothing is buffered beyond 64 events per reader; the server
-holds one database listener while at least one stream is open, and none otherwise.
+**Bounds.** A comment line (`: heartbeat`) every `heartbeat_seconds`, 15, keeps an idle stream open.
+After `lifetime_seconds`, 300, the stream sends `end` and closes, and the browser opens it again after
+the stated `retry`, 2 000 ms, through the session check, so a stream never outlives its session by more
+than one lifetime. An event is never replayed, nothing is buffered beyond 64 events per reader, and the
+server holds one database listener while at least one stream is open.
 
 The current slot of every period is rewritten by every derivation (`docs/data-model.md`, *Refresh
 contract*, rule 2), so a windowed answer can change after each filter-log pass, and its
@@ -776,7 +772,7 @@ derivation, as the page's.
 recent_gap_window_seconds}`. A provider carries `kind`, `provider_key`, `display_name`,
 `availability`, `outcome`, `active`, `selection`, `in_outage`, `checked_at` (`null` when never
 checked), `probe` and `detail` (the collector's diagnostic text, verbatim, never read),
-`opnsense_pages` (`{url, page}`, for a provider installed and not collecting: the OPNsense page
+`opnsense_pages` (`{url, page, label}` -- `label` the catalogue key the providing plugin declares for the page's name, which the front draws as given, for a provider installed and not collecting: the OPNsense page
 that turns it on, a change opnview never makes) and **`since`**: when its current state began, as
 opnview's own checks bound it -- `{after_at, by_at, state}`, the state having begun after the
 check at `after_at` and by the one at `by_at`, never stated as one instant; with both `null`,
@@ -836,7 +832,7 @@ what is served without it.
 | 5 | packets by blocking reason, per direction | **Served.** `traffic_composition` with `group_by` `blocking_reason` and `split_by` `direction`: `rings[]` (`direction`, `slices[]` keyed `decision:<decision>`, `other`, `total`), `aside[]`; `traffic_over_time_by_scope`: `series[].buckets[].volume` (allowed / blocked / unknown). The logged measure counts records, not packets | `filter-log`; `netflow`: a packet count is `slices[].volume.packets` in the netflow measure only, and its blocked part holds only what pf refused after an ingress capture (S11) |
 | 6 | refused lookups beside the rings | **Served.** `traffic_composition` (`blocking_reason`): `aside[]` (`dns_list`, `count`); `blocked_dns_lookups`: `total`; `blocked_traffic_world_map`: `dns_blocked_lookups` | `unbound-log` |
 | 7 | detection-engine figures | **Partly.** State: `source_availability` (`security_event`), `traffic_composition` `aside[]` (`security_engine`, `condition`). Refusals: `blocked_traffic_world_map.security_events`, `.security_unplaced`; `unified_blocked_feed` (`engine_kind` `security_engine`, `decided_by.kind` `signature`). Figures by signature, over time and by client: **step 6** -- `security_alerts_over_time`, `alerts_by_signature`, `alerts_by_client_and_interface` answer `unknown_widget_type`; the target interface is gap G7, the covered interfaces G8 (`docs/widget-catalogue.md`, *Gaps found*) | `suricata` |
-| 8 | rolling strip at 2-second marks | **Served** (C3). `GET /api/live/strip`: `throughput[]` (`outbound`, `inbound`, `inter_interface`, `outbound_unsplit`; sampled) and `decisions[]` (`allowed`, `firewall_rule`, `firewall_no_rule`, `firewall_reason_not_recorded`, `dns_refusal`), each with `complete_until`, buckets after it gaps; `window_seconds`. **2 s** is the floor, one `traffic/top` capture (survey, *Live rate endpoints*); the default live cadence is 10 s pending LV-C, so 2 s marks need the `insight` plugin's `live_cadence_seconds` set to 2 | `filter-log`: the decision series is complete to reception; `unbound-log`: `dns_refusal` stays polled; `netflow`: no rate, as row 2 |
+| 8 | rolling strip at 2-second marks | **Served** (C3). `live_strip` (`GET /api/widget/live_strip`): `throughput[]` (`outbound`, `inbound`, `inter_interface`, `outbound_unsplit`; sampled) and `decisions[]` (`allowed`, `firewall_rule`, `firewall_no_rule`, `firewall_reason_not_recorded`, `dns_refusal`), each with `complete_until`, buckets after it gaps; `window_seconds`. **2 s** is the floor, one `traffic/top` capture (survey, *Live rate endpoints*); the default live cadence is 10 s pending LV-C, so 2 s marks need the `insight` plugin's `live_cadence_seconds` set to 2 | `filter-log`: the decision series is complete to reception; `unbound-log`: `dns_refusal` stays polled; `netflow`: no rate, as row 2 |
 | 9 | "Port not recorded" | **Served.** `traffic_composition` with `group_by` `service_port`: slice `port:not_recorded` | `filter-log`; `netflow` (the same key in the netflow measure) |
 | 10 | totals outbound / inbound / between interfaces | **Served.** `traffic_over_time_by_scope`: `series[].total`, `series[].total_volume` | `filter-log`; `netflow` |
 | 11 | buckets per period | **Served.** `traffic_over_time_by_scope`: `bucket_seconds`, `series[].buckets[]` (`from`, `to`, `gap`, `value`, `volume`) | `filter-log`; `netflow` |
@@ -851,7 +847,7 @@ what is served without it.
 | 20 | per-client chip: address, MAC, rate or "no data in the period" | **Served** (C3). `owner_activity`: `cards[].chips[]` (`client.last_address`, `client.mac`, `current_rate`, `state` `measured` or `no_data_in_period`, `volume`) | `none`; `netflow` (the chip's `volume`) |
 | 21 | passed map, per placed peer: allowed bytes and connections, interfaces, coordinates, operator, country, AS | **Served.** `passed_traffic_world_map`: `points[]` (`address`, `geo` with `latitude`, `longitude`, `country_code`, `country_name`, `asn`, `operator`; `volume`, `interfaces`, `size`), `below_minimum`, `total` | `filter-log`; `netflow`, with coverage per action |
 | 22 | unplaced volume (`miss`, `pending`, no row, east-west) | **Served.** `passed_traffic_world_map`: `unplaced[]` (`reason` `miss`, `pending`, `no_row`, `no_coordinates`, `east_west`, `this_firewall`; `addresses`, `volume`) | `filter-log`; `netflow` |
-| 23 | blocked map: outbound by destination, unplaced, between interfaces, inbound by source | **Served.** `blocked_traffic_world_map` with `endpoint` `destination` or `source`: `points[]` (`engine`, `geo`, `volume` or `events`), `unplaced[]` (`east_west`, `other_endpoint` and the lookup states), `security_unplaced[]`, `total_refusals` | `filter-log`; `netflow`, with coverage per action, the blocked part as row 5; `suricata` |
+| 23 | blocked map: outbound by destination, unplaced, between interfaces, inbound by source | **Served.** `blocked_traffic_world_map` with `endpoint` `destination` or `source`: `points[]` (`engine`, `geo`, `volume` or `events`), `unplaced[]` (`east_west`, `other_endpoint` and the lookup states), `security_unplaced[]` (`{reason, addresses, events}`, counted in `security_events`), `total_refusals`; a security event is no connection of any volume measure, so an answer in a declared measure serves the events beside that measure's figures | `filter-log`; `netflow`, with coverage per action, the blocked part as row 5; `suricata` |
 | 24 | client current rate, and the share per destination | **Served** (C3). Current rate: `client_traffic_detail`: `current_rate`. Share per destination: over the period, `records[].bytes` over `total`; now, `current_rate_by_peer[]` (`peer`, `rate`), keyed by the address `records[].destination` carries: the per-pair readings of `traffic/top`, which the core exposes to every widget as `host.rates.clientPeers(id)` and `host.rates.byPeer()` (*Live figures*). No other destination type is drawn with a rate in the mockup | `none` (the rate); `netflow` (the bytes, as row 25) |
 | 25 | `local ⇄ peer:port`, connections, bytes | **Served.** `client_traffic_detail`: `records[]` (`destination`, `port`, `protocol`, `action`, `scope`, `bytes`, `observed_at`, `interface_device`), `total.members`, `remainder` | `filter-log`; `netflow`: `records[].bytes` is exact (`lower_bound: false`) for a connection measured in both directions, and `records[].directions` carries `forward` / `reverse` `bytes`, `packets`, `state`, `counted_copy`, and `records[].coverage` its coverage object, or `null` directions with no readable, enabled capture configuration at its start |
 | 26 | connection tree, children summing to their node | **Served** (C2). `connection_tree`: `inside[]`, `outside[]` (`children`, `remainder_members`, `bytes`, `connections`, `blocked_connections`; `site:` and `address:` nodes, the service level at `depth` 3), `total` | `site-names`; `netflow` |
@@ -880,7 +876,7 @@ what is served without it.
 | # | Element | Served by, or why not | Push |
 |---|---|---|---|
 | E1 | the dashboard's title in the header | **Canvases.** The dashboard document's `title` (`docs/dashboard-format.md`); canvases have their own spec | `none` |
-| E2 | the live indicator and its clock | **Served.** `GET /api/live/strip`: `live_interest_until`; every live figure's `sampled_at`. The clock itself is the browser's | `filter-log`, as row 8 |
+| E2 | the live indicator and its clock | **Served.** `live_strip`: `live_interest_until`; every live figure's `sampled_at`. The clock itself is the browser's | `filter-log`, as row 8 |
 | E3 | palette and mode selectors | **Served** by the front: `GET` and `POST /api/appearance` (`palette`, `mode`, `language`), a theme being a file (specs/SPEC-step-7-frontend.md, A5) | `none` |
 | E4 | canvas tabs, rail, range selector, layout editing, dashboard editor, import report, widget picker | **Canvases.** Their own spec and `docs/dashboard-format.md`. What they read here: the types, `GET /api/plugins` (`plugins[].widgets`); the parameters, *Parameters*; an import's unresolved references, each response's `unresolved_references` | `none` |
 | E5 | a card's header: condition, scope, own range, "kept, not understood" | **Served.** Envelope `condition`, `availability`; `parameters` (effective, `period` among them); `unknown_parameters`; `unresolved_references` (`path`, `kind`, `by`, `value`, `label`, `reason`). "Unapplied" and "cut off at this size" are the frontend's | `none` |

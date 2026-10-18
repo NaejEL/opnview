@@ -41,7 +41,7 @@ func newDerivedWorld(t *testing.T) *derivedWorld {
 	dataDir := t.TempDir()
 	copyDirectory(t, filepath.Join("testdata", "example_derived"),
 		filepath.Join(dataDir, plugin.PluginsDirectory, "example_derived"))
-	database := collecttest.NewTestStore(t)
+	database := collecttest.NewPluginStore(t)
 	loaded, err := plugin.Load(ctx, plugin.Options{DataDir: dataDir, Store: database})
 	if err != nil {
 		t.Fatal(err)

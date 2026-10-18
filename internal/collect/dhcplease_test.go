@@ -7,7 +7,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
-
 )
 
 // The lease and neighbour collector tests.

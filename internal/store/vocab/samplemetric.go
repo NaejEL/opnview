@@ -25,6 +25,8 @@ import (
 type SampleMetric struct {
 	// Name is the health metric it serves.
 	Name string `json:"name"`
+	// ProviderKind is the kind whose readings it reads, a kind the declaring plugin provides.
+	ProviderKind string `json:"provider_kind"`
 	// SubjectKind is the subject kind its readings are stored under.
 	SubjectKind string `json:"subject_kind"`
 	// Measures are the measures it reads, in the order a widget reads them; the first is its own figure.
@@ -42,6 +44,8 @@ func (m SampleMetric) Validate() string {
 	switch {
 	case !sampleTerm.MatchString(m.Name):
 		return fmt.Sprintf("the sample metric name %q is not a snake_case word of at most 48 characters", m.Name)
+	case !sampleTerm.MatchString(m.ProviderKind):
+		return fmt.Sprintf("the sample metric %s names no provider_kind", m.Name)
 	case !sampleTerm.MatchString(m.SubjectKind):
 		return fmt.Sprintf("the sample metric %s names no subject_kind", m.Name)
 	case len(m.Measures) == 0:
