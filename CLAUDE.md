@@ -9,7 +9,7 @@ This covers, without being limited to:
 - source code, identifiers, comments, docstrings;
 - commit messages, branch names, tags;
 - `README.md`, `ROADMAP.md`, and every other document;
-- specifications under `specs/`, and their status lines;
+- architecture decision records under `docs/adr/`;
 - agent prompts, skills, CI scripts, their log output and error messages;
 - the web UI: every label, heading, tooltip, empty state and error message —
   English is the **source language**, not the only one the product speaks; see
@@ -49,8 +49,8 @@ the terms that are `opnview`'s own because OPNsense has none, are in
 OPNsense firewall. **One service and its database, installed and updated by a
 single command; the user provisions nothing by hand.** The store is PostgreSQL
 with TimescaleDB, run by the installation beside the service. The rule, its
-pinned versions, its licence and what it forbids are in `ROADMAP.md` under
-*Rules that apply to every step*, and that bullet is the single place the rule
+pinned versions, its licence and what it forbids are in `docs/adr/0008-postgresql-timescaledb.md`,
+and that record is the single place the rule
 is stated. Frontend embedded in the binary and served by it.
 
 ## The user interface
@@ -60,8 +60,8 @@ and an implementation is a file behind it, selected at runtime by what the
 installation has — a lease source, a lookup source, a language, a theme, a
 widget. Adding a second implementation is adding a file and a registry row and
 touching nothing else. The maintainer's own configuration is one installation
-among many and never the shape of the code. `ROADMAP.md`, *Rules that apply to
-every step*, carries this in full.
+among many and never the shape of the code. `docs/adr/0001-everything-is-a-plugin.md`
+and `docs/adr/0002-the-go-core.md` carry this in full.
 
 **The frontend is modular, and a third party can extend it.** A language is a
 file, a theme is a file, a widget is a directory holding its manifest, its query
@@ -70,8 +70,8 @@ of the three easily and naturally, from the documentation alone; if adding one
 means editing a file that ships with the product, the rule is not met. **No
 user-visible string is a literal** — every one comes from the string catalogue,
 English is the source language, and the user switches language in the interface.
-The step-3 mockup is a single file and is exempt, being a mockup. `ROADMAP.md`
-step 7 carries the detail.
+The step-3 mockup is a single file and is exempt, being a mockup.
+`docs/adr/0016-the-front.md` carries the detail.
 
 **Named canvases, not fixed screens.** The user creates canvases and composes
 each from widgets, moving between them with **tabs rather than menus**. No view
@@ -118,24 +118,31 @@ syslog (survey, S13).
 ## Development and test environment
 
 No Go toolchain is installed on the host. The toolchain lives in a Debian
-`trixie-slim` container with the Go version pinned and checksum-verified. The
-four project commands run through one invocation, identical in PowerShell and
-in bash — the everyday suite, whose `go test` wall time has a 60 s budget — and
-the pre-deployment gate (`-race` over the whole suite, the schema checks with
-their scale seeds and query plans) runs before a deployment:
+`trixie-slim` container with the Go version pinned and checksum-verified.
+**There is exactly one test command**, identical in PowerShell and in bash,
+and its `go test` has a hard 60 s timeout:
 
 ```
 docker compose run --rm checks
-docker compose run --rm pre-deployment
 ```
 
 Use `docker compose run --rm dev <command>` for anything else in the same
 environment. Never run `go`, `gofmt`, `psql` or `pg_dump` on the host; the test
-database is a compose service the two commands start themselves. Details, and the
-list of what this environment does *not* prove, are in `ROADMAP.md` under
-*Development and test environment*.
+database is a compose service the command starts itself.
 
-See `ROADMAP.md` for the eight-step plan and the cross-cutting engineering
-rules (no hardcoded configuration, no secrets in the repo, read-only against
-the firewall, exactly three outbound calls, the observation-point limit
-documented rather than printed on screen).
+**While working, test only what you changed** (the package, plugin or widget
+touched, through `go test ./internal/<pkg>/...` or `opnview plugin test
+plugins/<name>` in the dev container). Run `checks` once, before the commit.
+There is no other gate, no seed, no budget tool, no pre-deployment suite, and
+none is to be added without a maintainer decision recorded as an ADR.
+
+## Decisions and plans
+
+**Decisions live in `docs/adr/`, one page each, and nowhere else.** There are
+no specifications: a change starts from an ADR the maintainer has accepted,
+names it, and ends with the suite green and the change validated on the
+maintainer's firewall. An agent never approves its own ADR. `ROADMAP.md` is
+one page naming what comes next; the cross-cutting rules it used to carry are
+ADRs now (no hardcoded configuration, no secrets in the repo, read-only against
+the firewall, the outbound calls, the observation-point limit documented rather
+than printed on screen).

@@ -23,8 +23,7 @@
 # running container makes no outbound call. The database image the compose
 # files pull is likewise an installation-time download.
 #
-# Out of scope for this image (see
-# specs/SPEC-containerised-dev-environment.md):
+# Out of scope for this image:
 #   - Production. Docker provides a Debian userland on a Linux kernel and
 #     nothing more. The systemd unit, service start ordering, unprivileged-LXC
 #     uid mapping, ct/install.sh and update-by-re-running without data loss are
@@ -32,8 +31,8 @@
 #   - A production or release image: no multi-stage build producing a shipping
 #     artifact, no published image, no registry.
 #   - Any Go dependency. The PostgreSQL driver is pure Go and the product
-#     builds with CGO_ENABLED=0; gcc is installed because the race detector of
-#     the pre-deployment command needs cgo, and for nothing else.
+#     builds with CGO_ENABLED=0; gcc is installed because `go test -race`, run by hand
+#     when a race is suspected, needs cgo, and for nothing else.
 
 FROM debian:trixie-slim
 
@@ -55,8 +54,8 @@ ARG SHELLCHECK_SHA256=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e
 ARG UID=1000
 ARG GID=1000
 
-# postgresql-client-17: psql and pg_dump of the pinned major, for the schema
-#                  checks and the backup round trip of the pre-deployment command.
+# postgresql-client-17: psql and pg_dump of the pinned major, for hand
+#                  inspection of a test database from the dev container.
 # ca-certificates: system trust store, and the tarball download below.
 # gcc + libc6-dev: the race detector needs cgo; libc6-dev carries the headers
 #                  and the C runtime gcc links against.
@@ -89,9 +88,8 @@ RUN set -eu; \
     printf '%s\n' 'export PATH=/usr/local/go/bin:/home/dev/go/bin:$PATH' \
         > /etc/profile.d/go-toolchain.sh
 
-# ShellCheck, so the shell checks of sql/schema-checks.sh (PN-AC28) and the -S
-# error check of ci/pre-deployment.sh (AC23 of specs/SPEC-step-5b-widget-api.md)
-# run in this container rather than on the host.
+# ShellCheck, so ci/checks.sh can be linted in this container rather than on
+# the host.
 RUN set -eu; \
     tarball="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"; \
     curl -fsSL -o /tmp/shellcheck.tar.xz \

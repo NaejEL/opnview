@@ -6,8 +6,7 @@
 # key file, filesystem case sensitivity, SIGTERM handling, timestamp
 # normalisation).
 #
-# Canonical invocation for the four project commands, byte-for-byte identical
-# in PowerShell and in bash:
+# THE ONE TEST COMMAND, byte-for-byte identical in PowerShell and in bash:
 #
 #     docker compose run --rm checks
 #
@@ -16,9 +15,9 @@
 #     docker compose run --rm dev bash
 #
 # THE DATABASE. opnview's store is PostgreSQL with the TimescaleDB extension
-# (ROADMAP.md, "Rules that apply to every step"). The test commands start their
-# own database service and wait for its health check; nothing is provisioned by
-# hand. No database service publishes a port: each is reached by name on the
+# (docs/adr/0008-postgresql-timescaledb.md). The checks command starts its own
+# database service and waits for its health check; nothing is provisioned by
+# hand. No database service publishes a port: it is reached by name on the
 # Compose project's private network, and only by the containers of this file.
 #
 # This file is the development environment and nothing else: no published
@@ -29,14 +28,9 @@
 # both named by the image tag (TimescaleDB 2.30.2 on PostgreSQL 17.11) and fixed
 # by the digest, verified on 11 October 2026 against
 # https://github.com/timescale/timescaledb/releases/tag/2.30.2 (it supports
-# PostgreSQL 16, 17 and 18). docs/architecture.md, "Storage", records why
-# PostgreSQL 17 and the licence of what is used. The pin is changed
-# deliberately, never floated.
+# PostgreSQL 16, 17 and 18). The pin is changed deliberately, never floated.
 x-timescaledb-image: &timescaledb-image timescale/timescaledb:2.30.2-pg17@sha256:b346edcdb51a1fd6020e3965e0bd1c9f3406fa6d5fbce1e28f4852587ef934e2
 
-# What every database service of this project runs with. Telemetry and the
-# version check are off: opnview makes no outbound call but to the firewall,
-# and refuses to start against a database where telemetry is on.
 x-database-base: &database-base
   image: *timescaledb-image
   healthcheck:
@@ -49,13 +43,12 @@ x-test-database-environment: &test-database-environment
   # The image's own initialisation reads this and turns the telemetry job off.
   TIMESCALEDB_TELEMETRY: "off"
   # Byte-order text and ASCII-only case mapping: opnview's text ordering is
-  # byte order (docs/architecture.md, "Storage"), and the store refuses a
-  # database created otherwise.
+  # byte order, and the store refuses a database created otherwise.
   POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
-  # TRUST AUTHENTICATION, ON THE TWO TEST SERVICES ONLY. They hold nothing but
-  # the databases a test run creates and drops, they publish no port, and they
-  # are reached only on this project's private network. The serve file's
-  # database uses a generated password; this exception is the only one.
+  # TRUST AUTHENTICATION, ON THE TEST SERVICE ONLY. It holds nothing but the
+  # databases a test run creates and drops, it publishes no port, and it is
+  # reached only on this project's private network. The serve file's database
+  # uses a generated password; this exception is the only one.
   POSTGRES_HOST_AUTH_METHOD: trust
 
 x-dev-base: &dev-base
@@ -71,9 +64,8 @@ x-dev-base: &dev-base
   working_dir: /workspace
   init: true
   environment:
-    # Where the tests create their databases: the everyday test instance, db-test, reached on its
-    # socket.
-    OPNVIEW_TEST_DATABASE: &everyday-test-database "host=/run/opnview-test-database port=5432 user=postgres dbname=postgres sslmode=disable"
+    # Where the tests create their databases: db-test, reached on its socket.
+    OPNVIEW_TEST_DATABASE: "host=/run/opnview-test-database port=5432 user=postgres dbname=postgres sslmode=disable"
   depends_on:
     db-test:
       condition: service_healthy
@@ -91,14 +83,13 @@ x-dev-base: &dev-base
     - test-database-socket:/run/opnview-test-database
 
 services:
-  # The everyday test database. Its data is on a tmpfs and its durability is
-  # off -- fsync, synchronous_commit and full_page_writes -- because nothing the
-  # everyday suite asserts depends on a write reaching a disk, and a commit that
-  # waits for one is most of what a test would otherwise spend. These three
-  # settings are permitted here and on no other service. TimescaleDB's
-  # background workers are off: a test invokes what a job would do on its own
-  # clock, and a worker holding a template database open would stop the
-  # per-test clones.
+  # The test database. Its data is on a tmpfs and its durability is off: nothing
+  # the suite asserts depends on a write reaching a disk, and a commit that waits
+  # for one is most of what a test would otherwise spend. TimescaleDB's background
+  # workers are off: a test invokes what a job would do on its own clock, and a
+  # worker holding a template database open would stop the per-test clones. The
+  # Apache-2 edition only: opnview uses no feature of the Timescale License, and
+  # running the tests with the TSL code switched off is what proves it.
   db-test:
     <<: *database-base
     environment: *test-database-environment
@@ -112,36 +103,18 @@ services:
       - "timescaledb.telemetry_level=off"
       - "-c"
       - "timescaledb.max_background_workers=0"
-      # The Apache-2 edition only: opnview uses no feature of the Timescale License
-      # (docs/architecture.md, "Storage"), and running the tests with the TSL code
-      # switched off is what proves it.
       - "-c"
       - "timescaledb.license=apache"
       - "-c"
       - "max_connections=500"
-      # A small buffer pool, on this service alone. Every test database is cloned with
-      # STRATEGY FILE_COPY, which forces a checkpoint before and after the copy, and a
-      # checkpoint writes every dirty buffer of every database the suite has open: measured on
-      # 16 October 2026 on 16 CPUs, the image's own setting (about 4 GB) had the checkpointer
-      # write 4.7 GB in 1 369 checkpoints during one run, and 512 MB took the database's CPU
-      # for the whole suite from about 570 s to about 500 s and its wall time by about a tenth.
-      # The tmpfs under it serves an evicted page from memory anyway.
       - "-c"
       - "shared_buffers=512MB"
-      # Durability off: the tmpfs loses everything at a stop anyway.
       - "-c"
       - "fsync=off"
       - "-c"
       - "synchronous_commit=off"
       - "-c"
       - "full_page_writes=off"
-      # No autovacuum and the least WAL, on this service alone. A test database lives for one
-      # test, so a vacuum or an analyze of it is work no assertion reads: no everyday test depends
-      # on a table's statistics, and the plan checks run on db-predeployment, where autovacuum
-      # stays on. WAL is never replayed here (the tmpfs loses it at a stop) and never shipped, so
-      # minimal is all that is written. Measured on 16 October 2026 on 16 CPUs, internal/store and
-      # internal/collect side by side on a throwaway instance otherwise configured as this one:
-      # 420 s of database CPU with both at their defaults, 380 s with both changed.
       - "-c"
       - "autovacuum=off"
       - "-c"
@@ -149,153 +122,23 @@ services:
       - "-c"
       - "max_wal_senders=0"
 
-  # The pre-deployment test database: on a disk (a named volume) with
-  # PostgreSQL's production durability, so the whole suite meets a real disk
-  # once before a deployment -- every package outside the race detector's
-  # selection. The schema checks have an instance of their own, db-schema-checks
-  # below, and the pre-deployment command's -race step runs on db-test (see that
-  # command below). Background workers are off for the same reason as above.
-  db-predeployment:
-    <<: *database-base
-    environment: *test-database-environment
-    volumes:
-      - predeployment-database:/var/lib/postgresql/data
-    command:
-      - "postgres"
-      - "-c"
-      - "timescaledb.telemetry_level=off"
-      - "-c"
-      - "timescaledb.max_background_workers=0"
-      # The Apache-2 edition only: opnview uses no feature of the Timescale License
-      # (docs/architecture.md, "Storage"), and running the tests with the TSL code
-      # switched off is what proves it.
-      - "-c"
-      - "timescaledb.license=apache"
-      - "-c"
-      - "max_connections=500"
-      # 1 GB of buffers, here and on db-schema-checks, which extends this service (maintainer,
-      # 17 October 2026). The image's own setting, about 4 GB each, put this 16 GB machine into
-      # swap with both instances and db-test running: the non-race Go step went from about 100 s
-      # to 209 s, and the kernel killed a VACUUM of the 1 000 000-row seed.
-      - "-c"
-      - "shared_buffers=1GB"
-
-  # The schema checks' database (Phase E decision 10, 17 October 2026): configured
-  # exactly as db-predeployment -- on a disk, with production durability, every
-  # setting above -- and on a named volume of its own. Run beside the non-race Go
-  # suite on one instance, every DROP DATABASE of the schema checks waited for a
-  # checkpoint that wrote the Go suite's dirty buffers too: their preamble took
-  # 122 s inside the pre-deployment command against 11 s alone. The kept seeds
-  # live here, each under its exact name with the digest it was built from
-  # (sql/schema-checks.sh), so this volume keeps them from one run to the next.
-  db-schema-checks:
-    extends:
-      service: db-predeployment
-    volumes:
-      - schema-checks-database:/var/lib/postgresql/data
-    # The one setting that differs: the schema checks read their seeds side by side -- the widget
-    # budgets of both seeds, the foreign keys, the plan sweep -- and PostgreSQL's parallel workers
-    # share their hash tables in /dev/shm, which Docker sizes at 64 MB. On 17 October 2026 the
-    # foreign-key check of the 1 000 000-row seed failed beside the widget budgets with "could not
-    # resize shared memory [...] No space left on device". It is a size limit, not memory
-    # reserved: a page of it is held only while a query uses it.
-    shm_size: 1gb
-
   # Arbitrary commands inside the Debian toolchain.
   dev:
     <<: *dev-base
     command: ["bash"]
 
-  # The four project commands. The command is baked in here, so the host
-  # invocation carries no quoting and is the same string in every shell.
-  # The script is run through bash rather than executed directly: Git on
-  # Windows records it without the executable bit, so a clone made there would
-  # otherwise produce a permission error on a Linux host.
-  #
-  # This is the EVERYDAY suite: gofmt, go vet, go build and go test without
-  # -race, and every test except those moved to the pre-deployment command
-  # below. Its go test wall time has a budget, one constant in ci/checks.sh, and
-  # exceeding it fails the run. Its databases live on db-test.
-  #
-  # /tmp IS A TMPFS HERE, and only here: go test builds and runs its test
-  # binaries under /tmp, and nothing the everyday suite asserts depends on a
-  # write reaching a disk. exec is required for that reason.
+  # The one test command: gofmt, go vet, go build, go test (the plugins' own
+  # JavaScript tests run inside go test). The script is run through bash rather
+  # than executed directly: Git on Windows records it without the executable
+  # bit. /tmp is a tmpfs here: go test builds and runs its binaries under it.
   checks:
     <<: *dev-base
     tmpfs:
       - /tmp:exec,mode=1777
     command: ["bash", "/workspace/ci/checks.sh"]
 
-  # The PRE-DEPLOYMENT command, the gate run before a deployment and not on
-  # every iteration:
-  #
-  #     docker compose run --rm pre-deployment
-  #
-  # It runs go vet and go test -race -count=1 over the whole suite with the
-  # tests moved out of the everyday suite compiled in (the `predeployment` build
-  # tag), the test budget's own check, and the schema checks below with their
-  # 100 000- and 1 000 000-row seeds and their query plans.
-  #
-  # THREE INSTANCES. The packages outside the race detector's selection run
-  # against db-predeployment, a disk-backed instance with production durability,
-  # and the schema checks against db-schema-checks, configured the same way and
-  # holding the kept seeds (Phase E decision 10); ci/pre-deployment.sh hands the
-  # schema checks OPNVIEW_SCHEMA_CHECKS_DATABASE as their OPNVIEW_TEST_DATABASE.
-  # The -race step runs against db-test, the everyday
-  # instance on its tmpfs (the maintainer's decision of 16 October 2026, Phase E
-  # decision 6): under the race detector every package selected runs several
-  # times slower, and on the disk-backed instance internal/collect,
-  # internal/store, internal/plugin/harness and internal/web/surfaces each
-  # reached the 180 s budget on 16 October 2026. What the race detector proves
-  # does not depend on a write reaching a disk; what a disk changes, the
-  # non-race step and the schema checks still meet. ci/pre-deployment.sh hands
-  # the -race step OPNVIEW_RACE_TEST_DATABASE as its OPNVIEW_TEST_DATABASE, with
-  # the clone strategy of db-test.
-  pre-deployment:
-    <<: *dev-base
-    environment:
-      OPNVIEW_TEST_DATABASE: "host=db-predeployment port=5432 user=postgres dbname=postgres sslmode=disable"
-      OPNVIEW_RACE_TEST_DATABASE: *everyday-test-database
-      OPNVIEW_SCHEMA_CHECKS_DATABASE: &schema-checks-database "host=db-schema-checks port=5432 user=postgres dbname=postgres sslmode=disable"
-      # The tests clone their databases with WAL_LOG here, and with FILE_COPY, the default, on the
-      # everyday tmpfs instance: FILE_COPY forces a checkpoint before and after each clone, which on
-      # this disk with production durability made 64 create-then-drop cycles, 16 at a time, take
-      # 38.3 s against 2.6 s with WAL_LOG (16 October 2026; internal/store/testdatabase.go).
-      OPNVIEW_TEST_CLONE_STRATEGY: "WAL_LOG"
-    depends_on:
-      db-test:
-        condition: service_healthy
-      db-predeployment:
-        condition: service_healthy
-      db-schema-checks:
-        condition: service_healthy
-    command: ["bash", "/workspace/ci/pre-deployment.sh"]
-
-  # The schema checks: the schema, the seed, the screen queries and their query
-  # plans, on psql. Separate from `checks` so a schema failure stays
-  # distinguishable from a failure of the four Go commands. The command is
-  # baked in for the same reason as above, so the host invocation is
-  #
-  #     docker compose run --rm schema-checks
-  #
-  # quoting-free and identical in PowerShell and in bash. Every database it
-  # creates is created and dropped by its exact name on db-schema-checks, but the
-  # kept seeds, which it keeps there under their exact names. Run on its own, it
-  # has no hard limit, which is how the kept seeds are built cold after a change
-  # to what they are built from.
-  schema-checks:
-    <<: *dev-base
-    environment:
-      OPNVIEW_TEST_DATABASE: *schema-checks-database
-    depends_on:
-      db-schema-checks:
-        condition: service_healthy
-    command: ["bash", "/workspace/sql/schema-checks.sh"]
-
 volumes:
   go-mod-cache:
   go-build-cache:
   data:
-  predeployment-database:
-  schema-checks-database:
   test-database-socket:

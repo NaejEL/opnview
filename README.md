@@ -26,7 +26,7 @@ installation.
 **One service and its database, installed and updated by a single command,
 with nothing to set up by hand.** The database is PostgreSQL with TimescaleDB,
 run beside `opnview` by the installation itself. See the storage rule in
-[ROADMAP.md](ROADMAP.md), under *Rules that apply to every step*. The frontend
+[docs/adr/0008-postgresql-timescaledb.md](docs/adr/0008-postgresql-timescaledb.md). The frontend
 is served by the service. Nothing is installed on the firewall and `opnview`
 changes nothing on it: it reads the REST API, read-only, and can receive the
 firewall's syslog and NetFlow exports if you configure them on the firewall
@@ -37,10 +37,9 @@ broker, which refuses anything but a read before it is sent.
 ## Status
 
 **Under construction.** Nothing is usable yet.
-Progress follows [ROADMAP.md](ROADMAP.md) — eight steps, validation after each
-one. Step 1 is done: [docs/opnsense-api-survey.md](docs/opnsense-api-survey.md).
-Current step: 5, correlation, classification and the matrix. Step 4 was validated
-against a live OPNsense on 3 October 2026.
+Where things stand is in [ROADMAP.md](ROADMAP.md); the decisions the product
+is built on are in [docs/adr/](docs/adr/README.md); the architecture aimed at is
+in [docs/architecture.md](docs/architecture.md).
 
 `opnview` now has its own accounts, and that is where credentials enter it.
 On first start it creates its database and its encryption key, prints a
@@ -391,9 +390,7 @@ not the stored credentials. Restore into the same TimescaleDB version, by the
 procedure TimescaleDB documents for a logical backup: create the database and the
 `timescaledb` extension, run `SELECT timescaledb_pre_restore();`, then
 `pg_restore --dbname=<database> opnview.dump` (without `-j`), then
-`SELECT timescaledb_post_restore();`. The pre-deployment checks run this exact
-dump and this restore on a seeded database and compare every table's row count.
-
+`SELECT timescaledb_post_restore();`.
 ## Licence
 
 [MIT](LICENSE).
