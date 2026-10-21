@@ -158,3 +158,7 @@ func (s *FlowStore) IsThisFirewallAt(ctx context.Context, address string, at int
 		map[string]any{"address": address, "at": at, "held_margin": margin})
 	return held, err
 }
+
+// HeldMargin is the discovery interval in force, which "held at an instant" allows on either side of a
+// sighting: what the clients plugin's derivation is handed as :held_margin (ADR 0020 wave 3).
+func (s *FlowStore) HeldMargin(ctx context.Context) (int64, error) { return heldMargin(ctx, s.SQL) }

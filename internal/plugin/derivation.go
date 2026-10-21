@@ -42,9 +42,12 @@ type derivation struct {
 	tables   map[string]plugindecl.PluginTable
 	measures map[string]vocab.DeclaredMeasure
 	// statements are the plugin's statements a script run may return to run, by name (ADR 0018); sqlOnly,
-	// when set, is the ordered list a SQL-only derivation runs instead of a script.
+	// when set, is the ordered list a SQL-only derivation runs instead of a script, bound the core's
+	// parameters and the plugin's settings (derivationparameters.go).
 	statements map[string]string
 	sqlOnly    []string
+	parameters *parameterHolder
+	settings   SettingStore
 	// availability is the provider a failure is recorded on.
 	availabilityKind, availabilityKey string
 	// providerOf is the plugin's provider key of each kind, for a measure's intervals.
@@ -68,7 +71,14 @@ func checkDerivations(plugin *Plugin, exports map[string]map[string]string, prov
 		return contract.Refuse(plugin.Name, contract.RefusalDerivationInvalid, format, arguments...)
 	}
 	if len(providers) == 0 {
-		return nil, refuse("the plugin declares derivations and no provider, whose availability a failed run is recorded in")
+		// A plugin of derivations alone (ADR 0020: the classification) has no provider to record a failed run
+		// in; its failures are logged by the collector instead. A script derivation needs a provider still.
+		for _, declaration := range manifest.Derivations {
+			if len(declaration.Statements) == 0 {
+				return nil, refuse("the plugin declares a script derivation and no provider, whose availability a failed run " +
+					"is recorded in")
+			}
+		}
 	}
 	infos := make([]ProviderInfo, 0, len(providers))
 	providerOf := map[string]string{}
@@ -78,7 +88,11 @@ func checkDerivations(plugin *Plugin, exports map[string]map[string]string, prov
 			providerOf[declared.info.Kind] = declared.info.Key
 		}
 	}
-	availability := freshnessOf(plugin.Name, infos)
+	var availability struct{ Kind, ProviderKey string }
+	if len(infos) > 0 {
+		chosen := freshnessOf(plugin.Name, infos)
+		availability.Kind, availability.ProviderKey = chosen.Kind, chosen.ProviderKey
+	}
 	tables := map[string]plugindecl.PluginTable{}
 	for _, table := range plugin.OwnTables {
 		tables[table.Table] = table
@@ -157,8 +171,12 @@ func checkDerivations(plugin *Plugin, exports map[string]map[string]string, prov
 		d := &derivation{plugin: plugin, declaration: declaration, function: function, database: options.Store,
 			tables: map[string]plugindecl.PluginTable{}, measures: map[string]vocab.DeclaredMeasure{},
 			statements: map[string]string{}, sqlOnly: append([]string(nil), declaration.Statements...),
+			parameters: options.parameters, settings: options.Settings,
 			availabilityKind: availability.Kind, availabilityKey: availability.ProviderKey, providerOf: providerOf,
 			wake: make(chan struct{}, 1)}
+		if d.settings == nil && options.Store != nil {
+			d.settings = options.Store
+		}
 		for _, name := range declaration.Outputs.Statements {
 			text, held := plugin.statements[name]
 			if !held {
@@ -343,10 +361,37 @@ func (d *derivation) compute(ctx context.Context, session provider.Session, now,
 		previous = since
 	}
 	if len(d.sqlOnly) > 0 {
-		// SQL-only: the statements, in order, each handed the run's :since and :now; no script.
+		// SQL-only: the statements, in order, each handed the run's :since and :now, the core's parameters and
+		// the plugin's settings as :setting_<key>; no script.
+		parameters := map[string]any{}
+		if d.parameters != nil {
+			supplied, err := d.parameters.values(ctx)
+			if err != nil {
+				return write, d.failed(vocab.OutcomeScriptFailed, "the core's parameters: %v", err)
+			}
+			for name, value := range supplied {
+				parameters[name] = value
+			}
+		}
+		if d.settings != nil {
+			values, err := d.plugin.SettingValues(ctx, d.settings)
+			if err != nil {
+				return write, d.failed(vocab.OutcomeScriptFailed, "the plugin's settings: %v", err)
+			}
+			for _, value := range values {
+				if value.Type != SettingSecret {
+					parameters["setting_"+value.Key] = value.Value
+				}
+			}
+		}
+		parameters["since"], parameters["now"] = previous, now
 		for _, name := range d.sqlOnly {
+			bound := make(map[string]any, len(parameters))
+			for key, value := range parameters {
+				bound[key] = value
+			}
 			write.Statements = append(write.Statements, plugintables.StatementRun{Name: name, Text: d.plugin.statements[name],
-				Parameters: map[string]any{"since": previous, "now": now}})
+				Parameters: bound})
 		}
 		return write, nil
 	}

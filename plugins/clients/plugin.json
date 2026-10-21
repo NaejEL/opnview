@@ -1,0 +1,98 @@
+{
+  "api_version": 3,
+  "name": "clients",
+  "version": "1.0.0",
+  "display_name": "Clients",
+  "description": "Which interface an address belongs to and which machine stands behind it, from on-link evidence alone -- a lease, a client identity, an interface network, a sighting -- this firewall's own addresses recognised first; and the two legs of one pf connection paired. One SQL-only derivation after every pass that brings evidence (ADR 0019, ADR 0020 wave 3).",
+  "requires": ["installation", "pf"],
+  "settings": [
+    {
+      "key": "address_idle_window_seconds",
+      "type": "integer",
+      "default": 86400,
+      "min": 60,
+      "max": 2592000,
+      "label": "plugin.clients.setting.address_idle_window_seconds",
+      "note": "How long an address may go unseen before a later sighting is treated as a different machine, at the address level of the identity cascade."
+    }
+  ],
+  "tables": [
+    {
+      "name": "address_classification",
+      "columns": [
+        { "name": "address", "type": "text" },
+        { "name": "evidence", "type": "text" },
+        { "name": "classified_at", "type": "integer" }
+      ],
+      "primary_key": ["address"],
+      "indexes": [ { "columns": ["classified_at"] } ],
+      "checks": [
+        { "name": "address_not_empty", "expression": "length(address) > 0" },
+        { "name": "evidence_not_empty", "expression": "length(evidence) > 0" },
+        { "name": "classified_at_instant", "expression": "classified_at >= 0 AND classified_at < 4102444800" }
+      ]
+    },
+    {
+      "name": "placement",
+      "columns": [
+        { "name": "address", "type": "text" },
+        { "name": "address_inet", "type": "ip", "nullable": true },
+        { "name": "link_local", "type": "boolean", "default": "false" },
+        { "name": "loopback", "type": "boolean", "default": "false" },
+        { "name": "holdings", "type": "text", "nullable": true },
+        { "name": "interface_id", "type": "integer", "nullable": true },
+        { "name": "evidence_kind", "type": "text", "nullable": true },
+        { "name": "identity_client_id", "type": "integer", "nullable": true },
+        { "name": "address_client_id", "type": "integer", "nullable": true },
+        { "name": "firewall", "type": "boolean", "default": "false" },
+        { "name": "evidence", "type": "text", "nullable": true },
+        { "name": "placed_in_full", "type": "boolean", "default": "false" },
+        { "name": "needs_mint", "type": "boolean", "default": "false" }
+      ],
+      "primary_key": ["address"]
+    },
+    {
+      "name": "onlink",
+      "columns": [
+        { "name": "singleton", "type": "integer" },
+        { "name": "fingerprint", "type": "text" },
+        { "name": "changed", "type": "boolean", "default": "false" }
+      ],
+      "primary_key": ["singleton"],
+      "checks": [ { "name": "one_row", "expression": "singleton = 1" } ]
+    }
+  ],
+  "relations": ["clients.relations.sql"],
+  "statements": ["clients.statements.sql"],
+  "derivations": [
+    {
+      "name": "place",
+      "after_passes": ["firewall_log", "dhcp_lease", "neighbour", "dns_lookup", "security_event"],
+      "cadence_seconds": 600,
+      "statements": [
+        "onlink_fingerprint",
+        "clear_placement",
+        "collect_addresses",
+        "mark_addresses",
+        "place_evidence",
+        "place_identities",
+        "place_fingerprints",
+        "place_address_clients",
+        "mint_clients",
+        "place_flow_sources",
+        "place_flow_destinations",
+        "place_event_sources",
+        "place_event_destinations",
+        "place_lookups",
+        "repoint_purged_local",
+        "repoint_purged_source",
+        "record_classifications",
+        "purge_unreferenced_at_addresses",
+        "purge_unreferenced_everywhere",
+        "purge_this_firewall_clients",
+        "pair_records"
+      ],
+      "outputs": { "tables": ["address_classification", "placement", "onlink"] }
+    }
+  ]
+}

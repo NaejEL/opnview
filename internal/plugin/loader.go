@@ -91,11 +91,16 @@ type Options struct {
 	// HostAnswers, when set, is handed everything a host function answers a script, by function
 	// name: `opnview plugin test` searches it for credentials (BR-AC16). Nil in the product.
 	HostAnswers func(function string, answer any)
+	// DerivationParameters supplies the core's values to SQL-only derivations when the load is one
+	// plugin's (LoadOne, the test harness); a whole load takes them from Loaded.SetDerivationParameters.
+	DerivationParameters DerivationParameters
 
 	// pushes is what the load's push entries share, set by Load.
 	pushes *pushHost
 	// catalogue is the data catalogue the load's scripts read, set by Load.
 	catalogue *catalogueHolder
+	// parameters supplies the core's values to SQL-only derivations, set by Load.
+	parameters *parameterHolder
 }
 
 // Plugin is one loaded plugin, as the listing reports it.
@@ -182,6 +187,8 @@ type Loaded struct {
 	Members []*Plugin
 	Refused []contract.Refusal
 	push    *pushHost
+	// parameters supplies the core's values to the load's SQL-only derivations (derivationparameters.go).
+	parameters *parameterHolder
 }
 
 // Plugins returns the loaded plugins, built-ins first, each group by name.
@@ -308,6 +315,9 @@ func load(ctx context.Context, options Options) (*Loaded, error) {
 	}
 	options.pushes = loaded.push
 	options.catalogue = &catalogueHolder{loaded: loaded}
+	loaded.parameters = &parameterHolder{}
+	loaded.parameters.set(options.DerivationParameters)
+	options.parameters = loaded.parameters
 	builtins := options.Builtins
 	if builtins == nil {
 		builtins = opnview.BuiltinPlugins()
@@ -393,6 +403,10 @@ func load(ctx context.Context, options Options) (*Loaded, error) {
 // admits its endpoints and creates its tables. Nothing of a refused plugin is added anywhere.
 func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, origin, location, onDisk string,
 	taken map[string]string, options Options) (*Plugin, *contract.Refusal) {
+	if options.parameters == nil {
+		options.parameters = &parameterHolder{}
+		options.parameters.set(options.DerivationParameters)
+	}
 	raw, err := fs.ReadFile(directory, contract.ManifestFile)
 	if err != nil {
 		return nil, contract.Refuse(name, contract.RefusalManifestUnreadable, "%s cannot be read: %v", contract.ManifestFile, err)

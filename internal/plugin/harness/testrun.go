@@ -38,6 +38,7 @@ import (
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/accounts"
+	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/widget"
 )
 
@@ -238,7 +239,12 @@ func newTestWorld(ctx context.Context, directory string) (*testWorld, error) {
 	world.set = provider.NewSet()
 	name := filepath.Base(directory)
 	options := plugin.Options{DataDir: dataDir, Store: world.database, Settings: world.settings, Sealer: world.box,
-		CallTimeout: 30 * time.Second, FetchTransport: world, HostAnswers: world.heard}
+		CallTimeout: 30 * time.Second, FetchTransport: world, HostAnswers: world.heard,
+		// The core's values a SQL-only derivation reads, at their defaults: what a fresh installation runs with.
+		DerivationParameters: func(context.Context) (map[string]any, error) {
+			return map[string]any{"held_margin": int64(flows.DefaultDiscoveryIntervalSeconds),
+				"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds)}, nil
+		}}
 	taken := map[string]string{}
 	required, err := requiredDirectories(directory)
 	if err != nil {

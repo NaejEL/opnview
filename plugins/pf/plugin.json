@@ -78,9 +78,15 @@
         { "name": "tcp_seq", "type": "integer", "nullable": true },
         { "name": "pair_outcome", "type": "text", "nullable": true },
         { "name": "paired_flow_id", "type": "integer", "nullable": true },
-        { "name": "traffic_scope", "type": "text" }
+        { "name": "traffic_scope", "type": "text" },
+        { "name": "changed_at", "type": "integer", "nullable": true }
       ],
       "primary_key": ["id"],
+      "writable_by": [
+        { "plugin": "clients", "columns": ["src_interface_id", "src_client_id", "src_is_this_firewall",
+                                           "dst_interface_id", "dst_client_id", "dst_is_this_firewall",
+                                           "traffic_scope", "pair_outcome", "paired_flow_id", "changed_at"] }
+      ],
       "indexes": [
         { "columns": ["log_digest"], "unique": true },
         { "columns": ["observed_at", "traffic_scope", "action", "packet_bytes", "src_interface_id", "dst_interface_id",
@@ -93,7 +99,8 @@
         { "columns": ["dst_address", "observed_at"] },
         { "columns": ["ingested_at", "observed_at"] },
         { "columns": ["dst_client_id", "observed_at"] },
-        { "columns": ["interface_device", "canonical_address(src_address)", "canonical_address(dst_address)", "observed_at"] }
+        { "columns": ["interface_device", "canonical_address(src_address)", "canonical_address(dst_address)", "observed_at"] },
+        { "columns": ["changed_at"], "where": "changed_at IS NOT NULL" }
       ],
       "checks": [
         { "name": "observed_at_instant", "expression": "observed_at >= 0 AND observed_at < 4102444800" },

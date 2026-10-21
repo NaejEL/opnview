@@ -61,6 +61,10 @@ func (c *Collector) DerivationTasks() []core.Task {
 func (c *Collector) RunDerivation(ctx context.Context, derivation provider.Derivation) error {
 	outcome, err := derivation.Run(ctx, c.Collector, c.Now())
 	var failure *provider.DerivationFailure
+	if errors.As(err, &failure) && failure.ProviderKind == "" {
+		// A plugin of derivations alone has no provider to record the failure in: the loop's report logs it.
+		return failure
+	}
 	if errors.As(err, &failure) {
 		providerID, idErr := c.Store.ProviderID(ctx, failure.ProviderKind, failure.ProviderKey)
 		if idErr != nil {
@@ -91,4 +95,17 @@ func (c *Collector) RunDerivation(ctx context.Context, derivation provider.Deriv
 		return derive.On(c.Collector).Derive(ctx, derive.Derivation{Instants: outcome.Instants})
 	}
 	return nil
+}
+
+// DerivationParameters supplies the core's values to the plugins' SQL-only derivations (ADR 0020, wave 3):
+// the discovery interval a held address is read with, and the leg-pairing window.
+func (c *Collector) DerivationParameters(ctx context.Context) (map[string]any, error) {
+	held, err := c.Store.HeldMargin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.Mutex.RLock()
+	window := c.PairingWindowSeconds
+	c.Mutex.RUnlock()
+	return map[string]any{"held_margin": held, "leg_pairing_window": window}, nil
 }

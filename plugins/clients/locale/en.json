@@ -1,0 +1,5 @@
+{ "language": "en", "strings": {
+  "plugin.clients.dataset.address_classification": "Address classifications",
+  "plugin.clients.dataset.placement": "Addresses being placed",
+  "plugin.clients.dataset.onlink": "On-link evidence fingerprint",
+  "plugin.clients.setting.address_idle_window_seconds": "Address idle window" } }

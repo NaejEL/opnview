@@ -205,6 +205,7 @@ func run() (err error) {
 		fmt.Fprintf(os.Stderr, "%s: plugin not loaded: %v\n", buildinfo.AppName, &refusal)
 	}
 	collector := collect.NewWithSources(client, database, core.SystemClock{}, plugins.Set)
+	plugins.SetDerivationParameters(collector.DerivationParameters)
 	// What a pass met that does not fail it -- a rule-info call that did not answer -- is logged here.
 	collector.Notice = func(message string) {
 		fmt.Fprintf(os.Stderr, "%s: %s\n", buildinfo.AppName, message)

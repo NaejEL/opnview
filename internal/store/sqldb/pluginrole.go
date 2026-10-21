@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -29,6 +30,29 @@ func PluginRoleName(plugin string) string { return PluginRolePrefix + plugin }
 // month of flows is expected to take seconds, never minutes.
 const pluginStatementTimeout = "300s"
 
+// TransitionGrant is a write a plugin's role holds on a CORE table for the transition of ADR 0020: a
+// table a later wave moves to its owner, written meanwhile by a plugin whose SQL replaced the core's.
+// Each entry names the wave that removes it. The grant is applied with the plugin's role, and it is the
+// only way a plugin ever writes the core schema.
+type TransitionGrant struct {
+	Plugin  string
+	Table   string
+	Columns []string
+}
+
+// TransitionGrants are the transition writes in force (ADR 0020, the progress table names each wave).
+var TransitionGrants = []TransitionGrant{
+	// The classification places the ends of lookups and security events until wave 4 moves
+	// dns_resolution to unbound and security_event to suricata, which then grant these columns.
+	{Plugin: "clients", Table: "dns_resolution", Columns: []string{"interface_id", "interface_lookup_state", "client_id",
+		"client_is_this_firewall"}},
+	{Plugin: "clients", Table: "security_event", Columns: []string{"src_interface_id", "src_client_id", "src_is_this_firewall",
+		"dst_interface_id", "dst_client_id", "dst_is_this_firewall"}},
+	// The purged part follows its flows when an identity replaces an address-level client, until wave 5
+	// moves purged_flow_hour with the rollups.
+	{Plugin: "clients", Table: "purged_flow_hour", Columns: []string{"local_client_id", "src_client_id"}},
+}
+
 // EnsurePluginRole creates a plugin's role when it is absent and gives it exactly what it may do in its
 // schema; applied at every start, like the schema itself.
 func (s *Handle) EnsurePluginRole(ctx context.Context, plugin, schema string) error {
@@ -51,6 +75,17 @@ func (s *Handle) EnsurePluginRole(ctx context.Context, plugin, schema string) er
 		// What the read role reads, the plugin role reads: the core schema, every plugin schema, the mirror's
 		// data tables, and none of the credential tables.
 		statements = append(statements, "GRANT "+pgx.Identifier{s.Reader.role}.Sanitize()+" TO "+quotedRole)
+	}
+	for _, grant := range TransitionGrants {
+		if grant.Plugin != plugin {
+			continue
+		}
+		columns := make([]string, 0, len(grant.Columns))
+		for _, column := range grant.Columns {
+			columns = append(columns, pgx.Identifier{column}.Sanitize())
+		}
+		statements = append(statements, "GRANT UPDATE ("+strings.Join(columns, ", ")+") ON "+
+			pgx.Identifier{CoreSchema, grant.Table}.Sanitize()+" TO "+quotedRole)
 	}
 	for _, statement := range statements {
 		if _, err := s.SQL.ExecContext(ctx, statement); err != nil {

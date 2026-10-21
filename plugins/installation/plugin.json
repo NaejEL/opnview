@@ -173,6 +173,7 @@
         { "name": "last_seen_at", "type": "integer" }
       ],
       "primary_key": ["id"],
+      "writable_by": [ { "plugin": "clients" } ],
       "indexes": [
         { "columns": ["identity_kind", "identity_key"], "unique": true },
         { "columns": ["interface_id", "id"] },
