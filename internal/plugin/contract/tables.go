@@ -50,6 +50,13 @@ func DeclaredTables(manifest Manifest) ([]plugindecl.PluginTable, *Refusal) {
 			table.Columns = append(table.Columns, converted)
 		}
 		for _, index := range declaration.Indexes {
+			for _, entry := range index.Columns {
+				if plugindecl.IsIndexExpression(entry) {
+					if err := sqldb.CheckExpression(entry); err != nil {
+						return nil, Refuse(manifest.Name, RefusalTableInvalid, "an index of %s: %v", declaration.Name, err)
+					}
+				}
+			}
 			if index.Where != "" {
 				if err := sqldb.CheckExpression(index.Where); err != nil {
 					return nil, Refuse(manifest.Name, RefusalTableInvalid, "an index of %s: %v", declaration.Name, err)

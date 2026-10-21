@@ -26,8 +26,8 @@ SELECT d.source_table AS source_table,
        d.target_is_this_firewall AS target_is_this_firewall,
        coalesce(f.dst_port, e.dst_port) AS port,
        coalesce(f.protocol, e.protocol) AS protocol
-FROM plugin_installation.blocked_decision AS d
-LEFT JOIN flow AS f ON d.source_table = 'flow' AND f.id = d.source_id
+FROM plugin_refusals.blocked_decision AS d
+LEFT JOIN plugin_pf.flow AS f ON d.source_table = 'flow' AND f.id = d.source_id
 LEFT JOIN security_event AS e ON d.source_table = 'security_event' AND e.id = d.source_id
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
@@ -42,7 +42,7 @@ LIMIT :limit;
 -- The refusals of the window per engine kind.
 -- statement: widget_blocked_feed_counts
 SELECT d.engine_kind AS engine_kind, count(*) AS refusals
-FROM plugin_installation.blocked_decision AS d
+FROM plugin_refusals.blocked_decision AS d
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
   AND (CAST(:client_ids AS jsonb) IS NULL OR d.client_id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:client_ids AS jsonb)) AS j(value)))
@@ -54,7 +54,7 @@ GROUP BY d.engine_kind;
 -- The unified blocked feed grouped by client, and by target, over the whole window.
 -- statement: widget_blocked_feed_by_client
 SELECT d.client_id AS client_id, count(*) AS refusals
-FROM plugin_installation.blocked_decision AS d
+FROM plugin_refusals.blocked_decision AS d
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
   AND (CAST(:engine_kinds AS jsonb) IS NULL OR d.engine_kind IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:engine_kinds AS jsonb)) AS j(value)))
@@ -66,7 +66,7 @@ GROUP BY d.client_id;
 
 -- statement: widget_blocked_feed_by_target
 SELECT d.target AS target, d.target_kind AS target_kind, count(*) AS refusals
-FROM plugin_installation.blocked_decision AS d
+FROM plugin_refusals.blocked_decision AS d
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
   AND (CAST(:engine_kinds AS jsonb) IS NULL OR d.engine_kind IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:engine_kinds AS jsonb)) AS j(value)))

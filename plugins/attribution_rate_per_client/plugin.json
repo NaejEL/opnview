@@ -1,7 +1,7 @@
 {
   "api_version": 3,
   "name": "attribution_rate_per_client",
-  "requires": ["installation"],
+  "requires": ["installation", "pf"],
   "version": "1.0.0",
   "display_name": "Attribution rate per client",
   "description": "Per client, how many of its outbound flows could be named at all, by which method, with what delay, and whether the resolver's cache was read over the window.",

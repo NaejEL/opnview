@@ -23,7 +23,7 @@ GROUP BY 1, 2;
 -- read_blocked_decision_counts.
 -- statement: widget_blocked_decision_counts
 SELECT engine_kind AS engine_kind, count(*) AS decisions
-FROM plugin_installation.blocked_decision
+FROM plugin_refusals.blocked_decision
 WHERE occurred_at >= :from
   AND occurred_at < :to
 GROUP BY engine_kind;

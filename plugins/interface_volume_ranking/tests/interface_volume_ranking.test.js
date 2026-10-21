@@ -23,7 +23,7 @@ function seed(t) {
   t.sql("INSERT INTO plugin_installation.rule (id, pf_label, description, action, interface, legacy, logs_matches, discovered_at) " +
     "VALUES (5, 'label-five', 'Quiet pass', 'pass', 'opt1', false, false, :at)", { at: at });
   var flow = function (id, iface, device, client, address, bytes) {
-    t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+    t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
       "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, protocol, " +
       "ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope) VALUES " +
       "(:id, :digest, :at, :at, :device, 'resolved', :iface, :client, :src, '203.0.113.7', 'tcp', 4, " +

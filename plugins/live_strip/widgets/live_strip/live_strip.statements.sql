@@ -11,7 +11,7 @@
 -- connection logged on two interfaces left out, as every traffic series counts them.
 -- statement: widget_live_strip_allowed
 SELECT f.observed_at - f.observed_at % :width AS bucket_start, count(*) AS decisions
-FROM classified_flow AS f
+FROM plugin_pf.classified_flow AS f
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
@@ -24,7 +24,7 @@ GROUP BY 1;
 -- statement: widget_live_strip_refusals
 SELECT d.occurred_at - d.occurred_at % :width AS bucket_start, d.engine_kind AS engine_kind,
        count(*) AS decisions
-FROM plugin_installation.blocked_decision AS d
+FROM plugin_refusals.blocked_decision AS d
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
   AND d.source_table IN ('flow', 'dns_resolution')
@@ -33,5 +33,5 @@ GROUP BY 1, 2;
 
 -- The earliest record of each kind the strip counts, which bounds what the store covers.
 -- statement: widget_live_strip_earliest
-SELECT (SELECT min(observed_at) FROM flow) AS earliest_flow,
+SELECT (SELECT min(observed_at) FROM plugin_pf.flow) AS earliest_flow,
        (SELECT min(looked_up_at) FROM dns_resolution) AS earliest_lookup;

@@ -2,7 +2,7 @@
   "api_version": 3,
   "datasets": ["pf_states.rate"],
   "name": "traffic_composition",
-  "requires": ["installation"],
+  "requires": ["installation", "pf", "refusals"],
   "version": "1.0.0",
   "display_name": "Traffic composition",
   "description": "Logged volume as parts of the window's whole, grouped by client, interface, protocol or service port, with the current sampled rates beside it.",

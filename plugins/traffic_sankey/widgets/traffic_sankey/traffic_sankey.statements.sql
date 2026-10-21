@@ -17,7 +17,7 @@ SELECT f.local_client_id AS client_id,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END) AS blocked_bytes,
        count(*) AS connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections
-FROM classified_flow AS f
+FROM plugin_pf.classified_flow AS f
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
@@ -42,7 +42,7 @@ SELECT f.local_client_id AS client_id,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        CAST(:measure AS TEXT) AS measure,
        measure_parts_total(n.parts, n.not_known_index, n.part_width) AS measure_parts
-FROM classified_flow AS f
+FROM plugin_pf.classified_flow AS f
 LEFT JOIN LATERAL flow_measure(f.id, NULL, NULL, f.action, CAST(:measure AS TEXT)) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to

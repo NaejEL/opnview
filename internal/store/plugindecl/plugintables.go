@@ -314,8 +314,10 @@ func ValidatePluginTable(table PluginTable) error {
 			return fmt.Errorf("store: an index of %s names no column", table.SQLName())
 		}
 		for _, name := range index.Columns {
-			if !seen[name] {
-				return fmt.Errorf("store: an index of %s names %q, which is not a column", table.SQLName(), name)
+			// An entry that is not a column is an expression over the row (ADR 0020), which the loader has
+			// checked as every declared expression is checked; it carries a call, at the least.
+			if !seen[name] && !IsIndexExpression(name) {
+				return fmt.Errorf("store: an index of %s names %q, which is neither a column nor an expression", table.SQLName(), name)
 			}
 		}
 	}
@@ -356,6 +358,25 @@ func ValidatePluginTable(table PluginTable) error {
 		}
 	}
 	return nil
+}
+
+// IsIndexExpression reports whether an index entry is an expression rather than a column name: it is
+// not a snake_case word, and it holds a parenthesis.
+func IsIndexExpression(entry string) bool {
+	return !PluginTableNamePattern.MatchString(entry) && strings.Contains(entry, "(")
+}
+
+// indexList quotes the column names of an index and leaves its expressions as written.
+func indexList(entries []string) string {
+	parts := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if IsIndexExpression(entry) {
+			parts = append(parts, "("+entry+")")
+			continue
+		}
+		parts = append(parts, QuoteIdentifier(entry))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // quotedList quotes every name of a list.
@@ -429,7 +450,7 @@ func (t PluginTable) CreateStatements() []string {
 		}
 		statements = append(statements, fmt.Sprintf("CREATE %sINDEX IF NOT EXISTS %s ON %s (%s)%s%s",
 			unique, QuoteIdentifier(fmt.Sprintf("%s_index_%d", t.Table, index)), t.Quoted(),
-			quotedList(declared.Columns), nulls, where))
+			indexList(declared.Columns), nulls, where))
 	}
 	return statements
 }

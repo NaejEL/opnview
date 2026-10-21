@@ -21,7 +21,7 @@ SELECT f.rule_id AS rule_id,
        f.src_client_id AS src_client_id,
        count(*) AS records,
        max(f.observed_at) AS newest
-FROM flow AS f
+FROM plugin_pf.flow AS f
 LEFT JOIN plugin_installation.rule AS r ON r.id = f.rule_id
 LEFT JOIN plugin_installation.interface_map AS m ON m.device = f.interface_device
 WHERE f.action IN ('block', 'reject')
@@ -40,7 +40,7 @@ SELECT f.rule_id AS rule_id,
        f.rid AS rid,
        f.observed_at - f.observed_at % :width AS bucket_start,
        count(*) AS records
-FROM flow AS f
+FROM plugin_pf.flow AS f
 WHERE f.action IN ('block', 'reject')
   AND f.observed_at >= :from
   AND f.observed_at < :to

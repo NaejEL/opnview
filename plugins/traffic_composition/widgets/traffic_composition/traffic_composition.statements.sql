@@ -22,7 +22,7 @@ SELECT f.local_interface_id AS member,
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections
-FROM classified_flow AS f
+FROM plugin_pf.classified_flow AS f
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
@@ -39,7 +39,7 @@ GROUP BY f.local_interface_id, f.traffic_direction;
 -- refused lookup never became a packet and a detection is not a logged record.
 -- statement: widget_traffic_composition_refusals
 SELECT d.engine_kind AS engine_kind, count(*) AS refusals
-FROM plugin_installation.blocked_decision AS d
+FROM plugin_refusals.blocked_decision AS d
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
 GROUP BY d.engine_kind;
@@ -61,7 +61,7 @@ SELECT f.local_interface_id AS member,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
        CAST(:measure AS TEXT) AS measure,
        measure_parts_total(n.parts, n.not_known_index, n.part_width) AS measure_parts
-FROM classified_flow AS f
+FROM plugin_pf.classified_flow AS f
 LEFT JOIN LATERAL flow_measure(f.id, NULL, NULL, f.action, CAST(:measure AS TEXT)) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to

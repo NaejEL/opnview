@@ -1,7 +1,7 @@
 {
   "api_version": 3,
   "name": "destination_countries",
-  "requires": ["installation"],
+  "requires": ["installation", "pf"],
   "version": "1.0.0",
   "display_name": "Destination countries",
   "description": "The outside peers of the window grouped by the country the geolocation placed them in, with an explicit row for the addresses it did not place.",

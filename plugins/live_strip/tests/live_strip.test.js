@@ -13,7 +13,7 @@ function seed(t) {
 }
 
 function flow(t, id, at, action) {
-  t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, interface_lookup_state, " +
+  t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, interface_lookup_state, " +
     "src_interface_id, src_address, dst_address, protocol, ip_version, action, direction, packet_bytes, " +
     "rule_lookup_state, traffic_scope) VALUES (:id, :digest, :at, :at, 'vlan0.10', 'resolved', 1, '192.0.2.10', " +
     "'203.0.113.7', 'tcp', 4, :action, 'in', 100, 'pending', 'north_south')",

@@ -189,6 +189,10 @@ func TestACoreKindEntryMustDeclareItsReplacement(t *testing.T) {
 	delete(manifest["push"].([]any)[0].(map[string]any), "replaces")
 	manifest["name"] = "example_push"
 	manifest["script"] = "example.js"
+	// The copy stands alone: pf's table, relations and requirement are not what this test is about.
+	delete(manifest, "requires")
+	delete(manifest, "tables")
+	delete(manifest, "relations")
 	script, err := os.ReadFile(filepath.Join("..", "..", "plugins", "pf", "pf.js"))
 	if err != nil {
 		t.Fatal(err)

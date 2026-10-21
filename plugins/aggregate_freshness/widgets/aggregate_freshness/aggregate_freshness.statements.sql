@@ -29,7 +29,7 @@ FROM (SELECT period_start_at, period_end_at, max(computed_at) AS computed
       WHERE period_start_at >= :from
         AND period_start_at < :to
       GROUP BY period_start_at, period_end_at) AS computed_slot
-WHERE EXISTS (SELECT 1 FROM flow AS f
+WHERE EXISTS (SELECT 1 FROM plugin_pf.flow AS f
               WHERE f.observed_at >= computed_slot.period_start_at
                 AND f.observed_at < computed_slot.period_end_at
                 AND f.ingested_at >= computed_slot.computed)

@@ -24,7 +24,7 @@ function seed(t) {
     "(5, 'label-five', 'Block the guests', 'block', false, :at), " +
     "(6, 'label-six', 'Default deny', 'block', true, :at)", { at: at });
   var flow = function (id, action, rid, rule) {
-    t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+    t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
       "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, protocol, " +
       "ip_version, action, direction, log_reason, packet_bytes, rid, rule_id, rule_lookup_state, " +
       "traffic_scope) VALUES (:id, :digest, :at, :at, 'vlan0.10', 'resolved', 1, 10, '192.0.2.10', " +

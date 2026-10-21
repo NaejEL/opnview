@@ -27,7 +27,7 @@ function seed(t) {
     "(10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', '192.0.2.10', :at, :at), " +
     "(11, 'mac', '00:11:22:33:44:66', 1, '00:11:22:33:44:66', '192.0.2.11', :at, :at)", { at: at });
   var flow = function (id, client, address, protocol, port, bytes) {
-    t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+    t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
       "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, dst_port, " +
       "protocol, ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope) VALUES " +
       "(:id, :digest, :at, :at, 'vlan0.10', 'resolved', 1, :client, :src, '203.0.113.7', :port, " +
@@ -74,7 +74,7 @@ test("by client and by service port, each member is a slice of its own", functio
 
 test("53/udp and 53/tcp are two services, and a record with no port is port:not_recorded", function (t) {
   seed(t);
-  t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+  t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
     "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, dst_port, " +
     "protocol, ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope) VALUES " +
     "(4, 'd4', :at, :at, 'vlan0.10', 'resolved', 1, 11, '192.0.2.11', '203.0.113.7', 53, 'tcp', 4, " +
@@ -91,7 +91,7 @@ test("53/udp and 53/tcp are two services, and a record with no port is port:not_
 test("by blocking reason, every logged record by its decision, the refusals no packet carries beside",
   function (t) {
     seed(t);
-    t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+    t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
       "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, dst_port, " +
       "protocol, ip_version, action, direction, log_reason, packet_bytes, rule_lookup_state, traffic_scope) " +
       "VALUES (4, 'd4', :at, :at, 'vlan0.10', 'resolved', 1, 11, '192.0.2.11', '203.0.113.7', 22, 'tcp', 4, " +
@@ -122,7 +122,7 @@ test("window_seconds adds the recent part, a gap after complete_until and never 
   seed(t);
   var none = t.widget("traffic_composition", { group_by: "protocol" }).body.data;
   t.assert(!("recent" in none), "no recent part unless asked");
-  t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+  t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
     "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, dst_port, " +
     "protocol, ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope) VALUES " +
     "(4, 'd4', :at, :at, 'vlan0.10', 'resolved', 1, 11, '192.0.2.11', '203.0.113.7', 443, 'tcp', 4, " +

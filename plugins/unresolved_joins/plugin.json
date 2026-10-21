@@ -1,7 +1,7 @@
 {
   "api_version": 3,
   "name": "unresolved_joins",
-  "requires": ["installation"],
+  "requires": ["installation", "pf"],
   "version": "1.0.0",
   "display_name": "Unresolved joins",
   "description": "Four counters -- flows whose device matched no interface, flows whose rid matched no rule, clients known only by an address, and addresses not geolocated -- so the quality of every other widget is visible.",

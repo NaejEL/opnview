@@ -22,7 +22,7 @@ function seed(t) {
   t.sql("INSERT INTO geo_asn (address, lookup_state, asn, operator, looked_up_at) " +
     "VALUES ('203.0.113.7', 'miss', NULL, NULL, :at)", { at: at });
   var flow = function (id, client, address, destination, action, bytes) {
-    t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+    t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
       "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, protocol, " +
       "ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope) VALUES " +
       "(:id, :digest, :at, :at, 'vlan0.10', 'resolved', 1, :client, :src, :dst, 'tcp', 4, " +
@@ -75,7 +75,7 @@ test("include_blocked = false leaves blocked connections out whole, and depth = 
 
 test("depth = 3 adds the service, port and protocol together, below each destination", function (t) {
   seed(t);
-  t.sql("UPDATE flow SET dst_port = 443 WHERE id = 1", {});
+  t.sql("UPDATE plugin_pf.flow SET dst_port = 443 WHERE id = 1", {});
   var data = t.widget("connection_tree", { period: "1h", depth: 3 }).body.data;
   var services = data.outside[0].children[0].children;
   t.equal(services.map(function (node) {
@@ -100,7 +100,7 @@ test("a connection to this firewall lands in the this_firewall node, with nothin
   seed(t);
   // Client 10 reaches the firewall's own address on its interface: an end that is this firewall records
   // the interface its address belongs to, and never a client.
-  t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+  t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
     "interface_lookup_state, src_interface_id, src_client_id, dst_interface_id, dst_is_this_firewall, " +
     "src_address, dst_address, protocol, ip_version, action, direction, packet_bytes, rule_lookup_state, " +
     "traffic_scope) VALUES (4, 'd4', :at, :at, 'vlan0.10', 'resolved', 1, 10, 1, true, '192.0.2.10', " +

@@ -14,6 +14,9 @@ var BridgeSchemas = []string{
 	// Wave 1: the installation model (interface, interface_address, interface_map, interface_network,
 	// rule, client, owner, and the views this_firewall_address and blocked_decision).
 	"plugin_installation",
+	// Wave 2: pf owns flow, classified_flow and blocked_event; refusals owns blocked_decision.
+	"plugin_pf",
+	"plugin_refusals",
 }
 
 // SearchPath is the search path of opnview's own connections and the read role: the core schema, the

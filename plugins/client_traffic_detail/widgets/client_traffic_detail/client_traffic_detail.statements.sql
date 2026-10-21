@@ -27,7 +27,7 @@ SELECT f.id AS flow_id,
        a.site_name AS site_name,
        a.method AS method,
        a.correlation_delay_seconds AS correlation_delay_seconds
-FROM flow AS f
+FROM plugin_pf.flow AS f
 LEFT JOIN plugin_installation.interface_map AS m ON m.device = f.interface_device
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
@@ -47,7 +47,7 @@ LIMIT :limit;
 -- statement: widget_client_traffic_detail_record_totals
 SELECT count(*) AS records,
        coalesce(sum(f.packet_bytes), 0) AS bytes
-FROM flow AS f
+FROM plugin_pf.flow AS f
 WHERE f.src_client_id = :client_id
   AND f.observed_at >= :from
   AND f.observed_at < :to
@@ -118,7 +118,7 @@ SELECT f.id AS flow_id,
        rv.packets AS reverse_packets,
        rv.state AS reverse_state,
        measure_markers(CAST(:measure AS TEXT), rv.markers) AS reverse_markers
-FROM flow AS f
+FROM plugin_pf.flow AS f
 LEFT JOIN plugin_installation.interface_map AS m ON m.device = f.interface_device
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
@@ -147,7 +147,7 @@ SELECT count(*) AS records,
        coalesce(sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END), 0) AS blocked_connections,
        coalesce(sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END), 0) AS unknown_connections,
        measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
-FROM flow AS f
+FROM plugin_pf.flow AS f
 LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.src_client_id = :client_id
   AND f.observed_at >= :from

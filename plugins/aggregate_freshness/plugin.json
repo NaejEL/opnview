@@ -1,6 +1,7 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "aggregate_freshness",
+  "requires": ["pf"],
   "version": "1.0.0",
   "display_name": "Aggregate freshness",
   "description": "One row per pre-computed period: how many slots it holds over the last 31 days, the span they cover, their last computation and the bytes they hold, flagged stale when a slot is behind its flows.",

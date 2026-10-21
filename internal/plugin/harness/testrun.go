@@ -834,25 +834,57 @@ func requiredDirectories(directory string) ([]requiredPlugin, error) {
 	if err != nil {
 		return nil, nil
 	}
-	var required []requiredPlugin
-	for _, name := range manifest.Requires {
-		sibling := filepath.Join(filepath.Dir(directory), name)
-		if info, err := os.Stat(sibling); err == nil && info.IsDir() {
-			required = append(required, requiredPlugin{name: name, directory: os.DirFS(sibling), location: sibling,
-				onDisk: sibling, origin: plugin.OriginDataDirectory})
-			continue
+	// Transitively: a required plugin's own requirements come before it, each once.
+	var ordered []requiredPlugin
+	seen := map[string]bool{}
+	var visit func(name string) error
+	visit = func(name string) error {
+		if seen[name] {
+			return nil
 		}
-		builtin, err := fs.Sub(opnview.BuiltinPlugins(), name)
+		seen[name] = true
+		found, err := requiredPluginNamed(directory, name)
 		if err != nil {
-			return nil, fmt.Errorf("the plugin requires %s, which is neither a sibling directory nor a built-in", name)
+			return err
 		}
-		if _, err := fs.Stat(builtin, contract.ManifestFile); err != nil {
-			return nil, fmt.Errorf("the plugin requires %s, which is neither a sibling directory nor a built-in", name)
+		rawRequired, err := fs.ReadFile(found.directory, contract.ManifestFile)
+		if err == nil {
+			if requiredManifest, err := contract.DecodeManifest(rawRequired); err == nil {
+				for _, further := range requiredManifest.Requires {
+					if err := visit(further); err != nil {
+						return err
+					}
+				}
+			}
 		}
-		required = append(required, requiredPlugin{name: name, directory: builtin,
-			location: path.Join(plugin.PluginsDirectory, name), origin: plugin.OriginBuiltin})
+		ordered = append(ordered, found)
+		return nil
 	}
-	return required, nil
+	for _, name := range manifest.Requires {
+		if err := visit(name); err != nil {
+			return nil, err
+		}
+	}
+	return ordered, nil
+}
+
+// requiredPluginNamed finds a required plugin: a sibling directory of the plugin under test, or a
+// built-in of that name.
+func requiredPluginNamed(directory, name string) (requiredPlugin, error) {
+	sibling := filepath.Join(filepath.Dir(directory), name)
+	if info, err := os.Stat(sibling); err == nil && info.IsDir() {
+		return requiredPlugin{name: name, directory: os.DirFS(sibling), location: sibling, onDisk: sibling,
+			origin: plugin.OriginDataDirectory}, nil
+	}
+	builtin, err := fs.Sub(opnview.BuiltinPlugins(), name)
+	if err != nil {
+		return requiredPlugin{}, fmt.Errorf("the plugin requires %s, which is neither a sibling directory nor a built-in", name)
+	}
+	if _, err := fs.Stat(builtin, contract.ManifestFile); err != nil {
+		return requiredPlugin{}, fmt.Errorf("the plugin requires %s, which is neither a sibling directory nor a built-in", name)
+	}
+	return requiredPlugin{name: name, directory: builtin, location: path.Join(plugin.PluginsDirectory, name),
+		origin: plugin.OriginBuiltin}, nil
 }
 
 // requiredPlugin is one plugin a test world loads before the plugin under test.

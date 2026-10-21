@@ -1,6 +1,6 @@
 {
   "language": "en",
-  "strings": {
+  "strings": { "plugin.pf.dataset.flow": "Filter-log records",
     "provider.firewall_log.pf": "pf filter log"
   }
 }

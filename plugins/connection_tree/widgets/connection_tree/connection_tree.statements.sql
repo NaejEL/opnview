@@ -51,7 +51,7 @@ WITH flows AS (
            coalesce(f.packet_bytes, 0) AS bytes,
            CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END AS blocked,
            f.observed_at AS observed_at
-    FROM classified_flow AS f
+    FROM plugin_pf.classified_flow AS f
     LEFT JOIN plugin_installation.client AS c ON c.id = f.local_client_id
     LEFT JOIN geo_asn AS g ON g.address = f.peer_address
     LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
@@ -217,7 +217,7 @@ WITH flows AS (
            coalesce(f.packet_bytes, 0) AS bytes,
            CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END AS blocked,
            f.observed_at AS observed_at
-    FROM classified_flow AS f
+    FROM plugin_pf.classified_flow AS f
     LEFT JOIN plugin_installation.client AS c ON c.id = f.local_client_id
     LEFT JOIN geo_asn AS g ON g.address = f.peer_address
     WHERE f.observed_at >= :from
@@ -388,7 +388,7 @@ WITH flows AS (
            n.parts AS parts,
            n.not_known_index AS not_known_index,
            n.part_width AS part_width
-    FROM classified_flow AS f
+    FROM plugin_pf.classified_flow AS f
     LEFT JOIN plugin_installation.client AS c ON c.id = f.local_client_id
     LEFT JOIN geo_asn AS g ON g.address = f.peer_address
     LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
@@ -560,7 +560,7 @@ WITH flows AS (
            n.parts AS parts,
            n.not_known_index AS not_known_index,
            n.part_width AS part_width
-    FROM classified_flow AS f
+    FROM plugin_pf.classified_flow AS f
     LEFT JOIN plugin_installation.client AS c ON c.id = f.local_client_id
     LEFT JOIN geo_asn AS g ON g.address = f.peer_address
     LEFT JOIN LATERAL flow_measure(f.id, NULL, NULL, f.action, CAST(:measure AS TEXT)) AS n ON true

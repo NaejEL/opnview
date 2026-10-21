@@ -28,7 +28,7 @@ SELECT f.observed_at - f.observed_at % :width AS bucket_start,
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections
-FROM classified_flow AS f
+FROM plugin_pf.classified_flow AS f
 JOIN plugin_installation.client AS c ON c.id = f.local_client_id
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
@@ -54,7 +54,7 @@ SELECT f.observed_at - f.observed_at % :width AS bucket_start,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
        CAST(:measure AS TEXT) AS measure,
        measure_parts_total(n.parts, n.not_known_index, n.part_width) AS measure_parts
-FROM classified_flow AS f
+FROM plugin_pf.classified_flow AS f
 JOIN plugin_installation.client AS c ON c.id = f.local_client_id
 LEFT JOIN LATERAL flow_measure(f.id, NULL, NULL, f.action, CAST(:measure AS TEXT)) AS n ON true
 WHERE f.observed_at >= :from

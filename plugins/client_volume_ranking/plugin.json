@@ -1,7 +1,7 @@
 {
   "api_version": 3,
   "name": "client_volume_ranking",
-  "requires": ["installation"],
+  "requires": ["installation", "pf"],
   "version": "1.0.0",
   "display_name": "Client volume ranking",
   "description": "Clients ranked by logged volume, connections or distinct destinations, with their host name, MAC, last address and interface; a randomised MAC is badged unstable identity.",

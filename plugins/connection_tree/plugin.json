@@ -1,7 +1,7 @@
 {
   "api_version": 3,
   "name": "connection_tree",
-  "requires": ["installation"],
+  "requires": ["installation", "pf"],
   "version": "1.0.0",
   "display_name": "Connection tree",
   "description": "Where a chosen interface, client or person goes: the inside side from the chosen root to the client, the outside side from the operator or the destination's condition to the site name or, where none was inferred, the address, then the service port and protocol, each level summing to its parent.",

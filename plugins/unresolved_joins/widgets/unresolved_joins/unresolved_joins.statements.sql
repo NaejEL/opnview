@@ -17,7 +17,7 @@ SELECT coalesce(sum(CASE WHEN f.interface_lookup_state <> 'resolved' THEN 1 ELSE
        coalesce(sum(CASE WHEN f.rid IS NOT NULL AND f.rule_lookup_state <> 'resolved'
                          THEN 1 ELSE 0 END), 0) AS rule_misses,
        count(*) AS flows
-FROM flow AS f
+FROM plugin_pf.flow AS f
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND (CAST(:interface_ids AS jsonb) IS NULL
@@ -33,7 +33,7 @@ SELECT f.id AS id,
        f.interface_lookup_state AS interface_lookup_state,
        f.rid AS rid,
        f.rule_lookup_state AS rule_lookup_state
-FROM flow AS f
+FROM plugin_pf.flow AS f
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND ((:counter = 'interface' AND f.interface_lookup_state <> 'resolved')
@@ -51,7 +51,7 @@ SELECT DISTINCT f.local_client_id AS client_id,
        c.identity_kind AS identity_kind,
        c.last_address AS last_address,
        c.interface_id AS interface_id
-FROM classified_flow AS f
+FROM plugin_pf.classified_flow AS f
 JOIN plugin_installation.client AS c ON c.id = f.local_client_id
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
@@ -64,7 +64,7 @@ ORDER BY f.local_client_id;
 -- statement: widget_window_peers
 SELECT DISTINCT f.peer_address AS peer_address,
        CASE WHEN g.address IS NULL THEN 'no_row' ELSE g.lookup_state END AS lookup_state
-FROM classified_flow AS f
+FROM plugin_pf.classified_flow AS f
 LEFT JOIN geo_asn AS g ON g.address = f.peer_address
 WHERE f.observed_at >= :from
   AND f.observed_at < :to

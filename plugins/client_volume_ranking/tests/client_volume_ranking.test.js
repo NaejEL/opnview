@@ -28,7 +28,7 @@ function seed(t) {
     "(11, 'mac', '02:11:22:33:44:66', 1, '02:11:22:33:44:66', '192.0.2.11', :at, :at), " +
     "(12, 'mac', '00:11:22:33:44:77', 1, '00:11:22:33:44:77', '192.0.2.12', :at, :at)", { at: at });
   var flow = function (id, client, address, destination, action, bytes) {
-    t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+    t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
       "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, protocol, " +
       "ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope) VALUES " +
       "(:id, :digest, :at, :at, 'vlan0.10', 'resolved', 1, :client, :src, :dst, 'tcp', 4, " +

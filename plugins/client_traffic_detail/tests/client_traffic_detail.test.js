@@ -32,7 +32,7 @@ function seed(t) {
     "looked_up_at, ingested_at) VALUES (1, 'k1', '192.0.2.10', 'example.org', 'unbound', 'pass', :at, :at)",
     { at: at });
   var flow = function (id, action, port, bytes) {
-    t.sql("INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device, " +
+    t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
       "interface_lookup_state, src_interface_id, src_client_id, src_address, dst_address, dst_port, " +
       "protocol, ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope) VALUES " +
       "(:id, :digest, :at, :at, 'vlan0.10', 'resolved', 1, 10, '192.0.2.10', '203.0.113.7', :port, " +
