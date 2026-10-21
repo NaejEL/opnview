@@ -41,6 +41,7 @@ const (
 	TypeIP      = "ip"
 	TypeMAC     = "mac"
 	TypeInstant = "instant"
+	TypeJSON    = "json"
 )
 
 // readType is the type a query reads a column as: an instant as an integer, a boolean, an address
@@ -51,7 +52,7 @@ func readType(columnType string) string {
 		return columnType
 	case TypeInstant:
 		return TypeInteger
-	case TypeBoolean, TypeIP, TypeMAC:
+	case TypeBoolean, TypeIP, TypeMAC, TypeJSON:
 		return TypeText
 	}
 	return ""

@@ -103,7 +103,7 @@ func TestEveryPushRefusalHasItsCode(t *testing.T) {
 		{contract.RefusalPushPatternInvalid, func(m map[string]any) { entry(m)["pattern"] = `(?P<word>a(b` }, ""},
 		{contract.RefusalPushPatternInvalid, func(m map[string]any) { entry(m)["pattern"] = `(?P<not_a_column>\w+)` }, ""},
 		{contract.RefusalTableInvalid, func(m map[string]any) {
-			m["tables"].([]any)[0].(map[string]any)["columns"].([]any)[1].(map[string]any)["type"] = "json"
+			m["tables"].([]any)[0].(map[string]any)["columns"].([]any)[1].(map[string]any)["type"] = "blob"
 		}, ""},
 		{contract.RefusalPushTableWithoutInstant, func(m map[string]any) {
 			table := m["tables"].([]any)[0].(map[string]any)

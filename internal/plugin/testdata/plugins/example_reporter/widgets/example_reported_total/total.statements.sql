@@ -5,7 +5,7 @@ SELECT coalesce(sum(bytes), 0) AS bytes, coalesce(sum(allowed_bytes), 0) AS allo
        coalesce(sum(allowed_connections), 0) AS allowed_connections,
        coalesce(sum(blocked_connections), 0) AS blocked_connections,
        coalesce(sum(unknown_connections), 0) AS unknown_connections
-FROM volume_aggregate_1h
+FROM plugin_rollups.volume_aggregate_1h
 WHERE period_start_at >= :from
   AND period_start_at < :to
   AND exit_leg_device IS NULL
@@ -24,7 +24,7 @@ SELECT coalesce(measure_total_bytes(measure_parts_sum(measure_parts), CAST(:meas
        coalesce(sum(unknown_connections), 0) AS unknown_connections,
        CAST(:measure AS TEXT) AS measure,
        measure_parts_sum(measure_parts) -> CAST(:measure AS TEXT) AS measure_parts
-FROM volume_aggregate_1h
+FROM plugin_rollups.volume_aggregate_1h
 WHERE period_start_at >= :from
   AND period_start_at < :to
   AND exit_leg_device IS NULL

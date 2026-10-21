@@ -202,7 +202,7 @@ table of the same name; a query names it `plugin_<plugin>.<table>`.
 | Key | What it is |
 |---|---|
 | `name` | The table's name: a lower-case snake_case word. |
-| `columns` | Each `name`, `type` (a word of the type vocabulary: `integer`, `real`, `text`, `boolean`, `ip`, `mac` or `instant`; see *Push sources*, *The type vocabulary*), and optionally `nullable`, `carries_domain` (the column holds a domain name, withheld under `aggregate_mode` = `no_domains`), `role` (`time`, `dimension` or `measure`; a dimension by default, time for the retention column), `unit` (a measure's lower-case word, such as `byte`) and `aggregations` (what the data catalogue admits on it; the role's defaults otherwise). |
+| `columns` | Each `name`, `type` (a word of the type vocabulary: `integer`, `real`, `text`, `boolean`, `ip`, `mac`, `instant` or `json`; see *Push sources*, *The type vocabulary*), and optionally `nullable`, `carries_domain` (the column holds a domain name, withheld under `aggregate_mode` = `no_domains`), `role` (`time`, `dimension` or `measure`; a dimension by default, time for the retention column), `unit` (a measure's lower-case word, such as `byte`) and `aggregations` (what the data catalogue admits on it; the role's defaults otherwise). |
 | `primary_key`, `indexes` | The keys. A row written again with the same key replaces the first: the primary key when the rows carry it, else the table's first unique index, as for a table numbered by an identity column and written by a pass. |
 | `retention` | The column holding each row's instant -- an `instant`, or an `integer` of UTC epoch seconds -- and how long a row is kept after it; `seconds` 0 follows the installation's retention; `setting` names one of the plugin's integer settings which, when the operator set it above zero, is how long a row is kept instead. A push output table's is an `instant`. |
 | `nature` | `event` or `sample`: what a bucket of the data catalogue with no row means -- a true zero, or a gap. `sample` by default, which never draws a zero it did not read. |
@@ -818,7 +818,7 @@ A widget's statement files hold named statements, each beginning with a marker l
   it runs. PostgreSQL types each parameter from the place it stands in, as it types a literal; where
   the place does not type it -- `:x IS NULL`, `:a - :b`, a bare `SELECT :x` -- cast it:
   `CAST(:interfaces AS jsonb) IS NULL`.
-- **`@period@` makes a template.** `volume_aggregate_@period@` reads the aggregates of the period
+- **`@period@` makes a template.** `plugin_rollups.volume_aggregate_@period@` reads the aggregates of the period
   the script names when it runs it: `1h`, `24h`, `7d` or `30d`.
 - **Every column has a name of its own.** The script reads a row as an object of its columns, so a
   result naming one column twice is refused at run time; give each one with `AS`.
@@ -1090,8 +1090,9 @@ A column's `type` is a word of a closed list, for every plugin table, push or no
 | `ip` | `inet` | an IPv4 or IPv6 address |
 | `mac` | `macaddr` | a 48-bit MAC address |
 | `instant` | `timestamptz` | an instant, at the precision the source has |
+| `json` | `jsonb` | a document: text that is JSON, or any value, encoded (ADR 0020 wave 5: the declared measures' parts of a rollup row) |
 
-There is no JSON type. A push output table's time column is an `instant` (`push_table_without_instant`
+ A push output table's time column is an `instant` (`push_table_without_instant`
 otherwise), named `*_at`, and the table is a hypertable chunked by day on it; the JSON API still serves
 every instant as UTC epoch seconds. A column with no `role` takes the one its type implies -- an
 `instant` is time, a number a measure, anything else a dimension -- and the dataset's `nature` is
@@ -1269,7 +1270,7 @@ passes its own tests, and a test of the repository does exactly that for every d
 | `internal/plugin/testdata/plugins/example_reporter` | The third-party proof of PA20: a `datagram` push entry decoded by its script, a derivation run after each batch and on a cadence that reads `leg`, `this_firewall_address` and `interface`, a measure with a covered and an uncovered state and a marker, a settings page, and a widget declaring `volumes` whose statement declares its `_measured` twin. |
 | `internal/plugin/testdata/example_decoded` | `datagram` and `line` entries decoded by a JavaScript `decode` function. |
 | `internal/collect/testdata/example_derived` | A derivation writing tables and counters after passes, batches and a cadence. |
-| `plugins/<name>/` | Every built-in, written exactly as a third party writes one: `kea` and `dnsmasq` for leases, `unbound` for lookups and a syslog entry into a table of its own, `pf` for a syslog `kind` entry replacing polling (`replaces`), `netflow` for a measure, its derivation and a polled kind that also receives records, `pf_states` for durable state. |
+| `plugins/<name>/` | Every built-in, written exactly as a third party writes one: `kea` and `dnsmasq` for leases, `unbound` for lookups and a syslog entry into a table of its own, `pf` for a syslog `kind` entry replacing polling (`replaces`), `netflow` for a measure, its derivation and a polled kind that also receives records, `pf_states` for durable state, `rollups` for the volume rollups' tables (ADR 0020 wave 5). |
 
 ## The interpreter and what it brings
 

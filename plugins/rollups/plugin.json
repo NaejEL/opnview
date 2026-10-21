@@ -1,0 +1,3806 @@
+{
+  "api_version": 3,
+  "name": "rollups",
+  "version": "1.0.0",
+  "display_name": "Volume rollups",
+  "description": "The volume rollups the widgets read -- six families (interface pair and peer, owner, client, peer address, site name, rule), four periods each -- the purged part of each hour, and the daily per-address-pair volumes. The tables are this plugin's (ADR 0020 wave 5); the refresh that computes them is still the collector's, reaching them through the bridge until the widgets move, as ADR 0020's progress records.",
+  "requires": [
+    "installation"
+  ],
+  "tables": [
+    {
+      "name": "volume_aggregate_1h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "src_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "dst_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "peer_address",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "traffic_scope",
+          "type": "text"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "exit_leg_device",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(src_interface_id, -1)",
+            "coalesce(dst_interface_id, -1)",
+            "coalesce(peer_address, '')",
+            "traffic_direction",
+            "coalesce(exit_leg_device, '')"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_scope_known",
+          "expression": "traffic_scope IN ('east_west', 'north_south', 'this_firewall')"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface', 'to_this_firewall', 'from_this_firewall')"
+        },
+        {
+          "name": "scope_of_direction",
+          "expression": "traffic_scope = CASE WHEN traffic_direction IN ('to_this_firewall', 'from_this_firewall') THEN 'this_firewall' WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN 'east_west' ELSE 'north_south' END"
+        },
+        {
+          "name": "inter_interface_has_both_ends",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR ((traffic_direction = 'inter_interface') = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))"
+        },
+        {
+          "name": "outbound_leaves_an_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'"
+        },
+        {
+          "name": "inbound_reaches_an_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'"
+        },
+        {
+          "name": "peer_unless_inter_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))"
+        }
+      ]
+    },
+    {
+      "name": "volume_aggregate_24h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "src_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "dst_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "peer_address",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "traffic_scope",
+          "type": "text"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "exit_leg_device",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(src_interface_id, -1)",
+            "coalesce(dst_interface_id, -1)",
+            "coalesce(peer_address, '')",
+            "traffic_direction",
+            "coalesce(exit_leg_device, '')"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_scope_known",
+          "expression": "traffic_scope IN ('east_west', 'north_south', 'this_firewall')"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface', 'to_this_firewall', 'from_this_firewall')"
+        },
+        {
+          "name": "scope_of_direction",
+          "expression": "traffic_scope = CASE WHEN traffic_direction IN ('to_this_firewall', 'from_this_firewall') THEN 'this_firewall' WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN 'east_west' ELSE 'north_south' END"
+        },
+        {
+          "name": "inter_interface_has_both_ends",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR ((traffic_direction = 'inter_interface') = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))"
+        },
+        {
+          "name": "outbound_leaves_an_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'"
+        },
+        {
+          "name": "inbound_reaches_an_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'"
+        },
+        {
+          "name": "peer_unless_inter_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))"
+        }
+      ]
+    },
+    {
+      "name": "volume_aggregate_7d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "src_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "dst_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "peer_address",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "traffic_scope",
+          "type": "text"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "exit_leg_device",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(src_interface_id, -1)",
+            "coalesce(dst_interface_id, -1)",
+            "coalesce(peer_address, '')",
+            "traffic_direction",
+            "coalesce(exit_leg_device, '')"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_scope_known",
+          "expression": "traffic_scope IN ('east_west', 'north_south', 'this_firewall')"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface', 'to_this_firewall', 'from_this_firewall')"
+        },
+        {
+          "name": "scope_of_direction",
+          "expression": "traffic_scope = CASE WHEN traffic_direction IN ('to_this_firewall', 'from_this_firewall') THEN 'this_firewall' WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN 'east_west' ELSE 'north_south' END"
+        },
+        {
+          "name": "inter_interface_has_both_ends",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR ((traffic_direction = 'inter_interface') = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))"
+        },
+        {
+          "name": "outbound_leaves_an_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'"
+        },
+        {
+          "name": "inbound_reaches_an_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'"
+        },
+        {
+          "name": "peer_unless_inter_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))"
+        }
+      ]
+    },
+    {
+      "name": "volume_aggregate_30d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "src_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "dst_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "peer_address",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "traffic_scope",
+          "type": "text"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "exit_leg_device",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(src_interface_id, -1)",
+            "coalesce(dst_interface_id, -1)",
+            "coalesce(peer_address, '')",
+            "traffic_direction",
+            "coalesce(exit_leg_device, '')"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_scope_known",
+          "expression": "traffic_scope IN ('east_west', 'north_south', 'this_firewall')"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface', 'to_this_firewall', 'from_this_firewall')"
+        },
+        {
+          "name": "scope_of_direction",
+          "expression": "traffic_scope = CASE WHEN traffic_direction IN ('to_this_firewall', 'from_this_firewall') THEN 'this_firewall' WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN 'east_west' ELSE 'north_south' END"
+        },
+        {
+          "name": "inter_interface_has_both_ends",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR ((traffic_direction = 'inter_interface') = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))"
+        },
+        {
+          "name": "outbound_leaves_an_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'"
+        },
+        {
+          "name": "inbound_reaches_an_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'"
+        },
+        {
+          "name": "peer_unless_inter_interface",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))"
+        }
+      ]
+    },
+    {
+      "name": "owner_volume_aggregate_1h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "owner_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "traffic_scope",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "client_count",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(owner_id, -1)",
+            "traffic_scope"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "owner_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_scope_known",
+          "expression": "traffic_scope IN ('east_west', 'north_south')"
+        },
+        {
+          "name": "client_count_not_negative",
+          "expression": "client_count >= 0"
+        }
+      ]
+    },
+    {
+      "name": "owner_volume_aggregate_24h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "owner_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "traffic_scope",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "client_count",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(owner_id, -1)",
+            "traffic_scope"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "owner_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_scope_known",
+          "expression": "traffic_scope IN ('east_west', 'north_south')"
+        },
+        {
+          "name": "client_count_not_negative",
+          "expression": "client_count >= 0"
+        }
+      ]
+    },
+    {
+      "name": "owner_volume_aggregate_7d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "owner_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "traffic_scope",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "client_count",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(owner_id, -1)",
+            "traffic_scope"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "owner_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_scope_known",
+          "expression": "traffic_scope IN ('east_west', 'north_south')"
+        },
+        {
+          "name": "client_count_not_negative",
+          "expression": "client_count >= 0"
+        }
+      ]
+    },
+    {
+      "name": "owner_volume_aggregate_30d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "owner_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "traffic_scope",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "client_count",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(owner_id, -1)",
+            "traffic_scope"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "owner_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_scope_known",
+          "expression": "traffic_scope IN ('east_west', 'north_south')"
+        },
+        {
+          "name": "client_count_not_negative",
+          "expression": "client_count >= 0"
+        }
+      ]
+    },
+    {
+      "name": "client_volume_aggregate_1h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "client_id",
+          "type": "integer"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "distinct_peers",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "client_id",
+            "traffic_direction"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "client_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface')"
+        },
+        {
+          "name": "distinct_peers_not_negative",
+          "expression": "distinct_peers >= 0"
+        }
+      ]
+    },
+    {
+      "name": "client_volume_aggregate_24h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "client_id",
+          "type": "integer"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "distinct_peers",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "client_id",
+            "traffic_direction"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "client_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface')"
+        },
+        {
+          "name": "distinct_peers_not_negative",
+          "expression": "distinct_peers >= 0"
+        }
+      ]
+    },
+    {
+      "name": "client_volume_aggregate_7d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "client_id",
+          "type": "integer"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "distinct_peers",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "client_id",
+            "traffic_direction"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "client_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface')"
+        },
+        {
+          "name": "distinct_peers_not_negative",
+          "expression": "distinct_peers >= 0"
+        }
+      ]
+    },
+    {
+      "name": "client_volume_aggregate_30d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "client_id",
+          "type": "integer"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "distinct_peers",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "client_id",
+            "traffic_direction"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "client_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface')"
+        },
+        {
+          "name": "distinct_peers_not_negative",
+          "expression": "distinct_peers >= 0"
+        }
+      ]
+    },
+    {
+      "name": "peer_volume_aggregate_1h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "client_id",
+          "type": "integer"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "peer_address",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "client_id",
+            "traffic_direction",
+            "peer_address"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "client_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface')"
+        },
+        {
+          "name": "peer_address_not_empty",
+          "expression": "length(peer_address) > 0"
+        }
+      ]
+    },
+    {
+      "name": "peer_volume_aggregate_24h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "client_id",
+          "type": "integer"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "peer_address",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "client_id",
+            "traffic_direction",
+            "peer_address"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "client_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface')"
+        },
+        {
+          "name": "peer_address_not_empty",
+          "expression": "length(peer_address) > 0"
+        }
+      ]
+    },
+    {
+      "name": "peer_volume_aggregate_7d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "client_id",
+          "type": "integer"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "peer_address",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "client_id",
+            "traffic_direction",
+            "peer_address"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "client_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface')"
+        },
+        {
+          "name": "peer_address_not_empty",
+          "expression": "length(peer_address) > 0"
+        }
+      ]
+    },
+    {
+      "name": "peer_volume_aggregate_30d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "client_id",
+          "type": "integer"
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "peer_address",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "client_id",
+            "traffic_direction",
+            "peer_address"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "client_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface')"
+        },
+        {
+          "name": "peer_address_not_empty",
+          "expression": "length(peer_address) > 0"
+        }
+      ]
+    },
+    {
+      "name": "domain_volume_aggregate_1h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "site_name",
+          "type": "text",
+          "carries_domain": true
+        },
+        {
+          "name": "client_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "site_name",
+            "coalesce(client_id, -1)"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "site_name_not_empty",
+          "expression": "length(site_name) > 0"
+        }
+      ]
+    },
+    {
+      "name": "domain_volume_aggregate_24h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "site_name",
+          "type": "text",
+          "carries_domain": true
+        },
+        {
+          "name": "client_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "site_name",
+            "coalesce(client_id, -1)"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "site_name_not_empty",
+          "expression": "length(site_name) > 0"
+        }
+      ]
+    },
+    {
+      "name": "domain_volume_aggregate_7d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "site_name",
+          "type": "text",
+          "carries_domain": true
+        },
+        {
+          "name": "client_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "site_name",
+            "coalesce(client_id, -1)"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "site_name_not_empty",
+          "expression": "length(site_name) > 0"
+        }
+      ]
+    },
+    {
+      "name": "domain_volume_aggregate_30d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "site_name",
+          "type": "text",
+          "carries_domain": true
+        },
+        {
+          "name": "client_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "site_name",
+            "coalesce(client_id, -1)"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        },
+        {
+          "name": "site_name_not_empty",
+          "expression": "length(site_name) > 0"
+        }
+      ]
+    },
+    {
+      "name": "rule_volume_aggregate_1h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "rule_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "src_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "dst_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(rule_id, -1)",
+            "coalesce(src_interface_id, -1)",
+            "coalesce(dst_interface_id, -1)"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "rule_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        }
+      ]
+    },
+    {
+      "name": "rule_volume_aggregate_24h",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "rule_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "src_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "dst_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(rule_id, -1)",
+            "coalesce(src_interface_id, -1)",
+            "coalesce(dst_interface_id, -1)"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "rule_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        }
+      ]
+    },
+    {
+      "name": "rule_volume_aggregate_7d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "rule_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "src_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "dst_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(rule_id, -1)",
+            "coalesce(src_interface_id, -1)",
+            "coalesce(dst_interface_id, -1)"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "rule_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        }
+      ]
+    },
+    {
+      "name": "rule_volume_aggregate_30d",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "period_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "period_end_at",
+          "type": "integer"
+        },
+        {
+          "name": "rule_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "src_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "dst_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "allowed_connections",
+          "type": "integer"
+        },
+        {
+          "name": "blocked_connections",
+          "type": "integer"
+        },
+        {
+          "name": "unknown_connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "computed_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "period_start_at",
+            "coalesce(rule_id, -1)",
+            "coalesce(src_interface_id, -1)",
+            "coalesce(dst_interface_id, -1)"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "rule_id",
+            "period_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "period_start_at_instant",
+          "expression": "period_start_at >= 0 AND period_start_at < 4102444800"
+        },
+        {
+          "name": "period_end_at_instant",
+          "expression": "period_end_at >= 0 AND period_end_at < 4102444800"
+        },
+        {
+          "name": "period_ordered",
+          "expression": "period_end_at > period_start_at"
+        },
+        {
+          "name": "computed_at_instant",
+          "expression": "computed_at >= 0 AND computed_at < 4102444800"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "allowed_bytes_not_negative",
+          "expression": "allowed_bytes >= 0"
+        },
+        {
+          "name": "blocked_bytes_not_negative",
+          "expression": "blocked_bytes >= 0"
+        },
+        {
+          "name": "unknown_bytes_not_negative",
+          "expression": "unknown_bytes >= 0"
+        },
+        {
+          "name": "allowed_connections_not_negative",
+          "expression": "allowed_connections >= 0"
+        },
+        {
+          "name": "blocked_connections_not_negative",
+          "expression": "blocked_connections >= 0"
+        },
+        {
+          "name": "unknown_connections_not_negative",
+          "expression": "unknown_connections >= 0"
+        },
+        {
+          "name": "bytes_sum",
+          "expression": "bytes = allowed_bytes + blocked_bytes + unknown_bytes"
+        }
+      ]
+    },
+    {
+      "name": "purged_flow_hour",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "hour_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "src_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "dst_interface_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "src_client_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "local_client_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "traffic_direction",
+          "type": "text"
+        },
+        {
+          "name": "peer_address",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "exit_leg_device",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "rule_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "site_name",
+          "type": "text",
+          "nullable": true,
+          "carries_domain": true
+        },
+        {
+          "name": "action",
+          "type": "text"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "connections",
+          "type": "integer"
+        },
+        {
+          "name": "measure_parts",
+          "type": "json",
+          "default": "'{}'::jsonb"
+        },
+        {
+          "name": "purged_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "hour_start_at"
+          ]
+        },
+        {
+          "columns": [
+            "purged_at",
+            "hour_start_at"
+          ]
+        },
+        {
+          "columns": [
+            "src_client_id"
+          ]
+        },
+        {
+          "columns": [
+            "local_client_id"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "hour_start_at_instant",
+          "expression": "hour_start_at >= 0 AND hour_start_at < 4102444800 AND hour_start_at % 3600 = 0"
+        },
+        {
+          "name": "traffic_direction_known",
+          "expression": "traffic_direction IN ('outbound', 'inbound', 'inter_interface', 'to_this_firewall', 'from_this_firewall')"
+        },
+        {
+          "name": "site_name_not_empty",
+          "expression": "site_name IS NULL OR length(site_name) > 0"
+        },
+        {
+          "name": "action_known",
+          "expression": "action IN ('pass', 'block', 'reject', 'unknown')"
+        },
+        {
+          "name": "bytes_not_negative",
+          "expression": "bytes >= 0"
+        },
+        {
+          "name": "connections_positive",
+          "expression": "connections > 0"
+        },
+        {
+          "name": "purged_at_instant",
+          "expression": "purged_at >= 0 AND purged_at < 4102444800"
+        },
+        {
+          "name": "inter_interface_has_both_ends",
+          "expression": "traffic_direction IN ('to_this_firewall', 'from_this_firewall') OR ((traffic_direction = 'inter_interface') = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))"
+        },
+        {
+          "name": "peer_unless_this_firewall",
+          "expression": "peer_address IS NOT NULL OR traffic_direction IN ('to_this_firewall', 'from_this_firewall')"
+        }
+      ],
+      "writable_by": [
+        {
+          "plugin": "clients",
+          "columns": [
+            "local_client_id",
+            "src_client_id"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pair_volume_observation",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "day_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "endpoint_low",
+          "type": "text"
+        },
+        {
+          "name": "endpoint_high",
+          "type": "text"
+        },
+        {
+          "name": "service_port",
+          "type": "integer"
+        },
+        {
+          "name": "protocol",
+          "type": "text"
+        },
+        {
+          "name": "octets",
+          "type": "real"
+        },
+        {
+          "name": "packets",
+          "type": "real"
+        },
+        {
+          "name": "observed_direction",
+          "type": "text"
+        },
+        {
+          "name": "observed_interface_device",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "last_seen_at",
+          "type": "integer"
+        },
+        {
+          "name": "ingested_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "day_start_at",
+            "endpoint_low",
+            "endpoint_high",
+            "service_port",
+            "protocol"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "day_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "day_start_at_instant",
+          "expression": "day_start_at >= 0 AND day_start_at < 4102444800"
+        },
+        {
+          "name": "service_port_range",
+          "expression": "service_port >= 0 AND service_port <= 65535"
+        },
+        {
+          "name": "octets_not_negative",
+          "expression": "octets >= 0"
+        },
+        {
+          "name": "packets_not_negative",
+          "expression": "packets >= 0"
+        },
+        {
+          "name": "observed_direction_known",
+          "expression": "observed_direction IN ('in', 'out', 'unknown')"
+        },
+        {
+          "name": "last_seen_at_instant",
+          "expression": "last_seen_at >= 0 AND last_seen_at < 4102444800"
+        },
+        {
+          "name": "ingested_at_instant",
+          "expression": "ingested_at >= 0 AND ingested_at < 4102444800"
+        },
+        {
+          "name": "endpoints_ordered",
+          "expression": "endpoint_low <= endpoint_high"
+        }
+      ]
+    }
+  ]
+}

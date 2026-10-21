@@ -1,6 +1,7 @@
 package push
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -22,6 +23,8 @@ const (
 	TypeIP      = "ip"
 	TypeMAC     = "mac"
 	TypeInstant = "instant"
+	// TypeJSON is a document (ADR 0020 wave 5): the declared measures' parts a rollup row carries.
+	TypeJSON = "json"
 )
 
 // ErrValueInvalid is a value that does not convert to its column's type: counted as
@@ -57,12 +60,29 @@ func Convert(columnType string, value any) (any, error) {
 		return toMAC(value)
 	case TypeInstant:
 		return toInstant(value)
+	case TypeJSON:
+		return toJSON(value)
 	}
 	return nil, fmt.Errorf("push: %q is not a type of the vocabulary", columnType)
 }
 
 func invalid(value any, columnType string) error {
 	return fmt.Errorf("%w: %T is not a(n) %s", ErrValueInvalid, value, columnType)
+}
+
+// toJSON is a document: text that is JSON as it is, any other value encoded.
+func toJSON(value any) (any, error) {
+	if typed, ok := value.(string); ok {
+		if !json.Valid([]byte(typed)) {
+			return nil, invalid(value, TypeJSON)
+		}
+		return typed, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, invalid(value, TypeJSON)
+	}
+	return string(encoded), nil
 }
 
 func toInteger(value any) (any, error) {

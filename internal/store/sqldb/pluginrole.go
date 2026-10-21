@@ -41,11 +41,9 @@ type TransitionGrant struct {
 }
 
 // TransitionGrants are the transition writes in force (ADR 0020, the progress table names each wave).
-var TransitionGrants = []TransitionGrant{
-	// The purged part follows its flows when an identity replaces an address-level client, until wave 5
-	// moves purged_flow_hour with the rollups.
-	{Plugin: "clients", Table: "purged_flow_hour", Columns: []string{"local_client_id", "src_client_id"}},
-}
+// None remains: wave 5 moved the last one, the purged part's client columns, into the rollups
+// manifest as a writable_by grant.
+var TransitionGrants = []TransitionGrant{}
 
 // EnsurePluginRole creates a plugin's role when it is absent and gives it exactly what it may do in its
 // schema; applied at every start, like the schema itself.

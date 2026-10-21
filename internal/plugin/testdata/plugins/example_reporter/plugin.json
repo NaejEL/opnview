@@ -3,6 +3,7 @@
   "name": "example_reporter",
   "version": "0.1.0",
   "display_name": "Example reporter",
+  "requires": ["rollups"],
   "description": "A third party's plugin, written as files alone: a device sends datagrams reporting the bytes of connections it saw, the plugin decodes them in its script into its own table, and a derivation joins them to the logged connections and counts them as a measure of its own, served by every widget declaring volumes and by the widget it carries. Like every figure opnview draws, the measure is a lower bound: traffic between two clients behind one interface is in none of its figures.",
   "script": "example_reporter.js",
   "datasets": ["leg", "this_firewall_address", "interface"],

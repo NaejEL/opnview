@@ -560,7 +560,7 @@ WHERE dns_resolution.id = n.id
 -- The purged part follows its flows: when the strongest identity at an address replaces the
 -- address-level client its flows named, the purged part naming that client is re-pointed too.
 -- statement: repoint_purged_local
-UPDATE opnview.purged_flow_hour AS purged
+UPDATE plugin_rollups.purged_flow_hour AS purged
 SET local_client_id = p.identity_client_id
 FROM plugin_clients.placement AS p
 WHERE p.placed_in_full
@@ -570,7 +570,7 @@ WHERE p.placed_in_full
 
 
 -- statement: repoint_purged_source
-UPDATE opnview.purged_flow_hour AS purged
+UPDATE plugin_rollups.purged_flow_hour AS purged
 SET src_client_id = p.identity_client_id
 FROM plugin_clients.placement AS p
 WHERE p.placed_in_full
@@ -605,8 +605,8 @@ WHERE client.last_address IN (SELECT p.address FROM plugin_clients.placement AS 
   AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_unbound.dns_resolution AS r WHERE r.client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.src_client_id = client.id);
+  AND NOT EXISTS (SELECT 1 FROM plugin_rollups.purged_flow_hour AS h WHERE h.local_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_rollups.purged_flow_hour AS h WHERE h.src_client_id = client.id);
 
 
 -- And everywhere, once every address was placed again because the on-link evidence changed.
@@ -622,8 +622,8 @@ WHERE (SELECT changed FROM plugin_clients.onlink)
   AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_unbound.dns_resolution AS r WHERE r.client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.src_client_id = client.id);
+  AND NOT EXISTS (SELECT 1 FROM plugin_rollups.purged_flow_hour AS h WHERE h.local_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_rollups.purged_flow_hour AS h WHERE h.src_client_id = client.id);
 
 
 -- The clients an earlier build minted at this firewall's own addresses from the neighbour tables: one
@@ -642,8 +642,8 @@ WHERE client.owner_id IS NULL
   AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_unbound.dns_resolution AS r WHERE r.client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.src_client_id = client.id);
+  AND NOT EXISTS (SELECT 1 FROM plugin_rollups.purged_flow_hour AS h WHERE h.local_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_rollups.purged_flow_hour AS h WHERE h.src_client_id = client.id);
 
 
 -- TWO LEGS OF ONE CONNECTION. pf logs the packet that creates a state on every interface a rule with

@@ -13,7 +13,7 @@ SELECT count(*) AS slots,
        max(period_end_at) AS latest_period_end_at,
        max(computed_at) AS last_computed_at,
        sum(bytes) AS bytes
-FROM volume_aggregate_@period@
+FROM plugin_rollups.volume_aggregate_@period@
 WHERE period_start_at >= :from
   AND period_start_at < :to;
 
@@ -25,7 +25,7 @@ WHERE period_start_at >= :from
 -- statement: widget_period_stale_slots
 SELECT count(*) AS stale_slots
 FROM (SELECT period_start_at, period_end_at, max(computed_at) AS computed
-      FROM volume_aggregate_@period@
+      FROM plugin_rollups.volume_aggregate_@period@
       WHERE period_start_at >= :from
         AND period_start_at < :to
       GROUP BY period_start_at, period_end_at) AS computed_slot

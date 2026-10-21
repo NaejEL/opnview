@@ -44,10 +44,10 @@ import (
 // PS4 of the push amendment, words of a closed list and never SQL type strings -- as PostgreSQL
 // stores them. There is no JSON type: every captured property is its own column.
 var PluginColumnTypes = map[string]string{"integer": "BIGINT", "real": "DOUBLE PRECISION", "text": "TEXT",
-	"boolean": "BOOLEAN", "ip": "INET", "mac": "MACADDR", "instant": "TIMESTAMPTZ"}
+	"boolean": "BOOLEAN", "ip": "INET", "mac": "MACADDR", "instant": "TIMESTAMPTZ", "json": "JSONB"}
 
 // PluginColumnTypeList is the vocabulary in the order docs/plugins.md lists it.
-var PluginColumnTypeList = []string{"integer", "real", "text", "boolean", "ip", "mac", "instant"}
+var PluginColumnTypeList = []string{"integer", "real", "text", "boolean", "ip", "mac", "instant", "json"}
 
 // pluginTypeInstant is the vocabulary's timestamp type, the time column of a push output table.
 const pluginTypeInstant = "instant"
@@ -578,7 +578,7 @@ func (t PluginTable) UpsertStatement() string {
 func (c PluginColumn) placeholder(number int) string {
 	mark := "$" + strconv.Itoa(number)
 	switch c.Type {
-	case "boolean", "ip", "mac", pluginTypeInstant:
+	case "boolean", "ip", "mac", pluginTypeInstant, "json":
 		return "CAST(" + mark + " AS " + PluginColumnTypes[c.Type] + ")"
 	}
 	return mark
@@ -640,6 +640,16 @@ func PluginArgument(column PluginColumn, value any) (any, error) {
 		case string:
 			return typed, nil
 		}
+	case "json":
+		// A document: text that is JSON, or any value, encoded.
+		if typed, ok := value.(string); ok {
+			return typed, nil
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, invalid()
+		}
+		return string(encoded), nil
 	case pluginTypeInstant:
 		switch typed := value.(type) {
 		case time.Time:
