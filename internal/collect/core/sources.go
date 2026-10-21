@@ -91,17 +91,6 @@ func (c *Collector) ResolveKind(ctx context.Context, kind string, probeables []P
 				detail += "; " + ambiguity
 			}
 		}
-		// What the last sampling pass of this provider could not read. The probe tests
-		// whether the source answers and reads none of the readings, so writing its
-		// detail alone would erase the record of every reading that did not answer --
-		// which is how a gateway with no figure went unrecorded on a live firewall.
-		if absent := c.sampleAbsence(entry.providerID); absent != "" {
-			if detail == "" {
-				detail = absent
-			} else {
-				detail += "; " + absent
-			}
-		}
 		// And what the last read of a resolver's records said, for the same reason: the
 		// counts, the size and the time of the dump, or the absence that stopped it.
 		if read := c.readDetail(entry.providerID); read != "" {
@@ -118,8 +107,6 @@ func (c *Collector) ResolveKind(ctx context.Context, kind string, probeables []P
 		if outcome == vocab.OutcomeHealthy {
 			if read := c.readOutcome(entry.providerID); read != "" && read != vocab.OutcomeHealthy {
 				outcome = read
-			} else if c.sampleAbsence(entry.providerID) != "" {
-				outcome = vocab.OutcomePartialReadings
 			}
 		}
 		if state == "" {

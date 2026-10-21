@@ -1,6 +1,6 @@
 {
   "kind" : "measurement_sample",
-  "description" : "A numeric reading of a subject at an instant: the firewall's gauges, sampled rates. Several providers may be active at once. A reading that did not answer is named in `missing`, never written as a zero.",
+  "description" : "A numeric reading of a subject at an instant: the firewall's gauges, sampled rates. Several providers may be active at once. Each stores its readings into its own table (the insight plugin's plugin_insight.measurement_sample, ADR 0020 wave 4). A reading that did not answer is named in the result's detail, never written as a zero. A provider may declare a live pass, run at its live cadence while somebody looks at a live figure, answering rows stamped with that cadence.",
   "concurrent" : true,
   "push" : false,
   "bindable" : true,
@@ -12,7 +12,7 @@
       "basis" : "Survey, data source 3, \"Sustainable polling frequency\": 300 s is the finest resolution at which the firewall keeps per-source data and the retention of that resolution is one hour. The verified section turns that from a cache cadence into a sampling cadence -- /api/diagnostics/traffic/top is a live snapshot and nothing upstream answers for a past window, so this interval is the resolution of opnview's own per-pair history rather than a refresh rate. internal/store/samples reads the same row to bound a current rate."
     }
   ],
-  "live_answer" : "sample_answer",
+  "live_answer" : "collect_answer",
   "functions" : [
     {
       "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
@@ -21,10 +21,10 @@
       "returns" : "probe_answer"
     },
     {
-      "description" : "Called at every sampling pass. discovery holds the interfaces the firewall reported (identifiers, devices); now is the pass's instant.",
-      "name" : "sample",
-      "arguments" : "host, discovery, now",
-      "returns" : "sample_answer"
+      "description" : "Called at every measurement pass: reads the subjects and answers one row per reading for the provider's own table.",
+      "name" : "collect",
+      "arguments" : "host, state, provider",
+      "returns" : "collect_answer"
     }
   ],
   "records" : [
@@ -47,8 +47,8 @@
       ]
     },
     {
-      "description" : "What `sample` returns.",
-      "name" : "sample_answer",
+      "description" : "What `collect` and a live pass return.",
+      "name" : "collect_answer",
       "fields" : [
         {
           "description" : "The `result` record.",
@@ -58,86 +58,29 @@
           "of" : "result"
         },
         {
-          "description" : "The `measurement_reading` records.",
-          "name" : "readings",
-          "type" : "records",
-          "of" : "measurement_reading"
+          "description" : "The rows to store, by table of the provider's own.",
+          "name" : "rows",
+          "type" : "object"
         },
         {
-          "description" : "The readings that did not answer, each named in words for the availability detail.",
-          "name" : "missing",
-          "type" : "text_list"
+          "description" : "The provider's durable state for the next pass.",
+          "name" : "state",
+          "type" : "object"
         },
         {
-          "description" : "Why the pass failed, when it did.",
+          "description" : "The newest instant a live pass sampled, which the live figures are told of.",
+          "name" : "latest",
+          "type" : "integer"
+        },
+        {
+          "description" : "Why the read failed, when it did; the result then says what the firewall answered.",
           "name" : "error",
           "type" : "text"
-        }
-      ]
-    },
-    {
-      "description" : "One reading.",
-      "name" : "measurement_reading",
-      "fields" : [
-        {
-          "description" : "What is measured: a lower-case word with no space (interface, interface_endpoint, gateway, firewall, or the plugin's own).",
-          "name" : "subject_kind",
-          "type" : "text",
-          "required" : true,
-          "term" : true
         },
         {
-          "description" : "Which one, in the provider's own words: an identity the host never composes or parses; may be empty.",
-          "name" : "subject_key",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "The network device the reading was taken on, when the subject is read on one interface (interface_endpoint, interface_endpoint_pair).",
-          "name" : "interface_device",
+          "description" : "Why this implementation's material can never be read, when that is so.",
+          "name" : "unsupported",
           "type" : "text"
-        },
-        {
-          "description" : "The local address the reading is of, when the subject is an address read on one interface.",
-          "name" : "local_address",
-          "type" : "text"
-        },
-        {
-          "description" : "The peer address the local address was read with, when the subject is a pair; the reading's inbound figures are what the peer sent.",
-          "name" : "peer_address",
-          "type" : "text"
-        },
-        {
-          "description" : "What figure: a lower-case word with no space.",
-          "name" : "measure",
-          "type" : "text",
-          "required" : true,
-          "term" : true
-        },
-        {
-          "description" : "Its unit: a lower-case word with no space.",
-          "name" : "unit",
-          "type" : "text",
-          "required" : true,
-          "term" : true
-        },
-        {
-          "description" : "The figure.",
-          "name" : "value",
-          "type" : "number",
-          "required" : true
-        },
-        {
-          "description" : "When it was read.",
-          "name" : "sampled_at",
-          "type" : "integer",
-          "required" : true,
-          "unit" : "UTC epoch seconds"
-        },
-        {
-          "description" : "Whether the reading names this provider; false for the firewall reporting on itself. True when absent.",
-          "name" : "attributed",
-          "type" : "boolean"
         }
       ]
     }

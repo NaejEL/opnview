@@ -83,10 +83,6 @@ type Collector struct {
 	// last derivation that placed every address; the mutex guards both.
 	LastRefreshAt     int64
 	OnLinkFingerprint string
-	// SampleAbsences holds, per measurement provider, what its last sampling pass could
-	// not read, in words, so the probe round's rewrite of the availability row restates
-	// it rather than erasing it. The mutex guards it.
-	SampleAbsences map[int64]string
 	// PairingWindowSeconds is the leg_pairing_window_seconds setting: how far apart
 	// the two records of one connection may have been logged and still be paired. The
 	// mutex guards it.

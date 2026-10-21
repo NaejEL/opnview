@@ -70,59 +70,6 @@ func ActiveProviderID(ctx context.Context, database *store.Store, kind string) (
 	return id, true, nil
 }
 
-// StateItemsAt returns the items of one snapshot of a set, by item key.
-func StateItemsAt(ctx context.Context, database *store.Store, providerID int64, setKey string,
-	capturedAt int64) ([]vocab.StateItem, error) {
-	rows, err := database.DB().QueryContext(ctx,
-		`SELECT i.item_key, i.attributes, i.valid_until_at
-		 FROM state_snapshot AS s
-		 JOIN state_item AS i ON i.snapshot_id = s.id
-		 WHERE s.provider_id = $1 AND s.set_key = $2 AND s.captured_at = $3
-		 ORDER BY i.item_key`,
-		providerID, setKey, capturedAt)
-	if err != nil {
-		return nil, fmt.Errorf("storetest: reading the %s set: %w", setKey, err)
-	}
-	defer func() { _ = rows.Close() }()
-	var items []vocab.StateItem
-	for rows.Next() {
-		var item vocab.StateItem
-		if err := rows.Scan(&item.ItemKey, &item.Attributes, &item.ValidUntilAt); err != nil {
-			return nil, fmt.Errorf("storetest: reading the %s set: %w", setKey, err)
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
-}
-
-// StateDepartures returns what left a set between its two latest snapshots, from the state_item_departure
-// view a screen reads, by item key.
-func StateDepartures(ctx context.Context, database *store.Store, providerID int64, setKey string) (
-	[]vocab.StateDeparture, error) {
-	rows, err := database.DB().QueryContext(ctx,
-		`SELECT provider_id, set_key, item_key, attributes, valid_until_at,
-		        last_present_at, absent_since_at
-		 FROM state_item_departure
-		 WHERE provider_id = $1 AND set_key = $2
-		 ORDER BY item_key`,
-		providerID, setKey)
-	if err != nil {
-		return nil, fmt.Errorf("storetest: reading the departures from the %s set: %w", setKey, err)
-	}
-	defer func() { _ = rows.Close() }()
-	var departures []vocab.StateDeparture
-	for rows.Next() {
-		var departure vocab.StateDeparture
-		if err := rows.Scan(&departure.ProviderID, &departure.SetKey, &departure.ItemKey,
-			&departure.Attributes, &departure.ValidUntilAt,
-			&departure.LastPresentAt, &departure.AbsentSinceAt); err != nil {
-			return nil, fmt.Errorf("storetest: reading the departures from the %s set: %w", setKey, err)
-		}
-		departures = append(departures, departure)
-	}
-	return departures, rows.Err()
-}
-
 // OrphanedPluginTables returns the recorded tables of every plugin not among the loaded ones, with their row
 // counts: what a plugin removed leaves behind, untouched, for the operator to drop.
 func OrphanedPluginTables(ctx context.Context, database *store.Store, loaded []string) ([]plugintables.OrphanedTable,

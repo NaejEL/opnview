@@ -63,7 +63,9 @@ func TestAnEnablePageCitesOPNsense(t *testing.T) {
 	manifest := func(path, label, menu string) string {
 		return `{"api_version": 2, "name": "example_pages", "version": "0.1.0", "display_name": "Example pages",
 			"widgets": ["example"],
-			"providers": [{"kind": "reconciled_state", "display_name": "Example", "cadence_seconds": 600,
+			"tables": [{"name": "things", "columns": [{"name": "seen_at", "type": "instant"}], "retention": {"column": "seen_at"}}],
+			"kinds": [{"kind": "example_pages"}],
+			"providers": [{"kind": "example_pages", "display_name": "Example", "cadence_seconds": 600,
 				"enable_pages": [{"path": "` + path + `", "label": "` + label + `", "menu_url": "` + menu + `"}]}]}`
 	}
 	menu := "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/IDS/Menu/Menu.xml"

@@ -1,8 +1,9 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "firewall_health_overview",
   "version": "1.0.0",
   "display_name": "Firewall health overview",
+  "requires": ["insight"],
   "description": "One tile per reading of the firewall -- uptime, processor, memory, swap, disk, temperature, gateway latency and loss -- per subject discovered, with its recent history and its last-sampled stamp.",
   "widgets": [
     "firewall_health_overview"

@@ -27,11 +27,14 @@ func TestACadenceOverrideIsASettingNeverBelowItsBound(t *testing.T) {
 		"plugin.json": `{"api_version": 2, "name": "example_inventory", "version": "0.1.0",
 			"display_name": "Example inventory", "script": "example_inventory.js",
 			"endpoints": [{"name": "peers", "path": "/api/exampleinventory/peers/get", "method": "GET"}],
-			"providers": [{"kind": "reconciled_state", "display_name": "Example inventory",
+			"tables": [{"name": "peers", "columns": [{"name": "seen_at", "type": "instant"}, {"name": "peer", "type": "text"}],
+				"retention": {"column": "seen_at"}}],
+			"kinds": [{"kind": "example_inventory"}],
+			"providers": [{"kind": "example_inventory", "display_name": "Example inventory",
 				"cadence_seconds": 600, "min_cadence_seconds": 120}]}`,
-		"example_inventory.js": `exports.reconciled_state = {
+		"example_inventory.js": `exports.example_inventory = {
 			probe: function () { return { result: { probe: "peers", state: "unavailable", outcome: "plugin_not_installed" } }; },
-			snapshot: function () { return { result: { probe: "peers", state: "unavailable", outcome: "plugin_not_installed" } }; } };`,
+			collect: function () { return { result: { probe: "peers", state: "unavailable", outcome: "plugin_not_installed" } }; } };`,
 	} {
 		if err := os.WriteFile(filepath.Join(directory, name), []byte(content), 0o640); err != nil {
 			t.Fatal(err)
@@ -50,7 +53,7 @@ func TestACadenceOverrideIsASettingNeverBelowItsBound(t *testing.T) {
 	if !found {
 		t.Fatalf("the plugin was refused: %v", loaded.Refusals())
 	}
-	key := "cadence__reconciled_state__example_inventory"
+	key := "cadence__example_inventory__example_inventory"
 	values, err := plugin.SettingValues(ctx, database)
 	if err != nil {
 		t.Fatal(err)

@@ -1,4 +1,5 @@
-// The firewall's own volume and telemetry: one implementation of the measurement_sample kind.
+// The firewall's own volume and telemetry: one implementation of the measurement_sample kind, and the
+// owner of the table its readings go into (ADR 0019, ADR 0020 wave 4).
 //
 // IT SAMPLES BECAUSE NOTHING UPSTREAM KEEPS PER-PAIR HISTORY. /api/diagnostics/netflow/top,
 // netflow/get_metadata and netflow/aggregate all answered 404 on a live 26.7.3_11; the per-pair
@@ -16,8 +17,11 @@
 // DEVICE name returns an empty array with HTTP 200, which is indistinguishable from an absence of
 // traffic, so a wrong argument would not fail: it would quietly record silence.
 //
-// A READING THAT DID NOT ANSWER IS NEVER A ZERO: it is named in `missing`, and the kind records it
-// in the availability detail.
+// A READING THAT DID NOT ANSWER IS NEVER A ZERO: it is named in the availability detail, with the
+// outcome partial_readings.
+//
+// THE INTERFACES ARE READ FROM THE INSTALLATION MODEL, the dataset `interface` (identifier, device):
+// what the Go's discovery snapshot handed the sampler before the pass became this plugin's own.
 
 var d = opnview.decode;
 
@@ -219,6 +223,67 @@ function parseLossRatio(text) {
     return null;
   }
   return value / 100;
+}
+
+// discoveryFromInterfaces reads the installation's interfaces and answers them in the shape the
+// samplers read: the identifiers, the devices, and the device of an identifier.
+function discoveryFromInterfaces(host) {
+  var rows = host.datasets.rows("interface", { columns: ["identifier", "device"] }).rows;
+  var identifiers = [];
+  var deviceOf = {};
+  var devices = {};
+  rows.forEach(function (row) {
+    if (typeof row.identifier !== "string" || row.identifier === "") {
+      return;
+    }
+    identifiers.push(row.identifier);
+    if (typeof row.device === "string" && row.device !== "") {
+      deviceOf[row.identifier] = row.device;
+      devices[row.device] = true;
+    }
+  });
+  identifiers.sort();
+  return {
+    identifiers: identifiers,
+    devices: Object.keys(devices).sort(),
+    isDevice: function (name) { return devices[name] === true; },
+    isIdentifier: function (name) { return deviceOf[name] !== undefined || identifiers.indexOf(name) >= 0; },
+    deviceOf: function (identifier) { return deviceOf[identifier] === undefined ? "" : deviceOf[identifier]; }
+  };
+}
+
+// rowsOf turns the samplers' readings into rows of measurement_sample: a reading attributed to the
+// provider names it, a gauge names none; a live pass stamps its rows with its cadence.
+function rowsOf(readings, provider, liveCadence) {
+  return readings.map(function (reading) {
+    return {
+      provider_id: reading.attributed === false ? null : provider.id,
+      subject_kind: reading.subject_kind,
+      subject_key: reading.subject_key,
+      interface_device: reading.interface_device === undefined ? null : reading.interface_device,
+      local_address: reading.local_address === undefined ? null : reading.local_address,
+      peer_address: reading.peer_address === undefined ? null : reading.peer_address,
+      measure: reading.measure,
+      unit: reading.unit,
+      value: reading.value,
+      sampled_at: reading.sampled_at,
+      live_cadence_seconds: liveCadence
+    };
+  });
+}
+
+// withMissing records in the result what did not answer: the outcome partial_readings, the names in
+// the detail, and never a zero in the rows.
+function withMissing(result, missing) {
+  if (missing.length === 0) {
+    return result;
+  }
+  var absent = "these firewall telemetry readings did not answer and were not written as zeroes: " + missing.join(", ");
+  result.detail = result.detail ? result.detail + "; " + absent : absent;
+  if (result.outcome === "healthy" || result.outcome === "healthy_empty" || result.outcome === undefined) {
+    result.outcome = "partial_readings";
+  }
+  return result;
 }
 
 // guardInterfaceNames turns the discovered identifiers into the argument traffic/top takes,
@@ -791,11 +856,13 @@ exports.measurement_sample = {
     return { result: result };
   },
 
-  // sample reads the per-pair snapshot and the firewall's gauges. When the volume half cannot be
-  // read the volume source reads as unavailable, and the gauges are read anyway: they come from
-  // different endpoints, and a refusal over the per-pair argument says nothing about the
-  // firewall's temperature.
-  sample: function (host, discovery, now) {
+  // collect reads the per-pair snapshot and the firewall's gauges into the plugin's table. When the
+  // volume half cannot be read the volume source reads as unavailable, and the gauges are read
+  // anyway: they come from different endpoints, and a refusal over the per-pair argument says
+  // nothing about the firewall's temperature.
+  collect: function (host, state, provider) {
+    var now = host.now();
+    var discovery = discoveryFromInterfaces(host);
     var result = { probe: "traffic_top", state: "reachable" };
     var pair = samplePairVolume(host, discovery, now);
     result.detail = pair.detail;
@@ -809,7 +876,8 @@ exports.measurement_sample = {
     if (gauges.error) {
       return { result: result, error: gauges.error };
     }
-    return { result: result, readings: readings.concat(gauges.readings), missing: gauges.missing };
+    return { result: withMissing(result, gauges.missing), rows: { measurement_sample: rowsOf(readings.concat(gauges.readings), provider, null) },
+      state: {} };
   },
 
   // live is the live pass (docs/plugins.md, "Live pass"): run at live_cadence_seconds while somebody
@@ -825,7 +893,9 @@ exports.measurement_sample = {
   // measure-cost` measures (docs/opnsense-api-survey.md, "LV-C: measuring the firewall-side cost")
   // and which has not been run yet. Its lower bound, 2 s, is a fact of the source rather than a
   // measurement: one traffic/top call is an iftop capture of 2 seconds (traffic_top.py, `-s 2`).
-  live: function (host, discovery, now) {
+  live: function (host, provider) {
+    var now = host.now();
+    var discovery = discoveryFromInterfaces(host);
     var result = { probe: "traffic_top", state: "reachable" };
     var pair = samplePairVolume(host, discovery, now);
     result.detail = pair.detail;
@@ -840,7 +910,11 @@ exports.measurement_sample = {
       return { result: result, error: counters.error };
     }
     var missing = counters.absent === "" ? [] : [counters.absent];
-    return { result: result, readings: readings.concat(counters.readings), missing: missing };
+    var all = readings.concat(counters.readings);
+    var latest = 0;
+    all.forEach(function (reading) { if (reading.sampled_at > latest) { latest = reading.sampled_at; } });
+    return { result: withMissing(result, missing), rows: { measurement_sample: rowsOf(all, provider, provider.live_cadence_seconds) },
+      latest: latest };
   }
 };
 

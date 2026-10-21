@@ -21,8 +21,8 @@ function seed(t) {
     "first_seen_at, last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'Inside', 'ethernet', 'vlan', :at, :at)",
     { at: AT - 3000 });
   var sample = function (id, at, value) {
-    t.sql("INSERT INTO measurement_sample (id, subject_kind, subject_key, measure, unit, value, sampled_at) " +
-      "VALUES (:id, 'interface', 'vlan0.10', 'bytes_in', 'bytes', :value, :at)", { id: id, at: at, value: value });
+    t.sql("INSERT INTO plugin_insight.measurement_sample (subject_kind, subject_key, measure, unit, value, sampled_at) " +
+      "VALUES ('interface', 'vlan0.10', 'bytes_in', 'bytes', :value, :at)", { at: at, value: value });
   };
   sample(1, AT - 600, 1000);
   sample(2, AT - 300, 4000);

@@ -11,7 +11,7 @@
 SELECT sampled_at AS sampled_at,
        value AS value,
        unit AS unit
-FROM measurement_sample
+FROM plugin_insight.measurement_sample
 WHERE subject_kind = :subject_kind
   AND subject_key = :subject_key
   AND measure = :measure

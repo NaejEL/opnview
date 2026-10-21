@@ -13,7 +13,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/kinds/declared"
 	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
 	"github.com/NaejEL/opnview/internal/collect/kinds/lookups"
-	"github.com/NaejEL/opnview/internal/collect/kinds/measurements"
 	"github.com/NaejEL/opnview/internal/collect/kinds/neighbours"
 	"github.com/NaejEL/opnview/internal/collect/kinds/resolverrecords"
 	"github.com/NaejEL/opnview/internal/collect/provider"
@@ -36,7 +35,6 @@ type Collector struct {
 	*lookups.LookupCoordinator
 	*filterlog.FilterLogCoordinator
 	*resolverrecords.ResolverRecordCoordinator
-	*measurements.MeasurementCoordinator
 	*declared.DeclaredKindCoordinator
 }
 
@@ -51,7 +49,6 @@ func compose(state *core.Collector) *Collector {
 		LookupCoordinator:         lookups.On(state),
 		FilterLogCoordinator:      filterlog.On(state),
 		ResolverRecordCoordinator: resolverrecords.On(state),
-		MeasurementCoordinator:    measurements.On(state),
 		DeclaredKindCoordinator:   declared.On(state),
 	}
 }

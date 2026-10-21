@@ -1,7 +1,7 @@
 {
   "api_version": 3,
   "name": "interface_throughput",
-  "requires": ["installation"],
+  "requires": ["installation", "insight"],
   "version": "1.0.0",
   "display_name": "Interface throughput",
   "description": "Per interface, bandwidth, bytes, packets or errors in and out over time, from the interface's own counters, with the counter resets counted and never drawn.",

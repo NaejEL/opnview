@@ -13,8 +13,8 @@ function seed(t) {
   t.sql("UPDATE source_availability SET state = 'reachable' " +
     "WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'measurement_sample')");
   var sample = function (id, at, value) {
-    t.sql("INSERT INTO measurement_sample (id, subject_kind, subject_key, measure, unit, value, sampled_at) " +
-      "VALUES (:id, 'firewall', '', 'cpu_use_ratio', 'ratio', :value, :at)", { id: id, at: at, value: value });
+    t.sql("INSERT INTO plugin_insight.measurement_sample (subject_kind, subject_key, measure, unit, value, sampled_at) " +
+      "VALUES ('firewall', '', 'cpu_use_ratio', 'ratio', :value, :at)", { at: at, value: value });
   };
   sample(1, AT - 590, 0.25);
   sample(2, AT - 580, 0.75);

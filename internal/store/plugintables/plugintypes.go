@@ -54,11 +54,27 @@ func (s *PluginTableStore) InsertPluginRows(ctx context.Context, table plugindec
 // maxBoundParameters parameters each, and returns how many statements it ran. Of rows sharing a
 // primary key the last is kept, as a sequence of single writes would keep it.
 func writeRows(ctx context.Context, transaction *sql.Tx, table plugindecl.PluginTable, rows []map[string]any) (int, error) {
+	return writeRowsWith(ctx, transaction, table, rows, false)
+}
+
+// writeRowsWith is writeRows, keeping the held rows rather than replacing them when keeping is set.
+func writeRowsWith(ctx context.Context, transaction *sql.Tx, table plugindecl.PluginTable, rows []map[string]any,
+	keeping bool) (int, error) {
 	rows = plugindecl.LastPerKey(table, rows)
 	perStatement := max(1, maxBoundParameters/len(table.Columns))
 	statements := 0
 	for start := 0; start < len(rows); start += perStatement {
-		statement, arguments, err := table.MultiRowInsert(rows[start:min(len(rows), start+perStatement)])
+		batch := rows[start:min(len(rows), start+perStatement)]
+		var (
+			statement string
+			arguments []any
+			err       error
+		)
+		if keeping {
+			statement, arguments, err = table.MultiRowInsertKeeping(batch)
+		} else {
+			statement, arguments, err = table.MultiRowInsert(batch)
+		}
 		if err != nil {
 			return 0, err
 		}
@@ -624,4 +640,36 @@ func (s *PluginTableStore) GrantKindWrites(ctx context.Context, plugin string, k
 		}
 	}
 	return granted, nil
+}
+
+// WriteLiveRows stores what one live pass answered, in one transaction, into the tables its plugin owns
+// or is granted, keeping every row already held under a row's key: a baseline pass that read the same
+// capture keeps its row (ADR 0020 wave 4).
+func (s *PluginTableStore) WriteLiveRows(ctx context.Context, plugin, kind, provider string, rows PluginRows) error {
+	transaction, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: storing the live pass of the plugin %s: %w", plugin, err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	names := make([]string, 0, len(rows))
+	for name := range rows {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		table, err := s.passTable(plugin, kind, name)
+		if err != nil {
+			return err
+		}
+		if len(rows[name]) == 0 {
+			continue
+		}
+		if _, err := writeRowsWith(ctx, transaction, table, rows[name], true); err != nil {
+			return err
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("store: storing the live pass of the plugin %s (%s): %w", plugin, provider, err)
+	}
+	return nil
 }

@@ -239,3 +239,13 @@ func init() {
 		return BuiltinsLoaded().FinestLiveCadence(ctx, reader)
 	})
 }
+
+// LiveCadenceFallback is the declared default of a provider's live cadence, when kind.function is a live
+// pass of the plugin: what a test hands the pass as its cadence.
+func (p *Plugin) LiveCadenceFallback(kind, function string) (int64, bool) {
+	binding := p.liveOf(kind, function)
+	if binding == nil {
+		return 0, false
+	}
+	return binding.fallback, true
+}

@@ -36,14 +36,10 @@ func (c *DeclaredKindCoordinator) DeclaredTasks() []core.Task {
 	for _, registration := range c.SourceSet.All() {
 		kind, key := registration.Kind, registration.Key
 		var run func(ctx context.Context) error
-		switch kindContract, isCore := provider.ContractOf(kind); {
-		case isCore && kindContract.OwnCadence:
-			run = func(ctx context.Context) error { return c.CollectReconciledState(ctx, kind, key) }
-		case !isCore:
-			run = func(ctx context.Context) error { return c.CollectDeclaredKind(ctx, kind, key) }
-		default:
+		if _, isCore := provider.ContractOf(kind); isCore {
 			continue
 		}
+		run = func(ctx context.Context) error { return c.CollectDeclaredKind(ctx, kind, key) }
 		tasks = append(tasks, core.Task{
 			Name: fmt.Sprintf("%s %s", kind, key),
 			Interval: c.overriddenCadence(provider.CadenceSettingKey(registration.Plugin, kind, key),
@@ -105,64 +101,6 @@ func (c *DeclaredKindCoordinator) isActive(ctx context.Context, kind, key string
 		}
 	}
 	return 0, false, nil
-}
-
-// CollectReconciledState runs one pass of one implementation of a kind whose providers report complete
-// sets at their own cadence (reconciled_state): every set it reports, each written whole, at one instant.
-func (c *DeclaredKindCoordinator) CollectReconciledState(ctx context.Context, kind, key string) error {
-	providerID, active, err := c.isActive(ctx, kind, key)
-	if err != nil || !active {
-		return err
-	}
-	registration, found := c.SourceSet.Lookup(kind, key)
-	if !found {
-		return fmt.Errorf("collect: the active %s provider %q has no implementation", kind, key)
-	}
-	snapshot, result, readErr := registration.Implementation.Call(ctx, c, "snapshot")
-	sets := provider.Records(snapshot, "sets")
-	if readErr != nil {
-		if errors.Is(readErr, provider.ErrUnsupportedRead) {
-			return c.WriteAvailability(ctx, providerID, result.State, result.Outcome, result.Probe, readErr.Error())
-		}
-		if writeErr := c.WriteAvailability(ctx, providerID, orUnavailable(result.State),
-			orOutcome(result.Outcome), result.Probe, result.Detail); writeErr != nil {
-			return writeErr
-		}
-		return readErr
-	}
-	now := c.Now()
-	items := 0
-	for _, set := range sets {
-		var members []vocab.StateItem
-		for _, item := range provider.Records(set, "items") {
-			members = append(members, vocab.StateItem{ItemKey: provider.Text(item, "item_key"),
-				Attributes: provider.TextPointer(item, "attributes"), ValidUntilAt: provider.IntegerPointer(item, "valid_until_at")})
-		}
-		if err := c.Store.InsertStateSnapshot(ctx, vocab.StateSnapshot{ProviderID: providerID,
-			SetKey: provider.Text(set, "set_key"), CapturedAt: now, Items: members}); err != nil {
-			if writeErr := c.WriteAvailability(ctx, providerID, vocab.StateReachable, vocab.OutcomeStoreFailure,
-				result.Probe, "the sets were read and could not be stored"); writeErr != nil {
-				return writeErr
-			}
-			return err
-		}
-		items += len(members)
-	}
-	if err := c.Store.NotifyCollectionPass(ctx, kind, key); err != nil {
-		return err
-	}
-	detail := result.Detail
-	if detail == "" {
-		detail = fmt.Sprintf("read %d sets holding %d items", len(sets), items)
-	}
-	outcome := result.Outcome
-	if outcome == "" {
-		outcome = vocab.OutcomeHealthy
-	}
-	if outcome == vocab.OutcomeHealthy && len(sets) == 0 {
-		outcome = vocab.OutcomeHealthyEmpty
-	}
-	return c.WriteAvailability(ctx, providerID, orReachable(result.State), outcome, result.Probe, detail)
 }
 
 // CollectDeclaredKind runs one pass of one implementation of a kind a plugin declared: it is

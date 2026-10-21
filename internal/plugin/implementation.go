@@ -86,7 +86,7 @@ func (i implementation) call(ctx context.Context, session provider.Session, func
 		return i.invalid(fmt.Sprintf("%s returned no object", function))
 	}
 	var own map[string]any
-	if i.tables != nil && function == "collect" {
+	if i.tables != nil && (function == "collect" || (i.contract.LiveAnswer != "" && table == i.contract.LiveAnswer)) {
 		// A declared kind's rows are checked against the plugin's own tables, its state as text.
 		rows, err := scripthost.CheckRows(i.tables, object["rows"])
 		if err != nil {
@@ -243,6 +243,7 @@ func declaredContract(kind string) provider.Contract {
 				{Name: "rows", Type: provider.FieldObject},
 				{Name: "state", Type: provider.FieldObject},
 				{Name: "gaps", Type: provider.FieldObject},
+				{Name: "latest", Type: provider.FieldInteger},
 				{Name: "error", Type: provider.FieldText},
 				{Name: "unsupported", Type: provider.FieldText},
 			}},

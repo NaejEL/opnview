@@ -154,7 +154,7 @@ type ProviderDeclaration struct {
 	// makes collect, which is declared by giving none.
 	EnablePages []EnablePage `json:"enable_pages,omitempty"`
 	// CadenceSeconds is how often a pass runs, for a kind whose cadence is the plugin's to state
-	// (reconciled_state and a kind of the plugin's own); MinCadenceSeconds is the lowest value it
+	// (a kind of the plugin's own); MinCadenceSeconds is the lowest value it
 	// may take. A core kind with a surveyed cadence runs at the interval the collection surface
 	// sets, and declaring one for it is refused.
 	CadenceSeconds    int `json:"cadence_seconds,omitempty"`

@@ -107,7 +107,7 @@ at every call, any path the plugins and the core have not declared.
 | `key` | The provider key, when it is not the plugin's name. |
 | `display_name` | The provider's name in the registry. |
 | `read_strategy` | `full_reread`, `time_window` or `watermark`: how the source is read, for the listing. |
-| `cadence_seconds`, `min_cadence_seconds` | How often a pass runs, for `reconciled_state` and a kind of the plugin's own. A kind whose cadence the collection surface sets refuses one (`cadence_invalid`). |
+| `cadence_seconds`, `min_cadence_seconds` | How often a pass runs, for a kind of the plugin's own. A kind whose cadence the collection surface sets refuses one (`cadence_invalid`). |
 | `triggered_by` | Core notifications that also run a pass, for a provider that states its own cadence: below. |
 | `probe`, `read` | The declarative form, below. A provider declaring neither is served by the script. |
 | `live` | A live pass, for a `measurement_sample` provider served by a script: *Live pass*, below. |
@@ -143,19 +143,19 @@ the rows go: a table of the plugin's own, or one a required plugin grants it, as
 A `measurement_sample` provider served by a script may declare a **live pass**: a second pass that
 reads only the endpoints it names, run at a cadence the plugin declares as a setting, and only while
 somebody looks at a live figure -- while the core's live-interest lease holds (`docs/widget-api.md`,
-*Live figures*). Its readings are stored as **fine samples**, marked with the cadence they were taken
-at and purged after `live_sample_retention_seconds`; the baseline `sample` pass runs at the
+*Live figures*). Its rows are stored as **fine samples**, marked with the cadence they were taken
+at and purged after `live_sample_retention_seconds`; the baseline `collect` pass runs at the
 measurement interval throughout, whether anyone looks or not. The `insight` plugin's manifest declares
 one (`plugins/insight/plugin.json`, its provider's `live` and the setting `live_cadence_seconds`).
 
 | Key | What it is |
 |---|---|
-| `function` | The function the script exports under the kind's name, called as `sample` is -- `(host, discovery, now)` -- and answering a `sample_answer`. |
+| `function` | The function the script exports under the kind's name, called as `(host, provider)` -- `provider` as `collect` is handed it, with `live_cadence_seconds`, the cadence in force -- and answering as `collect` does: `rows` for the plugin's tables, each row stamped with that cadence, and `latest`, the newest instant sampled, which the live figures are told of. A live row never replaces a row already held under its key: a baseline pass that read the same capture keeps its row, and a baseline arriving after replaces the live row, so one capture is stored once. |
 | `cadence_setting` | A declared `integer` setting with a `default` and a `min` of at least 1: the live cadence, in seconds. The cadence in force is never below that `min`, nor below the `floor_seconds` of the endpoints the pass reads. |
 | `endpoints` | The only endpoints the live pass may read, by their names; a stream is refused. |
 
 The live pass's requests carry the live cadence as their max age, so the broker coalesces every reader
-of one datum into one call. **Stamp each reading with the answer's `fetched_at`**, not with `now`: when
+of one datum into one call. **Stamp each row with the answer's `fetched_at`**, not with `now`: when
 the baseline pass falls due during live mode the broker serves it the live pass's answer from the
 mirror, and the same capture stamped with the same instant is promoted to a baseline sample rather than
 stored twice. A live pass declared wrongly is refused (`live_pass_invalid`). In a plugin's own tests,

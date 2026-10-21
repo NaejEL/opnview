@@ -1,10 +1,16 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "insight",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "display_name": "NetFlow / Insight sampling",
-  "description": "Samples the live per-pair traffic snapshot and reads the firewall's own gauges: memory, processor, temperature, uptime, load, disk, interface counters, gateways and swap (data source 3).",
+  "description": "Samples the live per-pair traffic snapshot and reads the firewall's own gauges: memory, processor, temperature, uptime, load, disk, interface counters, gateways and swap (data source 3), into its own table of readings; a live pass samples the per-pair snapshot and the counters at the live cadence while somebody looks at a live figure (ADR 0020 wave 4).",
   "script": "insight.js",
+  "requires": [
+    "installation"
+  ],
+  "datasets": [
+    "interface"
+  ],
   "endpoints": [
     {
       "name": "netflow_is_enabled",
@@ -116,18 +122,209 @@
       "live": {
         "function": "live",
         "cadence_setting": "live_cadence_seconds",
-        "endpoints": ["traffic_top", "traffic_interface"]
+        "endpoints": [
+          "traffic_top",
+          "traffic_interface"
+        ]
       }
     }
   ],
+  "tables": [
+    {
+      "name": "measurement_sample",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "provider_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "subject_kind",
+          "type": "text"
+        },
+        {
+          "name": "subject_key",
+          "type": "text"
+        },
+        {
+          "name": "interface_device",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "local_address",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "peer_address",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "measure",
+          "type": "text"
+        },
+        {
+          "name": "unit",
+          "type": "text"
+        },
+        {
+          "name": "value",
+          "type": "real"
+        },
+        {
+          "name": "sampled_at",
+          "type": "integer"
+        },
+        {
+          "name": "live_cadence_seconds",
+          "type": "integer",
+          "nullable": true
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "subject_kind",
+            "subject_key",
+            "measure",
+            "sampled_at",
+            "provider_id"
+          ],
+          "unique": true,
+          "nulls_not_distinct": true
+        },
+        {
+          "columns": [
+            "subject_kind",
+            "subject_key",
+            "measure",
+            "sampled_at",
+            "value"
+          ]
+        },
+        {
+          "columns": [
+            "sampled_at"
+          ]
+        },
+        {
+          "columns": [
+            "sampled_at"
+          ],
+          "where": "live_cadence_seconds IS NOT NULL"
+        }
+      ],
+      "checks": [
+        {
+          "name": "subject_kind_word",
+          "expression": "length(subject_kind) > 0 AND subject_kind = lower(subject_kind) AND strpos(subject_kind, ' ') = 0"
+        },
+        {
+          "name": "interface_device_not_empty",
+          "expression": "interface_device IS NULL OR length(interface_device) > 0"
+        },
+        {
+          "name": "local_address_not_empty",
+          "expression": "local_address IS NULL OR length(local_address) > 0"
+        },
+        {
+          "name": "peer_address_not_empty",
+          "expression": "peer_address IS NULL OR length(peer_address) > 0"
+        },
+        {
+          "name": "measure_word",
+          "expression": "length(measure) > 0 AND measure = lower(measure) AND strpos(measure, ' ') = 0"
+        },
+        {
+          "name": "unit_word",
+          "expression": "length(unit) > 0 AND unit = lower(unit) AND strpos(unit, ' ') = 0"
+        },
+        {
+          "name": "sampled_at_instant",
+          "expression": "sampled_at >= 0 AND sampled_at < 4102444800"
+        },
+        {
+          "name": "live_cadence_positive",
+          "expression": "live_cadence_seconds IS NULL OR live_cadence_seconds > 0"
+        }
+      ]
+    }
+  ],
   "sample_metrics": [
-    { "name": "cpu", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["cpu_use_ratio"] },
-    { "name": "disk", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["disk_use_ratio"] },
-    { "name": "gateway_latency", "provider_kind": "measurement_sample", "subject_kind": "gateway", "measures": ["delay_milliseconds"] },
-    { "name": "gateway_loss", "provider_kind": "measurement_sample", "subject_kind": "gateway", "measures": ["loss_ratio"] },
-    { "name": "memory", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["memory_use_ratio"] },
-    { "name": "swap", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["swap_used_bytes", "swap_total_bytes"] },
-    { "name": "temperature", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["temperature_celsius"] },
-    { "name": "uptime", "provider_kind": "measurement_sample", "subject_kind": "firewall", "measures": ["uptime_seconds"] }
+    {
+      "name": "cpu",
+      "provider_kind": "measurement_sample",
+      "subject_kind": "firewall",
+      "measures": [
+        "cpu_use_ratio"
+      ]
+    },
+    {
+      "name": "disk",
+      "provider_kind": "measurement_sample",
+      "subject_kind": "firewall",
+      "measures": [
+        "disk_use_ratio"
+      ]
+    },
+    {
+      "name": "gateway_latency",
+      "provider_kind": "measurement_sample",
+      "subject_kind": "gateway",
+      "measures": [
+        "delay_milliseconds"
+      ]
+    },
+    {
+      "name": "gateway_loss",
+      "provider_kind": "measurement_sample",
+      "subject_kind": "gateway",
+      "measures": [
+        "loss_ratio"
+      ]
+    },
+    {
+      "name": "memory",
+      "provider_kind": "measurement_sample",
+      "subject_kind": "firewall",
+      "measures": [
+        "memory_use_ratio"
+      ]
+    },
+    {
+      "name": "swap",
+      "provider_kind": "measurement_sample",
+      "subject_kind": "firewall",
+      "measures": [
+        "swap_used_bytes",
+        "swap_total_bytes"
+      ]
+    },
+    {
+      "name": "temperature",
+      "provider_kind": "measurement_sample",
+      "subject_kind": "firewall",
+      "measures": [
+        "temperature_celsius"
+      ]
+    },
+    {
+      "name": "uptime",
+      "provider_kind": "measurement_sample",
+      "subject_kind": "firewall",
+      "measures": [
+        "uptime_seconds"
+      ]
+    }
   ]
 }

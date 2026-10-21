@@ -27,10 +27,9 @@ var kindNameAllowed = map[string]struct {
 	count  int
 	reason string
 }{
-	"internal/collect/kinds/filterlog/firewalllog.go":   {1, "the firewall_log coordinator's own kind constant"},
-	"internal/collect/kinds/lookups/dnslookup.go":       {1, "the dns_lookup coordinator's own kind constant"},
-	"internal/collect/kinds/neighbours/neighbour.go":    {1, "the neighbour coordinator's own kind constant"},
-	"internal/collect/kinds/measurements/flowvolume.go": {1, "the measurement_sample coordinator's own kind constant"},
+	"internal/collect/kinds/filterlog/firewalllog.go": {1, "the firewall_log coordinator's own kind constant"},
+	"internal/collect/kinds/lookups/dnslookup.go":     {1, "the dns_lookup coordinator's own kind constant"},
+	"internal/collect/kinds/neighbours/neighbour.go":  {1, "the neighbour coordinator's own kind constant"},
 	"internal/collect/kinds/resolverrecords/handle.go": {2, "the resolver-record coordinator's two kinds, the cache and " +
 		"the local data, one constant each"},
 	"internal/collect/services/services.go": {3, "the service coordinator's two kinds, one constant each, and the " +

@@ -58,7 +58,6 @@
 -- attribution of a surviving flow names is kept, so no family loses a client's
 -- bytes or a flow's site name to the purge while the slot that holds them is kept.
 
-
 BEGIN;
 
 -- A flow with an end that is this firewall keeps classified_flow's peer_address,
@@ -376,7 +375,6 @@ WHERE live_cadence_seconds IS NOT NULL
     WHERE key = 'live_sample_retention_seconds' AND CAST(value AS BIGINT) > 0
 ), 3600);
 
-
 -- ---------------------------------------------------------------------------
 -- The three aggregate families step 5 added -- per client, per site name and
 -- per rule -- purge by period_end_at exactly as the eight above do. The client
@@ -595,15 +593,6 @@ WHERE last_seen_at < (
     WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
--- ---------------------------------------------------------------------------
--- Reconciled state. A snapshot is purged by the instant at which its set was
--- complete, and its items go with it through ON DELETE CASCADE, so state_item
--- needs no statement of its own: an item without its snapshot would be a set
--- member with no set and no instant, which is the one thing this kind exists to
--- prevent. The LATEST snapshot of a set is never older than the horizon while
--- collection is running, so purging does not silently turn a live set into a
--- departure — and a set whose provider stopped answering ages out entirely,
--- rather than leaving a stale snapshot that a screen would read as current.
 -- ---------------------------------------------------------------------------
 DELETE FROM state_snapshot
 WHERE captured_at < (

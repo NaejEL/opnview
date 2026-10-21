@@ -51,7 +51,6 @@
     "collection.kind.registrable_domain": "Public Suffix List",
     "collection.kind.resolver_cache": "Resolver cache",
     "collection.kind.resolver_local_data": "Resolver local data",
-    "collection.kind.reconciled_state": "Reconciled state",
     "collection.kind.neighbour": "ARP and NDP neighbours",
 
     "provider.flow_volume.insight": "NetFlow / Insight",

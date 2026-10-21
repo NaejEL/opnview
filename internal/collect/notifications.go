@@ -12,7 +12,7 @@ import (
 //
 // A collection pass of a core kind that ended without an error publishes one notification per
 // provider it read; a pass of a plugin's own kind publishes one; the aggregate refresh publishes its own
-// (store.RefreshAggregatesAt). A provider of a kind of its own -- or of reconciled_state -- may name
+// (store.RefreshAggregatesAt). A provider of a kind of its own may name
 // notifications in its manifest that run its pass besides its cadence, never more often than its
 // declared lower bound and never concurrently with itself: its loop runs one pass at a time, and a
 // woken pass waits out the gap (Task.MinGap).

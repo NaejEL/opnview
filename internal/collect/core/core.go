@@ -80,20 +80,6 @@ func (c *Collector) Configure(settings config.Config) {
 	}
 }
 
-// SetSampleAbsence records what one measurement provider's last pass could not read.
-func (c *Collector) SetSampleAbsence(providerID int64, absent string) {
-	c.Mutex.Lock()
-	defer c.Mutex.Unlock()
-	if c.SampleAbsences == nil {
-		c.SampleAbsences = map[int64]string{}
-	}
-	if absent == "" {
-		delete(c.SampleAbsences, providerID)
-		return
-	}
-	c.SampleAbsences[providerID] = absent
-}
-
 // SetReadDetail records what one resolver-record provider's last read said.
 //
 // The outcome is kept beside the words for the same reason: a probe round restating a
@@ -123,13 +109,6 @@ func (c *Collector) readOutcome(providerID int64) vocab.AvailabilityOutcome {
 	c.Mutex.RLock()
 	defer c.Mutex.RUnlock()
 	return c.ReadOutcomes[providerID]
-}
-
-// sampleAbsence is what one provider's last sampling pass could not read, or empty.
-func (c *Collector) sampleAbsence(providerID int64) string {
-	c.Mutex.RLock()
-	defer c.Mutex.RUnlock()
-	return c.SampleAbsences[providerID]
 }
 
 // PageSize returns the page a core kind's paged read asks for now: the setting its kind file names, as

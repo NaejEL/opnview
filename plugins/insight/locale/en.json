@@ -3,6 +3,7 @@
   "strings": {
     "provider.measurement_sample.insight": "Insight sampling",
     "plugin.insight.setting.live_cadence_seconds": "Live sampling cadence, in seconds",
-    "plugin.insight.opnsense_page.netflow": "Reporting: NetFlow"
+    "plugin.insight.opnsense_page.netflow": "Reporting: NetFlow",
+    "plugin.insight.dataset.measurement_sample": "Measurement samples"
   }
 }

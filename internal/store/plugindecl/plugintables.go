@@ -656,6 +656,16 @@ func PluginArgument(column PluginColumn, value any) (any, error) {
 
 // MultiRowInsert is one INSERT of several rows, with the upsert of upsertStatement.
 func (t PluginTable) MultiRowInsert(rows []map[string]any) (string, []any, error) {
+	return t.multiRowInsert(rows, false)
+}
+
+// MultiRowInsertKeeping is MultiRowInsert for rows that never replace a held row of their key: a live
+// pass's fine samples, which a baseline pass that read the same capture may already hold (ADR 0020).
+func (t PluginTable) MultiRowInsertKeeping(rows []map[string]any) (string, []any, error) {
+	return t.multiRowInsert(rows, true)
+}
+
+func (t PluginTable) multiRowInsert(rows []map[string]any, keeping bool) (string, []any, error) {
 	names := make([]string, 0, len(t.Columns))
 	for _, column := range t.WrittenColumns() {
 		names = append(names, QuoteIdentifier(column.Name))
@@ -683,7 +693,11 @@ func (t PluginTable) MultiRowInsert(rows []map[string]any) (string, []any, error
 		strings.Join(tuples, ", ")
 	upsert := t.UpsertStatement()
 	if conflict := strings.Index(upsert, " ON CONFLICT "); conflict >= 0 {
-		statement += upsert[conflict:]
+		if keeping {
+			statement += " ON CONFLICT (" + quotedList(t.ConflictKey()) + ") DO NOTHING"
+		} else {
+			statement += upsert[conflict:]
+		}
 	}
 	return statement, arguments, nil
 }

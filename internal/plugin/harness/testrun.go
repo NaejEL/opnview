@@ -786,6 +786,12 @@ func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, argume
 		// the registry id its rows name and the kind's page size, as the collector hands them (ADR 0020 wave 4).
 		arguments = append(arguments, w.providerArgument(kind))
 	}
+	if cadence, isLive := w.plugin.LiveCadenceFallback(kind, function); isLive && len(arguments) < 1 {
+		// A live pass is handed the provider and its live cadence, at the declared default.
+		argument := w.providerArgument(kind)
+		argument["live_cadence_seconds"] = cadence
+		arguments = append(arguments, argument)
+	}
 	checked, err := w.plugin.CallProvider(context.Background(), w.session(), kind, function, arguments)
 	var refusal *plugin.CallRefusal
 	if errors.As(err, &refusal) {
