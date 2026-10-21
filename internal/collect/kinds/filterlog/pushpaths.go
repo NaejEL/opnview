@@ -251,9 +251,7 @@ func (c *FilterLogCoordinator) storeRecords(ctx context.Context, records []vocab
 			}
 		}
 	}
-	for _, record := range kept {
-		stored.Widen(record.ObservedAt, record.ObservedAt)
-	}
+	_ = kept
 	return passErr
 }
 

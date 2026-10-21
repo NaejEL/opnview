@@ -101,8 +101,8 @@ func (c *Collector) RunDerivation(ctx context.Context, derivation provider.Deriv
 }
 
 // DerivationParameters supplies the core's values to the plugins' SQL-only derivations (ADR 0020, waves 3
-// and 4): the discovery interval a held address is read with, the leg-pairing window, and the installation's
-// retention in seconds, zero for an unlimited one.
+// and 4): the discovery interval a held address is read with, the leg-pairing window, the installation's
+// retention in seconds, zero for an unlimited one, and the two attribution windows.
 func (c *Collector) DerivationParameters(ctx context.Context) (map[string]any, error) {
 	held, err := c.Store.HeldMargin(ctx)
 	if err != nil {
@@ -112,5 +112,9 @@ func (c *Collector) DerivationParameters(ctx context.Context) (map[string]any, e
 	window := c.PairingWindowSeconds
 	c.Mutex.RUnlock()
 	retention := c.SettingSeconds(ctx, config.KeyRetentionSeconds, config.DefaultRetentionSeconds)
-	return map[string]any{"held_margin": held, "leg_pairing_window": window, "retention": retention}, nil
+	c.Mutex.RLock()
+	timing, cache := c.MaxDelaySeconds, c.CacheAnswerDelaySeconds
+	c.Mutex.RUnlock()
+	return map[string]any{"held_margin": held, "leg_pairing_window": window, "retention": retention,
+		"attribution_max_delay": timing, "cache_answer_delay": cache}, nil
 }

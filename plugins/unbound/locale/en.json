@@ -6,6 +6,7 @@
     "plugin.unbound.dataset.resource_record_observation": "Resolver records",
     "plugin.unbound.dataset.resource_record_read": "Resolver record reads",
     "plugin.unbound.dataset.domain_attribution": "Site attributions",
+    "plugin.unbound.dataset.attribution_work": "Flows being attributed",
     "provider.dns_lookup.unbound": "Unbound",
     "provider.resolver_cache.unbound": "Unbound cache",
     "provider.resolver_local_data.unbound": "Unbound local data",

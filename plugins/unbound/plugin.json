@@ -7,7 +7,8 @@
   "script": "unbound.js",
   "requires": [
     "installation",
-    "leases"
+    "leases",
+    "pf"
   ],
   "datasets": [
     "retention_purge"
@@ -740,6 +741,65 @@
           "expression": "(method = 'resolver_cache_answer') = (address_observation_id IS NOT NULL)"
         }
       ]
+    },
+    {
+      "name": "attribution_work",
+      "columns": [
+        {
+          "name": "flow_id",
+          "type": "integer"
+        },
+        {
+          "name": "observed_at",
+          "type": "integer"
+        },
+        {
+          "name": "client_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "src_address",
+          "type": "text"
+        },
+        {
+          "name": "dst_address",
+          "type": "text"
+        },
+        {
+          "name": "exact_names",
+          "type": "integer",
+          "default": "0"
+        },
+        {
+          "name": "lookup_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "site_name",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "looked_up_at",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "method",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "observation_id",
+          "type": "integer",
+          "nullable": true
+        }
+      ],
+      "primary_key": [
+        "flow_id"
+      ]
     }
   ],
   "statements": [
@@ -758,6 +818,27 @@
         "insert_blocklists",
         "link_blocklists",
         "resolve_hostnames"
+      ]
+    },
+    {
+      "name": "attribute",
+      "after_passes": [
+        "dns_lookup",
+        "resolver_cache",
+        "resolver_local_data",
+        "firewall_log"
+      ],
+      "cadence_seconds": 300,
+      "statements": [
+        "attribution_clear",
+        "attribution_candidates",
+        "attribution_drop_ineligible",
+        "attribution_exact_count",
+        "attribution_exact_pick",
+        "attribution_timing",
+        "attribution_write",
+        "attribution_remove",
+        "attribution_stamp"
       ]
     }
   ]

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/flows"
 )
 
@@ -44,7 +43,7 @@ const (
 	// KeyCacheAnswerDelay is how long before a flow, in seconds, a resolver lookup may
 	// have been made and still name it through the resolver's cache (decision 2 of
 	// specs/SPEC-resolver-cache-attribution.md). The schema writes its default row.
-	KeyCacheAnswerDelay = attribution.CacheAnswerDelayKey
+	KeyCacheAnswerDelay = "attribution_max_cache_answer_delay_seconds"
 	// KeyLegPairingWindow is how far apart, in seconds, the two records of one
 	// connection may have been logged and still be paired (decision 4 of the step-5A
 	// live corrections). The schema writes its default row.
@@ -90,7 +89,7 @@ const DefaultAttributionMaxDelaySeconds int64 = 5
 // before a flow a lookup may have been made and still name it through the resolver's
 // cache (decision 2). It is written in the schema and read from the database; the
 // constant exists only so a database with no row still behaves.
-const DefaultCacheAnswerDelaySeconds int64 = attribution.DefaultCacheAnswerDelaySeconds
+const DefaultCacheAnswerDelaySeconds int64 = 3600
 
 // DefaultLegPairingWindowSeconds is 1 s, the maintainer's default for how far apart
 // the two records of one connection may have been logged and still be paired

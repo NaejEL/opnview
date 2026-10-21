@@ -5,12 +5,26 @@
   "display_name": "pf filter log",
   "description": "Reads the firewall's filter log: every packet a rule with logging on allowed or denied (data source 1), polled, or received over a remote syslog target over TCP, which then replaces polling. Owns the flow table those records are stored in (ADR 0019, ADR 0020 wave 2).",
   "script": "pf.js",
-  "requires": ["installation"],
+  "requires": [
+    "installation"
+  ],
   "endpoints": [
     {
       "name": "filter_log",
       "path": "/api/diagnostics/firewall/log",
-      "corrections": {"nature": "record_stream", "key": ["__digest__"], "cursor": ["__timestamp__"], "parameters": {"limit": "page_size", "digest": "ignored"}},
+      "corrections": {
+        "nature": "record_stream",
+        "key": [
+          "__digest__"
+        ],
+        "cursor": [
+          "__timestamp__"
+        ],
+        "parameters": {
+          "limit": "page_size",
+          "digest": "ignored"
+        }
+      },
       "method": "GET",
       "survey_section": "Data source 1 — Filter logs",
       "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/FirewallController.php",
@@ -21,7 +35,11 @@
     {
       "name": "filter_log",
       "protocol": "syslog",
-      "filter": {"program": ["filterlog"]},
+      "filter": {
+        "program": [
+          "filterlog"
+        ]
+      },
       "parse": "filter_log",
       "kind": "firewall_log",
       "replaces": "filter_log",
@@ -34,13 +52,41 @@
       "display_name": "pf filter log",
       "read_strategy": "full_reread",
       "value_sources": {
-        "state_timeout_tcp_first_seconds": {"source": "PFTM_TCP_FIRST_PACKET_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
-        "state_timeout_tcp_established_seconds": {"source": "PFTM_TCP_ESTABLISHED_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
-        "state_timeout_tcp_closing_seconds": {"source": "PFTM_TCP_CLOSING_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
-        "state_timeout_tcp_closed_seconds": {"source": "PFTM_TCP_CLOSED_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
-        "state_timeout_udp_multiple_seconds": {"source": "PFTM_UDP_MULTIPLE_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
-        "state_timeout_icmp_first_seconds": {"source": "PFTM_ICMP_FIRST_PACKET_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
-        "state_timeout_other_multiple_seconds": {"source": "PFTM_OTHER_MULTIPLE_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"}
+        "state_timeout_tcp_first_seconds": {
+          "source": "PFTM_TCP_FIRST_PACKET_VAL",
+          "survey_section": "S12. pf's state timeouts",
+          "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"
+        },
+        "state_timeout_tcp_established_seconds": {
+          "source": "PFTM_TCP_ESTABLISHED_VAL",
+          "survey_section": "S12. pf's state timeouts",
+          "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"
+        },
+        "state_timeout_tcp_closing_seconds": {
+          "source": "PFTM_TCP_CLOSING_VAL",
+          "survey_section": "S12. pf's state timeouts",
+          "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"
+        },
+        "state_timeout_tcp_closed_seconds": {
+          "source": "PFTM_TCP_CLOSED_VAL",
+          "survey_section": "S12. pf's state timeouts",
+          "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"
+        },
+        "state_timeout_udp_multiple_seconds": {
+          "source": "PFTM_UDP_MULTIPLE_VAL",
+          "survey_section": "S12. pf's state timeouts",
+          "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"
+        },
+        "state_timeout_icmp_first_seconds": {
+          "source": "PFTM_ICMP_FIRST_PACKET_VAL",
+          "survey_section": "S12. pf's state timeouts",
+          "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"
+        },
+        "state_timeout_other_multiple_seconds": {
+          "source": "PFTM_OTHER_MULTIPLE_VAL",
+          "survey_section": "S12. pf's state timeouts",
+          "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"
+        }
       }
     }
   ],
@@ -49,79 +95,340 @@
       "name": "flow",
       "nature": "event",
       "columns": [
-        { "name": "id", "type": "integer", "identity": true },
-        { "name": "log_digest", "type": "text" },
-        { "name": "observed_at", "type": "integer" },
-        { "name": "ingested_at", "type": "integer" },
-        { "name": "interface_device", "type": "text" },
-        { "name": "interface_lookup_state", "type": "text" },
-        { "name": "src_interface_id", "type": "integer", "nullable": true, "references": "installation.interface(id)" },
-        { "name": "dst_interface_id", "type": "integer", "nullable": true, "references": "installation.interface(id)" },
-        { "name": "src_client_id", "type": "integer", "nullable": true, "references": "installation.client(id)" },
-        { "name": "dst_client_id", "type": "integer", "nullable": true, "references": "installation.client(id)" },
-        { "name": "src_address", "type": "text" },
-        { "name": "dst_address", "type": "text" },
-        { "name": "src_port", "type": "integer", "nullable": true },
-        { "name": "dst_port", "type": "integer", "nullable": true },
-        { "name": "protocol", "type": "text" },
-        { "name": "ip_version", "type": "integer" },
-        { "name": "action", "type": "text" },
-        { "name": "direction", "type": "text" },
-        { "name": "log_reason", "type": "text", "nullable": true },
-        { "name": "packet_bytes", "type": "integer", "role": "measure", "unit": "byte" },
-        { "name": "rid", "type": "text", "nullable": true },
-        { "name": "rule_id", "type": "integer", "nullable": true, "references": "installation.rule(id)" },
-        { "name": "rule_lookup_state", "type": "text" },
-        { "name": "src_is_this_firewall", "type": "boolean", "default": "false" },
-        { "name": "dst_is_this_firewall", "type": "boolean", "default": "false" },
-        { "name": "ip_id", "type": "integer", "nullable": true },
-        { "name": "tcp_seq", "type": "integer", "nullable": true },
-        { "name": "pair_outcome", "type": "text", "nullable": true },
-        { "name": "paired_flow_id", "type": "integer", "nullable": true },
-        { "name": "traffic_scope", "type": "text" },
-        { "name": "changed_at", "type": "integer", "nullable": true }
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "log_digest",
+          "type": "text"
+        },
+        {
+          "name": "observed_at",
+          "type": "integer"
+        },
+        {
+          "name": "ingested_at",
+          "type": "integer"
+        },
+        {
+          "name": "interface_device",
+          "type": "text"
+        },
+        {
+          "name": "interface_lookup_state",
+          "type": "text"
+        },
+        {
+          "name": "src_interface_id",
+          "type": "integer",
+          "nullable": true,
+          "references": "installation.interface(id)"
+        },
+        {
+          "name": "dst_interface_id",
+          "type": "integer",
+          "nullable": true,
+          "references": "installation.interface(id)"
+        },
+        {
+          "name": "src_client_id",
+          "type": "integer",
+          "nullable": true,
+          "references": "installation.client(id)"
+        },
+        {
+          "name": "dst_client_id",
+          "type": "integer",
+          "nullable": true,
+          "references": "installation.client(id)"
+        },
+        {
+          "name": "src_address",
+          "type": "text"
+        },
+        {
+          "name": "dst_address",
+          "type": "text"
+        },
+        {
+          "name": "src_port",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "dst_port",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "protocol",
+          "type": "text"
+        },
+        {
+          "name": "ip_version",
+          "type": "integer"
+        },
+        {
+          "name": "action",
+          "type": "text"
+        },
+        {
+          "name": "direction",
+          "type": "text"
+        },
+        {
+          "name": "log_reason",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "packet_bytes",
+          "type": "integer",
+          "role": "measure",
+          "unit": "byte"
+        },
+        {
+          "name": "rid",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "rule_id",
+          "type": "integer",
+          "nullable": true,
+          "references": "installation.rule(id)"
+        },
+        {
+          "name": "rule_lookup_state",
+          "type": "text"
+        },
+        {
+          "name": "src_is_this_firewall",
+          "type": "boolean",
+          "default": "false"
+        },
+        {
+          "name": "dst_is_this_firewall",
+          "type": "boolean",
+          "default": "false"
+        },
+        {
+          "name": "ip_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "tcp_seq",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "pair_outcome",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "paired_flow_id",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "traffic_scope",
+          "type": "text"
+        },
+        {
+          "name": "changed_at",
+          "type": "integer",
+          "nullable": true
+        }
       ],
-      "primary_key": ["id"],
+      "primary_key": [
+        "id"
+      ],
       "writable_by": [
-        { "plugin": "clients", "columns": ["src_interface_id", "src_client_id", "src_is_this_firewall",
-                                           "dst_interface_id", "dst_client_id", "dst_is_this_firewall",
-                                           "traffic_scope", "pair_outcome", "paired_flow_id", "changed_at"] }
+        {
+          "plugin": "clients",
+          "columns": [
+            "src_interface_id",
+            "src_client_id",
+            "src_is_this_firewall",
+            "dst_interface_id",
+            "dst_client_id",
+            "dst_is_this_firewall",
+            "traffic_scope",
+            "pair_outcome",
+            "paired_flow_id",
+            "changed_at"
+          ]
+        },
+        {
+          "plugin": "unbound",
+          "columns": [
+            "changed_at"
+          ]
+        }
       ],
       "indexes": [
-        { "columns": ["log_digest"], "unique": true },
-        { "columns": ["observed_at", "traffic_scope", "action", "packet_bytes", "src_interface_id", "dst_interface_id",
-                      "src_client_id", "rule_id", "rule_lookup_state", "pair_outcome", "interface_device"] },
-        { "columns": ["src_interface_id", "observed_at", "src_client_id", "packet_bytes", "action", "traffic_scope",
-                      "dst_address", "pair_outcome", "interface_device"] },
-        { "columns": ["src_client_id", "observed_at"] },
-        { "columns": ["observed_at"], "where": "action IN ('block', 'reject')" },
-        { "columns": ["src_address", "observed_at"] },
-        { "columns": ["dst_address", "observed_at"] },
-        { "columns": ["ingested_at", "observed_at"] },
-        { "columns": ["dst_client_id", "observed_at"] },
-        { "columns": ["interface_device", "canonical_address(src_address)", "canonical_address(dst_address)", "observed_at"] },
-        { "columns": ["changed_at"], "where": "changed_at IS NOT NULL" }
+        {
+          "columns": [
+            "log_digest"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "observed_at",
+            "traffic_scope",
+            "action",
+            "packet_bytes",
+            "src_interface_id",
+            "dst_interface_id",
+            "src_client_id",
+            "rule_id",
+            "rule_lookup_state",
+            "pair_outcome",
+            "interface_device"
+          ]
+        },
+        {
+          "columns": [
+            "src_interface_id",
+            "observed_at",
+            "src_client_id",
+            "packet_bytes",
+            "action",
+            "traffic_scope",
+            "dst_address",
+            "pair_outcome",
+            "interface_device"
+          ]
+        },
+        {
+          "columns": [
+            "src_client_id",
+            "observed_at"
+          ]
+        },
+        {
+          "columns": [
+            "observed_at"
+          ],
+          "where": "action IN ('block', 'reject')"
+        },
+        {
+          "columns": [
+            "src_address",
+            "observed_at"
+          ]
+        },
+        {
+          "columns": [
+            "dst_address",
+            "observed_at"
+          ]
+        },
+        {
+          "columns": [
+            "ingested_at",
+            "observed_at"
+          ]
+        },
+        {
+          "columns": [
+            "dst_client_id",
+            "observed_at"
+          ]
+        },
+        {
+          "columns": [
+            "interface_device",
+            "canonical_address(src_address)",
+            "canonical_address(dst_address)",
+            "observed_at"
+          ]
+        },
+        {
+          "columns": [
+            "changed_at"
+          ],
+          "where": "changed_at IS NOT NULL"
+        }
       ],
       "checks": [
-        { "name": "observed_at_instant", "expression": "observed_at >= 0 AND observed_at < 4102444800" },
-        { "name": "ingested_at_instant", "expression": "ingested_at >= 0 AND ingested_at < 4102444800" },
-        { "name": "interface_lookup_state_known", "expression": "interface_lookup_state IN ('resolved', 'not_found', 'pending')" },
-        { "name": "src_port_range", "expression": "src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)" },
-        { "name": "dst_port_range", "expression": "dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)" },
-        { "name": "ip_version_known", "expression": "ip_version IN (4, 6)" },
-        { "name": "action_known", "expression": "action IN ('pass', 'block', 'reject', 'unknown')" },
-        { "name": "direction_known", "expression": "direction IN ('in', 'out', 'unknown')" },
-        { "name": "packet_bytes_counted", "expression": "packet_bytes >= 0" },
-        { "name": "rule_lookup_state_known", "expression": "rule_lookup_state IN ('resolved', 'not_found', 'pending')" },
-        { "name": "ip_id_range", "expression": "ip_id IS NULL OR (ip_id >= 0 AND ip_id <= 65535)" },
-        { "name": "tcp_seq_range", "expression": "tcp_seq IS NULL OR (tcp_seq >= 0 AND tcp_seq <= 4294967295)" },
-        { "name": "pair_outcome_known", "expression": "pair_outcome IS NULL OR pair_outcome IN ('first_leg', 'second_leg', 'not_paired')" },
-        { "name": "traffic_scope_pinned", "expression": "traffic_scope = CASE WHEN src_is_this_firewall OR dst_is_this_firewall THEN 'this_firewall' WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN 'east_west' ELSE 'north_south' END" },
-        { "name": "this_firewall_source_has_no_client", "expression": "NOT src_is_this_firewall OR src_client_id IS NULL" },
-        { "name": "this_firewall_destination_has_no_client", "expression": "NOT dst_is_this_firewall OR dst_client_id IS NULL" },
-        { "name": "pair_names_its_partner", "expression": "(coalesce(pair_outcome, '') IN ('first_leg', 'second_leg')) = (paired_flow_id IS NOT NULL)" }
+        {
+          "name": "observed_at_instant",
+          "expression": "observed_at >= 0 AND observed_at < 4102444800"
+        },
+        {
+          "name": "ingested_at_instant",
+          "expression": "ingested_at >= 0 AND ingested_at < 4102444800"
+        },
+        {
+          "name": "interface_lookup_state_known",
+          "expression": "interface_lookup_state IN ('resolved', 'not_found', 'pending')"
+        },
+        {
+          "name": "src_port_range",
+          "expression": "src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)"
+        },
+        {
+          "name": "dst_port_range",
+          "expression": "dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)"
+        },
+        {
+          "name": "ip_version_known",
+          "expression": "ip_version IN (4, 6)"
+        },
+        {
+          "name": "action_known",
+          "expression": "action IN ('pass', 'block', 'reject', 'unknown')"
+        },
+        {
+          "name": "direction_known",
+          "expression": "direction IN ('in', 'out', 'unknown')"
+        },
+        {
+          "name": "packet_bytes_counted",
+          "expression": "packet_bytes >= 0"
+        },
+        {
+          "name": "rule_lookup_state_known",
+          "expression": "rule_lookup_state IN ('resolved', 'not_found', 'pending')"
+        },
+        {
+          "name": "ip_id_range",
+          "expression": "ip_id IS NULL OR (ip_id >= 0 AND ip_id <= 65535)"
+        },
+        {
+          "name": "tcp_seq_range",
+          "expression": "tcp_seq IS NULL OR (tcp_seq >= 0 AND tcp_seq <= 4294967295)"
+        },
+        {
+          "name": "pair_outcome_known",
+          "expression": "pair_outcome IS NULL OR pair_outcome IN ('first_leg', 'second_leg', 'not_paired')"
+        },
+        {
+          "name": "traffic_scope_pinned",
+          "expression": "traffic_scope = CASE WHEN src_is_this_firewall OR dst_is_this_firewall THEN 'this_firewall' WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN 'east_west' ELSE 'north_south' END"
+        },
+        {
+          "name": "this_firewall_source_has_no_client",
+          "expression": "NOT src_is_this_firewall OR src_client_id IS NULL"
+        },
+        {
+          "name": "this_firewall_destination_has_no_client",
+          "expression": "NOT dst_is_this_firewall OR dst_client_id IS NULL"
+        },
+        {
+          "name": "pair_names_its_partner",
+          "expression": "(coalesce(pair_outcome, '') IN ('first_leg', 'second_leg')) = (paired_flow_id IS NOT NULL)"
+        }
       ]
     }
   ],
-  "relations": ["pf.relations.sql"]
+  "relations": [
+    "pf.relations.sql"
+  ]
 }

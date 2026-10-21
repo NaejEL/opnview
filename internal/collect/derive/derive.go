@@ -5,59 +5,18 @@ import (
 	"fmt"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/store/attribution"
 )
 
-// The derivation that follows a collection pass: classification, the pairing of the
-// two records of one connection, site-name attribution, and the aggregate refresh.
-//
-// WHY IT FOLLOWS THE PASS RATHER THAN RUNNING INSIDE IT. A flow's ends are placed
-// from on-link evidence, and the evidence for one record can arrive in a record
-// read after it -- later in the same page, in a lease, in a neighbour table. So a
-// record is stored first with neither end placed, and once the whole pass is
-// stored every address it touched is placed from everything held, in sorted
-// order. That is what makes the result independent of the order the records
-// arrived in. The same holds of the pairing, which needs both legs and whether
-// an end is this firewall, and of attribution: a lookup is usually read after the
-// flow it names, because the resolver is polled less often than the filter log,
-// so the resolver pass decides again on every flow its lookups could name.
-//
-// The refresh runs after every filter-log pass, the contract's own rule, and after
-// any derivation that rewrote a stored flow or an attribution, with those slots
-// forced.
+// The derivation that follows a collection pass is the aggregate refresh (ADR 0020): the
+// classification, the pairing and the site-name attribution are the clients and unbound plugins'
+// derivations, which stamp every flow they changed with changed_at; the refresh reads those flows'
+// slots, after every filter-log pass and after every derivation run, and rewrites them.
 
 // Derivation is what one pass asks to be derived.
 type Derivation struct {
 	// Instants are slots the refresh rewrites whatever else changed: the start instants of the connections a
 	// plugin's derivation wrote measure rows for (PA4 of the plugin-API amendment).
 	Instants []int64
-	// attributeFrom and attributeTo bound the flows whose attribution is decided
-	// again; attribute says whether there are any.
-	Attribute     bool
-	attributeFrom int64
-	attributeTo   int64
-}
-
-// Widen extends the attribution window to cover [from, to].
-func (d *Derivation) Widen(from, to int64) {
-	if !d.Attribute {
-		d.Attribute, d.attributeFrom, d.attributeTo = true, from, to
-		return
-	}
-	d.attributeFrom = min(d.attributeFrom, from)
-	d.attributeTo = max(d.attributeTo, to)
-}
-
-// spanOf returns the smallest and largest of some instants.
-func spanOf(instants []int64) (int64, int64, bool) {
-	if len(instants) == 0 {
-		return 0, 0, false
-	}
-	low, high := instants[0], instants[0]
-	for _, instant := range instants[1:] {
-		low, high = min(low, instant), max(high, instant)
-	}
-	return low, high, true
 }
 
 // Derive runs one derivation. Derivations are serialised: two passes finishing
@@ -73,33 +32,14 @@ func (c *Deriver) Derive(ctx context.Context, request Derivation) error {
 // (purge.go).
 func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 	now, watermark := c.refreshInstant()
-	windows := c.AttributionWindows()
-	// How far after a lookup a flow may lie and still be named by it, under either
-	// method: a lookup whose client changed may now name any flow that far after it.
-	maxDelay := windows.Reach()
 
-	// THE CLASSIFICATION AND THE PAIRING ARE THE clients PLUGIN'S (ADR 0020 wave 3): its derivation runs
-	// after every pass that brings evidence and stamps every flow it changed with changed_at. What is
-	// left here is the attribution, which wave 4 moves to unbound, and the refresh, which reads the
-	// changed flows' slots below as it read the forced instants the Go returned.
-
-	// The flows the clients plugin's derivation changed since the last refresh: their slots are rewritten,
-	// and the attribution of their window is decided again, as the Go's placed instants once did.
+	// The flows the plugins' derivations changed since the last refresh -- placed, paired or attributed
+	// again (changed_at) -- have their slots rewritten.
 	changed, err := c.Store.ChangedFlowInstants(ctx, c.refreshedSince())
 	if err != nil {
 		return err
 	}
 	forced := append([]int64(nil), changed...)
-	if low, high, ok := spanOf(changed); ok {
-		request.Widen(low, high+maxDelay)
-	}
-	if request.Attribute {
-		result, err := c.Store.AttributeWith(ctx, request.attributeFrom, request.attributeTo, windows, now)
-		if err != nil {
-			return err
-		}
-		forced = append(forced, result.FlowInstants...)
-	}
 
 	// The slots of the connections a plugin's derivation wrote measure rows for (PA4, PA5): rewritten whatever
 	// else changed, as a declared measure's parts count there.
@@ -121,12 +61,6 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 // rows placed, attributed and in their slots, and its own error is still returned,
 // joined with the derivation's if that failed too.
 func (c *Deriver) DeriveAfter(ctx context.Context, request Derivation, passErr error) error {
-	if !request.Attribute {
-		if passErr != nil {
-			return passErr
-		}
-		return c.Derive(ctx, request)
-	}
 	deriveErr := c.Derive(ctx, request)
 	if passErr == nil {
 		return deriveErr
@@ -200,22 +134,4 @@ func (c *Deriver) refreshInstant() (int64, int64) {
 		watermark = min(watermark, stamped)
 	}
 	return now, watermark
-}
-
-// AttributionMaxDelay is the attribution_max_delay_seconds setting in force.
-func (c *Deriver) AttributionMaxDelay() int64 {
-	c.Mutex.RLock()
-	defer c.Mutex.RUnlock()
-	return c.MaxDelaySeconds
-}
-
-// AttributionWindows are the two attribution settings in force: the timing delay and the
-// cache-answer cap.
-func (c *Deriver) AttributionWindows() attribution.AttributionWindows {
-	c.Mutex.RLock()
-	defer c.Mutex.RUnlock()
-	return attribution.AttributionWindows{
-		LookupTimingDelay: c.MaxDelaySeconds,
-		CacheAnswerDelay:  c.CacheAnswerDelaySeconds,
-	}
 }

@@ -1,6 +1,5 @@
-// Package attribution is the part of the store that names traffic: the DNS resource records the
-// resolvers hold (records.go), the attribution of each flow to the names looked up before it
-// (attribute.go), hostnames resolved across the local data and both address families
-// (dualstack.go), and each provider's record rate (recordrate.go). internal/store composes it
-// into Store.
+// Package attribution is the part of the store that measures each provider's record rate
+// (recordrate.go), for the collection surface. The site-name attribution it was named for, the
+// resolver's records and the host-name resolution are the unbound plugin's derivations since ADR
+// 0020 wave 4 (plugins/unbound). internal/store composes it into Store.
 package attribution

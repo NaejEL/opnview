@@ -105,7 +105,8 @@ const parityGolden = "testdata/clients_parity.golden"
 // defaultDerivationParameters are the core's values at a fresh installation's defaults.
 func defaultDerivationParameters(context.Context) (map[string]any, error) {
 	return map[string]any{"held_margin": int64(flows.DefaultDiscoveryIntervalSeconds),
-		"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds), "retention": config.DefaultRetentionSeconds}, nil
+		"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds), "retention": config.DefaultRetentionSeconds,
+		"attribution_max_delay": config.DefaultAttributionMaxDelaySeconds, "cache_answer_delay": config.DefaultCacheAnswerDelaySeconds}, nil
 }
 
 // classifyWith runs the clients plugin's derivation of a load, as the collector runs it after a pass.

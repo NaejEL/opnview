@@ -244,7 +244,8 @@ func newTestWorld(ctx context.Context, directory string) (*testWorld, error) {
 		// The core's values a SQL-only derivation reads, at their defaults: what a fresh installation runs with.
 		DerivationParameters: func(context.Context) (map[string]any, error) {
 			return map[string]any{"held_margin": int64(flows.DefaultDiscoveryIntervalSeconds),
-				"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds), "retention": config.DefaultRetentionSeconds}, nil
+				"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds), "retention": config.DefaultRetentionSeconds,
+				"attribution_max_delay": config.DefaultAttributionMaxDelaySeconds, "cache_answer_delay": config.DefaultCacheAnswerDelaySeconds}, nil
 		}}
 	taken := map[string]string{}
 	required, err := requiredDirectories(directory)
