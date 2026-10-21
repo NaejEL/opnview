@@ -150,7 +150,7 @@ one (`plugins/insight/plugin.json`, its provider's `live` and the setting `live_
 
 | Key | What it is |
 |---|---|
-| `function` | The function the script exports under the kind's name, called as `(host, provider)` -- `provider` as `collect` is handed it, with `live_cadence_seconds`, the cadence in force -- and answering as `collect` does: `rows` for the plugin's tables, each row stamped with that cadence, and `latest`, the newest instant sampled, which the live figures are told of. A live row never replaces a row already held under its key: a baseline pass that read the same capture keeps its row, and a baseline arriving after replaces the live row, so one capture is stored once. |
+| `function` | The function the script exports under the kind's name, called as `collect` is, `(host, state, provider)` -- `provider` as `collect` is handed it, with `live_cadence_seconds`, the cadence in force -- and answering as `collect` does: `rows` for the plugin's tables, each row stamped with that cadence, and `latest`, the newest instant sampled, which the live figures are told of. A live row never replaces a row already held under its key: a baseline pass that read the same capture keeps its row, and a baseline arriving after replaces the live row, so one capture is stored once. |
 | `cadence_setting` | A declared `integer` setting with a `default` and a `min` of at least 1: the live cadence, in seconds. The cadence in force is never below that `min`, nor below the `floor_seconds` of the endpoints the pass reads. |
 | `endpoints` | The only endpoints the live pass may read, by their names; a stream is refused. |
 

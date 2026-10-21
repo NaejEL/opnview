@@ -893,7 +893,7 @@ exports.measurement_sample = {
   // measure-cost` measures (docs/opnsense-api-survey.md, "LV-C: measuring the firewall-side cost")
   // and which has not been run yet. Its lower bound, 2 s, is a fact of the source rather than a
   // measurement: one traffic/top call is an iftop capture of 2 seconds (traffic_top.py, `-s 2`).
-  live: function (host, provider) {
+  live: function (host, state, provider) {
     var now = host.now();
     var discovery = discoveryFromInterfaces(host);
     var result = { probe: "traffic_top", state: "reachable" };

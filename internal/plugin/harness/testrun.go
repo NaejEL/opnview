@@ -790,7 +790,7 @@ func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, argume
 		// A live pass is handed the provider and its live cadence, at the declared default.
 		argument := w.providerArgument(kind)
 		argument["live_cadence_seconds"] = cadence
-		arguments = append(arguments, argument)
+		arguments = append(arguments, map[string]any{}, argument)
 	}
 	checked, err := w.plugin.CallProvider(context.Background(), w.session(), kind, function, arguments)
 	var refusal *plugin.CallRefusal

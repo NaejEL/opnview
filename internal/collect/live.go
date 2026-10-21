@@ -172,7 +172,7 @@ func (c *Collector) collectLiveFrom(ctx context.Context, declared liveSource, pr
 	kind, key := declared.registration.Kind, declared.registration.Key
 	providerArgument := map[string]any{"kind": kind, "key": key, "id": providerID, "page_size": int64(c.PageSize(kind)),
 		"live_cadence_seconds": int64(cadence / time.Second)}
-	answer, result, err := declared.source.CallLive(ctx, c.Collector, cadence, providerArgument)
+	answer, result, err := declared.source.CallLive(ctx, c.Collector, cadence, map[string]any{}, providerArgument)
 	if err != nil {
 		if result.Outcome != "" {
 			if writeErr := c.WriteAvailability(ctx, providerID, vocab.StateUnavailable, result.Outcome,

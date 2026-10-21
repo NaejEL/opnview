@@ -406,6 +406,11 @@ func load(ctx context.Context, options Options) (*Loaded, error) {
 // admits its endpoints and creates its tables. Nothing of a refused plugin is added anywhere.
 func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, origin, location, onDisk string,
 	taken map[string]string, options Options) (*Plugin, *contract.Refusal) {
+	if options.catalogue == nil {
+		// A plugin loaded on its own -- a test world's -- reads the core datasets, and none of another
+		// plugin's: what a catalogue with no members holds.
+		options.catalogue = &catalogueHolder{loaded: &Loaded{}}
+	}
 	if options.parameters == nil {
 		options.parameters = &parameterHolder{}
 		options.parameters.set(options.DerivationParameters)
