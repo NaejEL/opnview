@@ -72,7 +72,7 @@ func (c *LeaseCoordinator) CollectDHCPLease(ctx context.Context) error {
 	// The resolver's local data names hosts too, so when a local-data source is in use
 	// the examination also waits until it has been read after the lookups were ingested
 	// (internal/collect/core/hostnamesources.go).
-	request := derive.Derivation{Addresses: seen}
+	request := derive.Derivation{}
 	if complete {
 		before, examine, err := c.NoteHostNameSourceRead(ctx, Kind, leasesReadAt)
 		if err != nil {

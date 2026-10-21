@@ -13,7 +13,6 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/aggregates"
-	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -33,8 +32,11 @@ import (
 
 // testNetwork is a database with a network in it.
 type Network struct {
-	DB         *store.Store
-	Now        int64
+	DB  *store.Store
+	Now int64
+	// Classify, when a test sets it, runs the classification: the clients plugin's derivation on the
+	// plugins the test loaded against DB (ADR 0020 wave 3). Nil classifies nothing.
+	Classify   func(t *testing.T)
 	Inside     []Interface
 	Upstream   Interface
 	Clients    []Client
@@ -309,12 +311,14 @@ func (n *Network) FlowsFor(count int, span int64) []Flow {
 
 func Ptr[T any](value T) *T { return &value }
 
-// ClassifyAndRefresh runs what the collector runs after a pass.
+// ClassifyAndRefresh runs what the collector runs after a pass: the classification the test's Classify
+// hook runs -- the clients plugin's derivation, which only a test that loaded the plugins can run (ADR
+// 0020 wave 3) -- then the refresh.
 func (n *Network) ClassifyAndRefresh(t *testing.T, addresses []string) aggregates.Refresh {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := n.DB.Reclassify(ctx, addresses, n.Now); err != nil {
-		t.Fatalf("classifying: %v", err)
+	if n.Classify != nil {
+		n.Classify(t)
 	}
 	refresh, err := RefreshAggregates(ctx, n.DB, 0, n.Now, nil)
 	if err != nil {
@@ -431,22 +435,11 @@ func (n *Network) Legs(c Connection, upstream6 string) (Flow, Flow) {
 	return first, second
 }
 
-// DerivePairs classifies what was stored and pairs and refreshes the window, as a
-// derivation does.
-func (n *Network) DerivePairs(t *testing.T, addresses []string, from, to int64) flows.Pairing {
+// DerivePairs classifies and pairs what was stored and refreshes, as a derivation does: the test's
+// Classify hook runs the clients plugin's derivation, which places and pairs in one run.
+func (n *Network) DerivePairs(t *testing.T, addresses []string, from, to int64) {
 	t.Helper()
-	ctx := context.Background()
-	if _, err := n.DB.Reclassify(ctx, addresses, n.Now); err != nil {
-		t.Fatalf("classifying: %v", err)
-	}
-	paired, err := n.DB.Pair(ctx, from, to, flows.DefaultPairingWindowSeconds)
-	if err != nil {
-		t.Fatalf("pairing: %v", err)
-	}
-	if _, err := RefreshAggregates(ctx, n.DB, 0, n.Now, paired.FlowInstants); err != nil {
-		t.Fatalf("refreshing: %v", err)
-	}
-	return paired
+	n.ClassifyAndRefresh(t, addresses)
 }
 
 // PairState renders every record's outcome and partner by what the record is -- its

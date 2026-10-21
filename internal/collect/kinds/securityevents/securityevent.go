@@ -127,7 +127,7 @@ func (c *SecurityEventCoordinator) collectSecurityEventFrom(ctx context.Context,
 
 		if err := c.Store.InsertSecurityEvent(ctx, providerID, buildSecurityEvent(record, now)); err != nil {
 			// The events stored before this one are placed all the same.
-			return len(stored), derive.On(c.Collector).DeriveAfter(ctx, derive.Derivation{Addresses: addresses}, err)
+			return len(stored), derive.On(c.Collector).DeriveAfter(ctx, derive.Derivation{}, err)
 		}
 		stored = append(stored, fileID)
 		addresses = append(addresses, provider.Text(record, "src_address"), provider.Text(record, "dst_address"))
@@ -149,14 +149,14 @@ func (c *SecurityEventCoordinator) collectSecurityEventFrom(ctx context.Context,
 			RotationState: state,
 			ObservedAt:    now,
 		}); err != nil {
-			return len(stored), derive.On(c.Collector).DeriveAfter(ctx, derive.Derivation{Addresses: addresses}, err)
+			return len(stored), derive.On(c.Collector).DeriveAfter(ctx, derive.Derivation{}, err)
 		}
 	}
 	if len(stored) == 0 {
 		return 0, nil
 	}
 	// Both ends are placed after the pass, by the classification that places a flow's ends.
-	return len(stored), derive.On(c.Collector).Derive(ctx, derive.Derivation{Addresses: addresses})
+	return len(stored), derive.On(c.Collector).Derive(ctx, derive.Derivation{})
 }
 
 // The names of the kind's bounds on its rule-info call (kinds/security_event.json, "bounds").

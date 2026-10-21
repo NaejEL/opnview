@@ -205,8 +205,6 @@ func TestAThirdPartyPluginAddsAMeasureInJavaScriptAlone(t *testing.T) {
 		Direction: "in", Src: toFirewall.src, Dst: toFirewall.dst, SrcPort: storetest.Ptr(toFirewall.srcPort),
 		DstPort: storetest.Ptr(toFirewall.dstPort), Protocol: "tcp", Action: "pass", Bytes: toFirewall.bytes})
 	addresses := network.Insert(t, specs)
-	network.DerivePairs(t, addresses, network.Now-3600, network.Now)
-	network.ClassifyAndRefresh(t, addresses)
 	var loggedBytes int64
 	for _, c := range connections {
 		loggedBytes += c.bytes
@@ -216,7 +214,8 @@ func TestAThirdPartyPluginAddsAMeasureInJavaScriptAlone(t *testing.T) {
 	dataDir := t.TempDir()
 	copyPlugin(t, filepath.Join("testdata", "plugins", thirdParty), filepath.Join(dataDir, plugin.PluginsDirectory,
 		thirdParty))
-	loaded, err := plugin.Load(ctx, plugin.Options{DataDir: dataDir, Store: network.DB})
+	loaded, err := plugin.Load(ctx, plugin.Options{DataDir: dataDir, Store: network.DB,
+		DerivationParameters: defaultDerivationParameters})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,6 +225,10 @@ func TestAThirdPartyPluginAddsAMeasureInJavaScriptAlone(t *testing.T) {
 	if _, found := loaded.Plugin(thirdParty); !found {
 		t.Fatal("the third-party plugin was not loaded")
 	}
+	// The classification and the pairing: the clients plugin's derivation (ADR 0020 wave 3).
+	network.Classify = classifyWith(loaded)
+	network.DerivePairs(t, addresses, network.Now-3600, network.Now)
+	network.ClassifyAndRefresh(t, addresses)
 	clock := collecttest.NewFixedClock(time.Unix(network.Now, 0))
 	collector := collecttest.NewTestCollectorWithSources(t, providertest.NewClient(t, providertest.NewFirewall(t)),
 		network.DB, clock, loaded.Set)

@@ -107,32 +107,6 @@ func heldMargin(ctx context.Context, q sqldb.Querier) (int64, error) {
 	return seconds, nil
 }
 
-// firewallHoldings renders every interval this firewall held an address in, for the
-// evidence fingerprint: empty when it never held it.
-func firewallHoldings(ctx context.Context, q sqldb.Querier, address string) (string, error) {
-	text, err := sqldb.Statement("firewall_address_holdings")
-	if err != nil {
-		return "", err
-	}
-	rows, err := sqldb.Query(ctx, q, text, map[string]any{"address": address})
-	if err != nil {
-		return "", fmt.Errorf("store: firewall_address_holdings: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var parts []string
-	for rows.Next() {
-		var interfaceID, firstSeen int64
-		if err := rows.Scan(&interfaceID, &firstSeen); err != nil {
-			return "", fmt.Errorf("store: firewall_address_holdings: %w", err)
-		}
-		parts = append(parts, fmt.Sprintf("%d@%d", interfaceID, firstSeen))
-	}
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("store: firewall_address_holdings: %w", err)
-	}
-	return strings.Join(parts, ","), nil
-}
-
 // IsThisFirewallAt reports whether an address is this firewall at an instant: a
 // loopback address, or one the firewall held then, as the this_firewall_address view
 // defines "held at an instant". The address is compared in its canonical form, a zone

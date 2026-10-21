@@ -91,7 +91,9 @@ func (c *Collector) RunDerivation(ctx context.Context, derivation provider.Deriv
 			}
 		}
 	}
-	if len(outcome.Instants) > 0 {
+	if outcome.Ran {
+		// The refresh after a run: the slots of the flows the run changed (changed_at), and of the connections
+		// it wrote measure rows for.
 		return derive.On(c.Collector).Derive(ctx, derive.Derivation{Instants: outcome.Instants})
 	}
 	return nil

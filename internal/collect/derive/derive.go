@@ -31,25 +31,11 @@ type Derivation struct {
 	// Instants are slots the refresh rewrites whatever else changed: the start instants of the connections a
 	// plugin's derivation wrote measure rows for (PA4 of the plugin-API amendment).
 	Instants []int64
-	// Addresses are placed, and every row naming them rewritten.
-	Addresses []string
 	// attributeFrom and attributeTo bound the flows whose attribution is decided
 	// again; attribute says whether there are any.
 	Attribute     bool
 	attributeFrom int64
 	attributeTo   int64
-	// pairFrom and pairTo bound the records whose pairing is decided again; pair
-	// says whether there are any. A pass that stores records asks for them, and so
-	// does a classification that moved a record, since whether a source is this
-	// firewall is part of the rule.
-	pair     bool
-	pairFrom int64
-	pairTo   int64
-	// Everything reclassifies every address any row carries, which is what a
-	// change of the upstream interfaces or of the networks that count calls for.
-	// derive sets it itself when what classification reads of the interfaces has
-	// changed since the last derivation that placed every address.
-	Everything bool
 	// Hostnames resolves again the lookups whose logged host name named no single
 	// address, which a lease pass that read every active backend calls for, and only
 	// those ingested before hostnamesBefore, the instant its lease read began: a lookup
@@ -66,16 +52,6 @@ func (d *Derivation) Widen(from, to int64) {
 	}
 	d.attributeFrom = min(d.attributeFrom, from)
 	d.attributeTo = max(d.attributeTo, to)
-}
-
-// WidenPairing extends the pairing window to cover [from, to].
-func (d *Derivation) WidenPairing(from, to int64) {
-	if !d.pair {
-		d.pair, d.pairFrom, d.pairTo = true, from, to
-		return
-	}
-	d.pairFrom = min(d.pairFrom, from)
-	d.pairTo = max(d.pairTo, to)
 }
 
 // spanOf returns the smallest and largest of some instants.
@@ -108,19 +84,10 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 	// method: a lookup whose client changed may now name any flow that far after it.
 	maxDelay := windows.Reach()
 
-	// An interface that became or stopped being upstream, a link-local rule, or a
-	// network discovery detected or the operator added, removed or confirmed: each
-	// changes where an address belongs, so every stored address is placed again,
-	// and each one whose own evidence moved is placed in full.
-	onLink, err := c.Store.OnLinkFingerprint(ctx)
-	if err != nil {
-		return err
-	}
-	c.Mutex.RLock()
-	if onLink != c.OnLinkFingerprint {
-		request.Everything = true
-	}
-	c.Mutex.RUnlock()
+	// THE CLASSIFICATION AND THE PAIRING ARE THE clients PLUGIN'S (ADR 0020 wave 3): its derivation runs
+	// after every pass that brings evidence and stamps every flow it changed with changed_at. What is
+	// left here is the attribution, which wave 4 moves to unbound, and the refresh, which reads the
+	// changed flows' slots below as it read the forced instants the Go returned.
 
 	if request.Hostnames {
 		// Every lookup no lease pass has examined since it was ingested -- the mark is
@@ -129,53 +96,19 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 		if err != nil {
 			return err
 		}
-		request.Addresses = append(request.Addresses, resolved.Addresses...)
 		if low, high, ok := spanOf(resolved.Instants); ok {
 			request.Widen(low, high+maxDelay)
 		}
 	}
 
-	var forced []int64
-	var placed []int64
-	var lookups []int64
-	if request.Everything {
-		result, err := c.Store.ReclassifyAll(ctx, now)
-		if err != nil {
-			return err
-		}
-		placed, lookups = result.FlowInstants, result.LookupInstants
-	} else if len(request.Addresses) > 0 {
-		result, err := c.Store.Reclassify(ctx, request.Addresses, now)
-		if err != nil {
-			return err
-		}
-		placed, lookups = result.FlowInstants, result.LookupInstants
+	// The flows the clients plugin's derivation changed since the last refresh: their slots are rewritten,
+	// and the attribution of their window is decided again, as the Go's placed instants once did.
+	changed, err := c.Store.ChangedFlowInstants(ctx, c.refreshedSince())
+	if err != nil {
+		return err
 	}
-	forced = append(forced, placed...)
-
-	// A record whose end became, or stopped being, this firewall may pair differently;
-	// the pairing then decides the records of the window again, before attribution,
-	// because a second leg is not attributed.
-	if low, high, ok := spanOf(placed); ok {
-		request.WidenPairing(low, high)
-	}
-	if request.pair {
-		paired, err := c.Store.Pair(ctx, request.pairFrom, request.pairTo, c.pairingWindow())
-		if err != nil {
-			return err
-		}
-		forced = append(forced, paired.FlowInstants...)
-		if low, high, ok := spanOf(paired.FlowInstants); ok {
-			request.Widen(low, high)
-		}
-	}
-
-	// A flow whose source client changed may now match other lookups, and a lookup
-	// whose client changed may now match other flows.
-	if low, high, ok := spanOf(placed); ok {
-		request.Widen(low, high)
-	}
-	if low, high, ok := spanOf(lookups); ok {
+	forced := append([]int64(nil), changed...)
+	if low, high, ok := spanOf(changed); ok {
 		request.Widen(low, high+maxDelay)
 	}
 	if request.Attribute {
@@ -197,31 +130,7 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 		return fmt.Errorf("collect: refreshing the aggregates: %w", err)
 	}
 	c.setRefreshedSince(watermark)
-
-	if request.Everything {
-		// Every reference to a remote-address client was cleared by the
-		// reclassification and every slot it fed was rewritten above, so the rows
-		// themselves can go now.
-		if _, err := c.Store.PurgeUnreferencedClients(ctx); err != nil {
-			return err
-		}
-		c.Mutex.Lock()
-		c.OnLinkFingerprint = onLink
-		c.Mutex.Unlock()
-	}
 	return nil
-}
-
-// OnLinkChanged reports whether what classification reads of the interfaces has
-// changed since the last derivation that placed every address.
-func (c *Deriver) OnLinkChanged(ctx context.Context) (bool, error) {
-	onLink, err := c.Store.OnLinkFingerprint(ctx)
-	if err != nil {
-		return false, err
-	}
-	c.Mutex.RLock()
-	defer c.Mutex.RUnlock()
-	return onLink != c.OnLinkFingerprint, nil
 }
 
 // DeriveAfter runs the derivation of what a pass stored, whether or not the pass
@@ -230,7 +139,7 @@ func (c *Deriver) OnLinkChanged(ctx context.Context) (bool, error) {
 // rows placed, attributed and in their slots, and its own error is still returned,
 // joined with the derivation's if that failed too.
 func (c *Deriver) DeriveAfter(ctx context.Context, request Derivation, passErr error) error {
-	if len(request.Addresses) == 0 && !request.Attribute && !request.pair {
+	if !request.Attribute {
 		if passErr != nil {
 			return passErr
 		}
@@ -327,11 +236,4 @@ func (c *Deriver) AttributionWindows() attribution.AttributionWindows {
 		LookupTimingDelay: c.MaxDelaySeconds,
 		CacheAnswerDelay:  c.CacheAnswerDelaySeconds,
 	}
-}
-
-// pairingWindow is the leg_pairing_window_seconds setting in force.
-func (c *Deriver) pairingWindow() int64 {
-	c.Mutex.RLock()
-	defer c.Mutex.RUnlock()
-	return c.PairingWindowSeconds
 }

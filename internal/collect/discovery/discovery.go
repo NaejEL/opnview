@@ -10,7 +10,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -55,21 +54,10 @@ func (c *Discoverer) RefreshDiscovery(ctx context.Context) error {
 	c.DiscoveryEnded()
 
 	// A change of which interfaces are upstream, or of the networks that count, changes what is
-	// outside, so every stored address is placed again. The first discovery of a run is such a
-	// change, which is also what clears any remote-address client an earlier classification left
-	// behind. The derivation itself compares what classification reads of the interfaces with what
-	// it read last (internal/collect/derive/derive.go), so an operator's edit of a network is
-	// caught there too, at the next derivation, whichever pass runs it.
-	if interfacesRead {
-		changed, err := derive.On(c.Collector).OnLinkChanged(ctx)
-		if err != nil {
-			failures = append(failures, err)
-		} else if changed {
-			if err := derive.On(c.Collector).Derive(ctx, derive.Derivation{}); err != nil {
-				failures = append(failures, err)
-			}
-		}
-	}
+	// outside, so every stored address is placed again: the clients plugin's derivation compares what
+	// it reads of the interfaces with what it read last and places everything again when that moved
+	// (plugins/clients, ADR 0020 wave 3), at its next run, whichever pass wakes it.
+	_ = interfacesRead
 
 	if len(failures) > 0 {
 		return fmt.Errorf("collect: runtime discovery was incomplete: %w", core.JoinErrors(failures))

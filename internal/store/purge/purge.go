@@ -6,8 +6,6 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"slices"
-	"sort"
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/store/plugintables"
@@ -19,39 +17,6 @@ import (
 //
 //go:embed purge.sql
 var purgeFile embed.FS
-
-// PurgeDueAddresses returns, sorted, the address of every unplaced end of a flow a purge at now
-// would remove. They are what the collector places before it purges, so the purged part records
-// each flow where the evidence held puts it rather than as it was stored. With an unlimited
-// retention nothing is due and the list is empty.
-func (s *PurgeStore) PurgeDueAddresses(ctx context.Context, now int64) ([]string, error) {
-	const name = "purge_due_addresses"
-	text, err := sqldb.Statement(name)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := sqldb.Query(ctx, s.SQL, text, map[string]any{"now": now})
-	if err != nil {
-		return nil, fmt.Errorf("store: %s: %w", name, err)
-	}
-	defer func() { _ = rows.Close() }()
-	var addresses []string
-	for rows.Next() {
-		var address string
-		if err := rows.Scan(&address); err != nil {
-			return nil, fmt.Errorf("store: %s: %w", name, err)
-		}
-		addresses = append(addresses, address)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: %s: %w", name, err)
-	}
-	// The statement appends its two branches rather than uniting them, so that each keeps its
-	// index condition under every plan (classify.statements.sql); an address both ends of a due
-	// flow carry, or several flows, is returned more than once and kept once here.
-	sort.Strings(addresses)
-	return slices.Compact(addresses), nil
-}
 
 // PurgedBefore returns the furthest horizon the retention purge has applied, and whether a purge
 // with a finite retention has run at all. Every flow and lookup observed before it may have been

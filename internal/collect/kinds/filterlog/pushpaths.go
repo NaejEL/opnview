@@ -252,10 +252,7 @@ func (c *FilterLogCoordinator) storeRecords(ctx context.Context, records []vocab
 		}
 	}
 	for _, record := range kept {
-		stored.Addresses = append(stored.Addresses, record.SrcAddress, record.DstAddress)
 		stored.Widen(record.ObservedAt, record.ObservedAt)
-		// Its other leg may be stored already, by this pass or an earlier one.
-		stored.WidenPairing(record.ObservedAt, record.ObservedAt)
 	}
 	return passErr
 }

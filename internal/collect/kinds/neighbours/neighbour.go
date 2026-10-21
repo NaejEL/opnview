@@ -48,7 +48,7 @@ func (c *NeighbourCoordinator) CollectNeighbour(ctx context.Context) error {
 		}
 		seen = append(seen, addresses...)
 	}
-	if err := derive.On(c.Collector).Derive(ctx, derive.Derivation{Addresses: seen}); err != nil {
+	if err := derive.On(c.Collector).Derive(ctx, derive.Derivation{}); err != nil {
 		failures = append(failures, err)
 	}
 	if len(failures) > 0 {

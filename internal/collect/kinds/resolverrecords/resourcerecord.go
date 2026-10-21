@@ -452,7 +452,7 @@ func (c *ResolverRecordCoordinator) readResourceRecords(ctx context.Context, kin
 // deriveRecordPass runs the derivation a resolver-record pass asked for, if it asked for
 // any, and returns the pass's own error joined with the derivation's.
 func (c *ResolverRecordCoordinator) deriveRecordPass(ctx context.Context, request derive.Derivation, passErr error) error {
-	if !request.Attribute && len(request.Addresses) == 0 && !request.Hostnames {
+	if !request.Attribute && !request.Hostnames {
 		return passErr
 	}
 	deriveErr := derive.On(c.Collector).Derive(ctx, request)

@@ -2,6 +2,7 @@ package plugin_test
 
 import (
 	"context"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -95,25 +96,44 @@ func boolText(value bool) string {
 	return "-"
 }
 
+// parityGolden is what the Go of internal/store/flows placed and paired on the fixture, recorded once
+// before that Go was deleted (commit 5ad1a5a, where this test ran both and compared them): the result
+// the SQL must keep giving.
+const parityGolden = "testdata/clients_parity.golden"
+
+// defaultDerivationParameters are the core's values at a fresh installation's defaults.
+func defaultDerivationParameters(context.Context) (map[string]any, error) {
+	return map[string]any{"held_margin": int64(flows.DefaultDiscoveryIntervalSeconds),
+		"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds)}, nil
+}
+
+// classifyWith runs the clients plugin's derivation of a load, as the collector runs it after a pass.
+func classifyWith(loaded *plugin.Loaded) func(t *testing.T) {
+	return func(t *testing.T) {
+		t.Helper()
+		clients, found := loaded.Plugin("clients")
+		if !found {
+			t.Fatal("the clients plugin did not load")
+		}
+		if _, err := clients.RunDerivation(context.Background(), nil, "place", storetest.ReferenceNow); err != nil {
+			t.Fatalf("the clients derivation: %v", err)
+		}
+	}
+}
+
 func TestTheClientsDerivationPlacesAndPairsAsTheGoDid(t *testing.T) {
 	ctx := context.Background()
 
-	byGo := storetest.NewNetwork(t, 2, 4)
-	specs := parityFixture(byGo)
-	addresses := byGo.Insert(t, specs)
-	low, high := specs[0].ObservedAt, specs[0].ObservedAt
-	for _, spec := range specs {
-		low, high = min(low, spec.ObservedAt), max(high, spec.ObservedAt)
+	recorded, err := os.ReadFile(parityGolden)
+	if err != nil {
+		t.Fatalf("the recorded result of the Go: %v", err)
 	}
-	byGo.DerivePairs(t, addresses, low, high)
-	want := snapshot(t, byGo.DB)
+	want := strings.TrimSuffix(string(recorded), "\n")
 
 	bySQL := storetest.NewNetwork(t, 2, 4)
+	specs := parityFixture(bySQL)
 	bySQL.Insert(t, specs)
-	loaded, err := plugin.Load(ctx, plugin.Options{Store: bySQL.DB, DerivationParameters: func(context.Context) (map[string]any, error) {
-		return map[string]any{"held_margin": int64(flows.DefaultDiscoveryIntervalSeconds),
-			"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds)}, nil
-	}})
+	loaded, err := plugin.Load(ctx, plugin.Options{Store: bySQL.DB, DerivationParameters: defaultDerivationParameters})
 	if err != nil {
 		t.Fatal(err)
 	}

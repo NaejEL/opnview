@@ -124,7 +124,6 @@ func (c *LookupCoordinator) CollectDNSLookup(ctx context.Context) error {
 				continue
 			}
 			newOnThisPage++
-			stored.Addresses = append(stored.Addresses, lookup.ClientAddress)
 			// A lookup can name a flow up to the timing delay after it, and through the
 			// resolver's cache up to the cache-answer cap after it.
 			stored.Widen(record.LookedUpAt, record.LookedUpAt+derive.On(c.Collector).AttributionWindows().Reach())

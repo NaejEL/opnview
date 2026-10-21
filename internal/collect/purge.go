@@ -61,15 +61,11 @@ func (c *Collector) Purge(ctx context.Context) error {
 	c.DeriveMutex.Lock()
 	defer c.DeriveMutex.Unlock()
 
-	// One instant for both, so the purge removes exactly the flows the derivation
-	// was asked to place.
+	// The flows the purge removes were placed by the clients plugin's derivation after the pass that
+	// stored them (ADR 0020 wave 3); the refresh before the purge reads what it changed since.
 	now := c.Now()
-	due, err := c.Store.PurgeDueAddresses(ctx, now)
-	if err != nil {
-		return err
-	}
-	if err := c.DeriveLocked(ctx, derive.Derivation{Addresses: due}); err != nil {
-		return fmt.Errorf("collect: placing what the purge is about to remove: %w", err)
+	if err := c.DeriveLocked(ctx, derive.Derivation{}); err != nil {
+		return fmt.Errorf("collect: refreshing before the purge: %w", err)
 	}
 	if err := c.Store.Purge(ctx, now); err != nil {
 		return err
