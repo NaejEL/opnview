@@ -37,7 +37,7 @@ func TestPluginTestRunsAPluginsOwnTestsWithoutGo(t *testing.T) {
 					return { result: { probe: "status", state: response.ok ? "reachable" : "unavailable",
 						outcome: response.ok ? "healthy" : "plugin_not_installed" } };
 				},
-				leases: function () {
+				collect: function () {
 					return { result: { probe: "status", state: "unavailable", outcome: "read_not_supported" },
 						unsupported: "an example reads nothing" };
 				}

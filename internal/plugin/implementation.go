@@ -226,7 +226,7 @@ func declaredContract(kind string) provider.Contract {
 		Kind: kind,
 		Functions: []provider.Function{
 			{Name: "probe", Arguments: "host", Returns: "probe_answer"},
-			{Name: "collect", Arguments: "host, state", Returns: "collect_answer"},
+			{Name: "collect", Arguments: "host, state, provider", Returns: "collect_answer"},
 		},
 		Records: []provider.Record{
 			{Name: "probe_answer", Fields: []provider.Field{

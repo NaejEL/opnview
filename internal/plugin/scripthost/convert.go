@@ -274,18 +274,23 @@ func checkRow(table plugindecl.PluginTable, row map[string]any, path string) (ma
 	for _, column := range table.Columns {
 		declared[column.Name] = column
 	}
+	// An identity or a generated column is the database's to fill (ADR 0019, ADR 0020).
 	keys := make([]string, 0, len(row))
 	for key := range row {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if _, known := declared[key]; !known {
+		column, known := declared[key]
+		if !known {
 			return nil, fmt.Errorf("%s.%s is not a column of %s", path, key, table.Table)
+		}
+		if !column.Written() {
+			return nil, fmt.Errorf("%s.%s is a column of %s the database fills; a row never carries it", path, key, table.Table)
 		}
 	}
 	converted := make(map[string]any, len(table.Columns))
-	for _, column := range table.Columns {
+	for _, column := range table.WrittenColumns() {
 		value, present := row[column.Name]
 		if !present || value == nil {
 			if !column.Nullable {

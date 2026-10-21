@@ -20,14 +20,15 @@ test("Dnsmasq is separable when it serves DHCP ranges", function (t) {
   t.assert(probe.error === null && probe.result.separable, "a serving backend gave " + JSON.stringify(probe));
 });
 
-test("Dnsmasq leases are read from the fixture with no validity start", function (t) {
+test("Dnsmasq leases are read from the fixture into the leases plugin's table, with no validity start", function (t) {
   t.answer("leases", { fixture: "dnsmasq_leases.json" });
-  var read = t.call("dhcp_lease", "leases", 100);
-  if (read.error !== null || !read.leases || read.leases.length === 0) {
+  var read = t.call("dhcp_lease", "collect", {});
+  var rows = read.rows && read.rows["leases.dhcp_lease"];
+  if (read.error !== null || !rows || rows.length === 0) {
     t.fatal("reading the fixture gave " + JSON.stringify(read));
   }
-  read.leases.forEach(function (lease) {
-    t.assert(lease.starts_at === undefined, "a Dnsmasq lease reports the start " + lease.starts_at +
+  rows.forEach(function (lease) {
+    t.assert(lease.starts_at === null, "a Dnsmasq lease reports the start " + lease.starts_at +
       "; only Kea reports one");
   });
 });
@@ -35,11 +36,12 @@ test("Dnsmasq leases are read from the fixture with no validity start", function
 // Dnsmasq's own fields are decoded here, in the plugin (PA11 of the plugin-API amendment): it reports
 // the interface under its device as well, a reservation through is_reserved, and no lease state
 // beside it, so a lease that is not a reservation is `unknown` rather than a guess.
-test("Dnsmasq's lease fields are decoded into the dhcp_lease contract", function (t) {
+test("Dnsmasq's lease fields are decoded into the leases table's row", function (t) {
   t.answer("leases", { fixture: "dnsmasq_leases.json" });
-  var read = t.call("dhcp_lease", "leases", 100);
-  t.equal(read.leases.length, 3, "the leases read");
-  var first = read.leases[0];
+  var read = t.call("dhcp_lease", "collect", {});
+  var rows = read.rows["leases.dhcp_lease"];
+  t.equal(rows.length, 3, "the leases read");
+  var first = rows[0];
   t.equal(first.address, "198.51.100.10", "the address");
   t.equal(first.mac, "0a:11:22:33:44:55", "the hardware address, as Dnsmasq spells it");
   t.equal(first.dhcp_client_id, "example-client-identifier-one", "the client identifier");
@@ -47,8 +49,8 @@ test("Dnsmasq's lease fields are decoded into the dhcp_lease contract", function
   t.equal(first.interface_device, "exdev0", "the interface's device");
   t.equal(first.expires_at, 1750003600, "the expiry");
   t.equal(first.lease_state, "unknown", "a lease that is not a reservation");
-  t.equal(read.leases[2].lease_state, "reserved", "a reservation");
-  t.assert(read.leases[2].expires_at === undefined, "a reservation reports an expiry");
+  t.equal(rows[2].lease_state, "reserved", "a reservation");
+  t.assert(rows[2].expires_at === null, "a reservation reports an expiry");
 });
 
 // The resolver: lookups.

@@ -31,8 +31,8 @@ exports.dhcp_lease = {
     return { result: result };
   },
 
-  // leases refuses, with the reason.
-  leases: function () {
+  // collect refuses, with the reason.
+  collect: function () {
     return {
       result: { probe: "status", state: "unavailable", outcome: "read_not_supported" },
       unsupported: "the ISC lease endpoint answered 404 on the surveyed firmware and its field contract " +

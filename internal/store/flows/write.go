@@ -600,62 +600,6 @@ func (s *FlowStore) ClientRefByAddressSince(ctx context.Context, address string,
 	return id, interfaceID, true, nil
 }
 
-// InsertDHCPLease writes one lease generation, attributed to the server that issued
-// it. A reissue is a second row rather than an overwrite, so ON CONFLICT DO NOTHING
-// is the whole of the idempotence, and the conflict is on
-// (address, generation_key, provider_id).
-//
-// Two of those three are there for reasons worth keeping together. The GENERATION
-// KEY rather than the validity start, because the start is null on every backend
-// that cannot report one and a null in a uniqueness constraint is distinct from
-// every other null — keying on it would have made a re-poll of such a lease insert
-// a row every time. The PROVIDER, because this kind admits several concurrently
-// active servers, so one address legitimately leased on two scopes is two leases
-// and not one contested row. The provider is a parameter rather than a field of the
-// struct so that a caller cannot leave it out of a sixteen-field literal and
-// discover it from a foreign-key violation.
-func (s *FlowStore) InsertDHCPLease(ctx context.Context, providerID int64, lease vocab.DHCPLease) error {
-	return s.InsertDHCPLeases(ctx, providerID, []vocab.DHCPLease{lease})
-}
-
-// InsertDHCPLeases is InsertDHCPLease over every lease of a pass, in ONE statement whatever their
-// number (PA17 of specs/SPEC-backend-completion-plugins.md).
-func (s *FlowStore) InsertDHCPLeases(ctx context.Context, providerID int64, leases []vocab.DHCPLease) error {
-	if len(leases) == 0 {
-		return nil
-	}
-	rows := make([]map[string]any, len(leases))
-	for index, lease := range leases {
-		rows[index] = map[string]any{"client_id": lease.ClientID, "backend": lease.Backend,
-			"address": lease.Address, "mac": lease.MAC, "hostname": lease.Hostname,
-			"dhcp_client_id": lease.DHCPClientID, "duid": lease.DUID, "iaid": lease.IAID,
-			"vendor_hint": lease.VendorHint, "lease_state": lease.LeaseState, "interface_id": lease.InterfaceID,
-			"starts_at": lease.StartsAt, "generation_key": lease.GenerationKey, "expires_at": lease.ExpiresAt,
-			"observed_at": lease.ObservedAt, "ordinal": index}
-	}
-	encoded, err := json.Marshal(rows)
-	if err != nil {
-		return fmt.Errorf("store: encoding leases: %w", err)
-	}
-	_, err = s.SQL.ExecContext(ctx,
-		`INSERT INTO dhcp_lease (provider_id, client_id, backend, address, mac, hostname,
-		                         dhcp_client_id, duid, iaid, vendor_hint, lease_state,
-		                         interface_id, starts_at, generation_key, expires_at, observed_at)
-		 SELECT CAST($1 AS BIGINT), r.client_id, r.backend, r.address, r.mac, r.hostname, r.dhcp_client_id,
-		        r.duid, r.iaid, r.vendor_hint, r.lease_state, r.interface_id, r.starts_at, r.generation_key,
-		        r.expires_at, r.observed_at
-		 FROM jsonb_to_recordset(CAST($2 AS jsonb)) AS r (client_id BIGINT, backend TEXT,
-		      address TEXT, mac TEXT, hostname TEXT, dhcp_client_id TEXT, duid TEXT, iaid TEXT,
-		      vendor_hint TEXT, lease_state TEXT, interface_id BIGINT, starts_at BIGINT, generation_key TEXT,
-		      expires_at BIGINT, observed_at BIGINT, ordinal BIGINT)
-		 ORDER BY r.ordinal
-		 ON CONFLICT (address, generation_key, provider_id) DO NOTHING`, providerID, string(encoded))
-	if err != nil {
-		return fmt.Errorf("store: writing %d leases: %w", len(leases), err)
-	}
-	return nil
-}
-
 // InsertFlow writes one filter-log record, or does nothing if its digest is
 // already stored, or if it was observed before the furthest horizon the retention
 // purge has applied (retention_purge).

@@ -28,6 +28,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
@@ -243,7 +244,7 @@ func newTestWorld(ctx context.Context, directory string) (*testWorld, error) {
 		// The core's values a SQL-only derivation reads, at their defaults: what a fresh installation runs with.
 		DerivationParameters: func(context.Context) (map[string]any, error) {
 			return map[string]any{"held_margin": int64(flows.DefaultDiscoveryIntervalSeconds),
-				"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds)}, nil
+				"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds), "retention": config.DefaultRetentionSeconds}, nil
 		}}
 	taken := map[string]string{}
 	required, err := requiredDirectories(directory)
@@ -780,6 +781,11 @@ func discoveryOf(value goja.Value) provider.Discovery {
 // field names, its result, and its error, its unsupported reason or its failure code.
 func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, arguments []any) goja.Value {
 	reply := map[string]any{"error": nil, "unsupported": nil, "failure": nil}
+	if function == "collect" && len(arguments) < 2 {
+		// A test calling collect without saying which provider it is: the plugin's provider of the kind, with
+		// the registry id its rows name and the kind's page size, as the collector hands them (ADR 0020 wave 4).
+		arguments = append(arguments, w.providerArgument(kind))
+	}
 	checked, err := w.plugin.CallProvider(context.Background(), w.session(), kind, function, arguments)
 	var refusal *plugin.CallRefusal
 	if errors.As(err, &refusal) {
@@ -1002,3 +1008,24 @@ func (c worldClock) Now() time.Time { return c.reference.Add(time.Since(c.starte
 
 // After waits in real time.
 func (worldClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+// providerArgument is what the collector hands a collect as its provider: the plugin's provider of the
+// kind, its registry id on the test database when there is one, and the kind's page size at its default.
+func (w *testWorld) providerArgument(kind string) map[string]any {
+	key := w.plugin.Name
+	for _, declared := range w.plugin.Providers {
+		if declared.Kind == kind {
+			key = declared.Key
+		}
+	}
+	argument := map[string]any{"kind": kind, "key": key, "id": int64(0), "page_size": int64(0)}
+	if contract, core := provider.ContractOf(kind); core && contract.PageSize != nil {
+		argument["page_size"] = int64(contract.PageSize.Default)
+	}
+	if w.database != nil {
+		if id, err := w.database.ProviderID(context.Background(), kind, key); err == nil {
+			argument["id"] = id
+		}
+	}
+	return argument
+}

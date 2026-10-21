@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/kinds/declared"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 )
@@ -99,11 +100,25 @@ func (c *Collector) coreTasks(settings *config.Live) []core.Task {
 		if cadence.Role != provider.CadencePoll {
 			continue
 		}
-		pass, registered := c.PassOf(cadence.Kind)
+		kind := cadence.Kind
+		pass, registered := c.PassOf(kind)
 		if !registered {
+			// A core kind with no coordinator left is stored by its owner plugin's table (ADR 0020 wave 4): one
+			// loop per registered provider, each a generic pass handing the script's rows to the store, at the
+			// kind's own interval.
+			for _, registration := range c.SourceSet.Of(kind) {
+				key := registration.Key
+				tasks = append(tasks, core.Task{
+					Name:     kind + " " + key,
+					Interval: settings.Interval(func(s config.Config) time.Duration { return s.Interval(kind, provider.CadencePoll) }),
+					Run: func(ctx context.Context) error {
+						return declared.On(c.Collector).CollectDeclaredKind(ctx, kind, key)
+					},
+					RunAtStart: true,
+				})
+			}
 			continue
 		}
-		kind := cadence.Kind
 		run := c.afterPass(kind, pass)
 		// A kind whose coordinator declared that its pass reads what discovery publishes waits for the
 		// run's first discovery (N5, live validation of 17 October 2026).

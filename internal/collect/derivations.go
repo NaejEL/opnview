@@ -9,6 +9,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -99,8 +100,9 @@ func (c *Collector) RunDerivation(ctx context.Context, derivation provider.Deriv
 	return nil
 }
 
-// DerivationParameters supplies the core's values to the plugins' SQL-only derivations (ADR 0020, wave 3):
-// the discovery interval a held address is read with, and the leg-pairing window.
+// DerivationParameters supplies the core's values to the plugins' SQL-only derivations (ADR 0020, waves 3
+// and 4): the discovery interval a held address is read with, the leg-pairing window, and the installation's
+// retention in seconds, zero for an unlimited one.
 func (c *Collector) DerivationParameters(ctx context.Context) (map[string]any, error) {
 	held, err := c.Store.HeldMargin(ctx)
 	if err != nil {
@@ -109,5 +111,6 @@ func (c *Collector) DerivationParameters(ctx context.Context) (map[string]any, e
 	c.Mutex.RLock()
 	window := c.PairingWindowSeconds
 	c.Mutex.RUnlock()
-	return map[string]any{"held_margin": held, "leg_pairing_window": window}, nil
+	retention := c.SettingSeconds(ctx, config.KeyRetentionSeconds, config.DefaultRetentionSeconds)
+	return map[string]any{"held_margin": held, "leg_pairing_window": window, "retention": retention}, nil
 }

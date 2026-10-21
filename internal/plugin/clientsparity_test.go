@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/flows"
@@ -104,7 +105,7 @@ const parityGolden = "testdata/clients_parity.golden"
 // defaultDerivationParameters are the core's values at a fresh installation's defaults.
 func defaultDerivationParameters(context.Context) (map[string]any, error) {
 	return map[string]any{"held_margin": int64(flows.DefaultDiscoveryIntervalSeconds),
-		"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds)}, nil
+		"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds), "retention": config.DefaultRetentionSeconds}, nil
 }
 
 // classifyWith runs the clients plugin's derivation of a load, as the collector runs it after a pass.

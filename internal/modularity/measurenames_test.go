@@ -22,8 +22,7 @@ import (
 // list may only shrink.
 var measureNameAllowed = map[string]string{
 	// The Go NetFlow join's paths left this list with the join in Lot 3 (PA9); these two name the protocol.
-	"internal/collect/collecttest/": "the fake firewall's endpoint names, insight's netflow_is_enabled among them",
-	"internal/store/schema.sql":     "the push gap reasons named after the NetFlow protocol",
+	"internal/store/schema.sql": "the push gap reasons named after the NetFlow protocol",
 	// The protocol, not the measure: NetFlow v9 and IPFIX are push protocols, named after their RFCs.
 	"internal/push/protocols/": "the NetFlow push protocol's directory and the generated list linking it " +
 		"(PA20's allow-list)",

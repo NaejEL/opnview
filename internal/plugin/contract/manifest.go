@@ -283,9 +283,12 @@ type TableDeclaration struct {
 }
 
 // WriteGrant is one plugin allowed to write a table of another (ADR 0019): with Columns, UPDATE of
-// those columns alone; without, INSERT, UPDATE and DELETE of the whole table.
+// those columns alone; without, INSERT, UPDATE and DELETE of the whole table. A grant naming a Kind
+// instead of a Plugin is to every plugin providing that kind, whole, whoever ships it (ADR 0020 wave
+// 4): the table the kind's sources write their rows into.
 type WriteGrant struct {
-	Plugin  string   `json:"plugin"`
+	Plugin  string   `json:"plugin,omitempty"`
+	Kind    string   `json:"kind,omitempty"`
 	Columns []string `json:"columns,omitempty"`
 }
 

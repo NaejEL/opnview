@@ -66,7 +66,6 @@
     "collection.setting.retention_seconds": "Retention (seconds), 0 for unlimited",
     "collection.setting.aggregate_mode": "Site names",
     "collection.setting.leg_pairing_window_seconds": "Pairing window (seconds)",
-    "collection.setting.lease_backend_failure_pass_limit": "Failed lease passes before a backend is passed over",
     "collection.setting.attribution_max_delay_seconds": "Timing window (seconds)",
     "collection.setting.attribution_max_cache_answer_delay_seconds": "Cache answer cap (seconds)",
     "collection.aggregate_mode.full": "Shown",

@@ -8,6 +8,52 @@
 -- Parameters: :since (the last successful run, NULL before the first), :now, :held_margin (the
 -- discovery interval), :leg_pairing_window, :setting_address_idle_window_seconds.
 
+-- THE LEASE IDENTITIES. A lease names the machine that holds it: by the client identifier the server
+-- reported -- the DHCP client id, the DUID or the IAID, the first present -- then by the hardware
+-- address, and otherwise at the address level, on the interface the leases plugin resolved. The client
+-- is minted or brought up to date -- an interface, a hardware address, a host name or a vendor it did
+-- not have, its last address, its last sighting -- and the lease is pointed at it (ADR 0020 wave 4; the
+-- Go lease pass did the same before storing each lease). Only the leases the pass stored or brought
+-- up to date are looked at; of several reporting one identity in a pass, the last stored wins.
+-- statement: mint_lease_clients
+WITH leases AS (
+    SELECT l.id, l.address, l.interface_id, l.mac, l.hostname, l.vendor_hint,
+           CASE WHEN coalesce(nullif(l.dhcp_client_id, ''), nullif(l.duid, ''), nullif(l.iaid, '')) IS NOT NULL
+                    THEN 'dhcp_client_id'
+                WHEN l.mac IS NOT NULL THEN 'mac'
+                ELSE 'address_in_interface'
+           END AS identity_kind,
+           CASE WHEN coalesce(nullif(l.dhcp_client_id, ''), nullif(l.duid, ''), nullif(l.iaid, '')) IS NOT NULL
+                    THEN coalesce(nullif(l.dhcp_client_id, ''), nullif(l.duid, ''), nullif(l.iaid, ''))
+                WHEN l.mac IS NOT NULL THEN l.mac
+                ELSE coalesce(CAST(l.interface_id AS TEXT), 'unknown') || '|' || l.address || '|'
+                     || ((CAST(:now AS BIGINT) / 86400) * 86400)
+           END AS identity_key
+    FROM plugin_leases.dhcp_lease AS l
+    WHERE CAST(:since AS BIGINT) IS NULL OR l.observed_at >= CAST(:since AS BIGINT)
+),
+minted AS (
+    INSERT INTO plugin_installation.client (identity_kind, identity_key, interface_id, mac, hostname, vendor_hint,
+                                            last_address, first_seen_at, last_seen_at)
+    SELECT DISTINCT ON (identity_kind, identity_key) identity_kind, identity_key, interface_id, mac, hostname,
+           vendor_hint, address, CAST(:now AS BIGINT), CAST(:now AS BIGINT)
+    FROM leases
+    ORDER BY identity_kind, identity_key, id DESC
+    ON CONFLICT (identity_kind, identity_key) DO UPDATE SET
+        interface_id = coalesce(excluded.interface_id, client.interface_id),
+        mac          = coalesce(excluded.mac, client.mac),
+        hostname     = coalesce(excluded.hostname, client.hostname),
+        vendor_hint  = coalesce(excluded.vendor_hint, client.vendor_hint),
+        last_address = coalesce(excluded.last_address, client.last_address),
+        last_seen_at = excluded.last_seen_at
+    RETURNING id, identity_kind, identity_key)
+UPDATE plugin_leases.dhcp_lease AS l
+SET client_id = m.id
+FROM leases AS x
+JOIN minted AS m ON m.identity_kind = x.identity_kind AND m.identity_key = x.identity_key
+WHERE l.id = x.id
+  AND l.client_id IS DISTINCT FROM m.id;
+
 -- THE ON-LINK FINGERPRINT. What the classification reads of the interfaces -- which are upstream,
 -- which admit link-local evidence -- and the networks that count (decision D1: every operator network,
 -- and every detected one not removed that discovery still reports). When it changed, every address
@@ -50,7 +96,7 @@ FROM (SELECT f.src_address AS address FROM plugin_pf.flow AS f
       WHERE (SELECT changed FROM plugin_clients.onlink) OR CAST(:since AS BIGINT) IS NULL
          OR f.ingested_at >= CAST(:since AS BIGINT)
       UNION ALL
-      SELECT l.address FROM opnview.dhcp_lease AS l
+      SELECT l.address FROM plugin_leases.dhcp_lease AS l
       WHERE (SELECT changed FROM plugin_clients.onlink) OR CAST(:since AS BIGINT) IS NULL
          OR l.observed_at >= CAST(:since AS BIGINT) - CAST(:setting_address_idle_window_seconds AS BIGINT)
       UNION ALL
@@ -108,7 +154,7 @@ FROM (SELECT q.address,
              END AS kind
       FROM (SELECT p2.address,
                    (SELECT l.interface_id
-                    FROM opnview.dhcp_lease AS l
+                    FROM plugin_leases.dhcp_lease AS l
                     JOIN plugin_installation.interface AS i ON i.id = l.interface_id
                     WHERE l.address = p2.address
                       AND NOT i.is_upstream
@@ -557,7 +603,7 @@ WHERE client.last_address IN (SELECT p.address FROM plugin_clients.placement AS 
   AND NOT EXISTS (SELECT 1 FROM plugin_pf.flow AS f WHERE f.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.dst_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.dhcp_lease AS l WHERE l.client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.src_client_id = client.id);
@@ -574,7 +620,7 @@ WHERE (SELECT changed FROM plugin_clients.onlink)
   AND NOT EXISTS (SELECT 1 FROM plugin_pf.flow AS f WHERE f.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.dst_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.dhcp_lease AS l WHERE l.client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.src_client_id = client.id);
@@ -594,7 +640,7 @@ WHERE client.owner_id IS NULL
   AND NOT EXISTS (SELECT 1 FROM plugin_pf.flow AS f WHERE f.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.dst_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.dhcp_lease AS l WHERE l.client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.src_client_id = client.id);

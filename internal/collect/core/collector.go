@@ -91,11 +91,6 @@ type Collector struct {
 	// the two records of one connection may have been logged and still be paired. The
 	// mutex guards it.
 	PairingWindowSeconds int64
-	// LeaseFailureLimit is the lease_backend_failure_pass_limit setting, and
-	// leaseFailures how many lease passes in a row each lease backend has failed,
-	// by provider id; see collectLeases. The mutex guards both.
-	LeaseFailureLimit int64
-	LeaseFailures     map[int64]int64
 	// Ingesting holds the ingestion instant of every pass that has stamped rows with
 	// it and has not yet finished writing them, keyed by a sequence number; the
 	// mutex guards both. The refresh never moves its watermark past the oldest of

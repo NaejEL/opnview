@@ -538,106 +538,9 @@ CREATE TABLE IF NOT EXISTS provider_value (
 -- by the documented cascade, most stable first: DHCP client identity, then MAC,
 -- then address within its interface over a validity interval. A randomised MAC
 -- is one whose second hex digit carries the IEEE locally-administered bit.
--- ---------------------------------------------------------------------------
-
--- ---------------------------------------------------------------------------
--- DHCP lease — one observed lease generation.
--- Source: /api/kea/leases4/search, /api/dnsmasq/leases/search, and the
--- best-effort ISC plugin endpoint. Survey: data source 4. The MAC field is
--- hwaddr on the two current backends and mac on the legacy plugin; it is
--- normalised here.
---
--- starts_at IS NULLABLE, AND generation_key IS WHAT MAKES A RE-POLL IDEMPOTENT.
--- The two were one column and meant two things. Kea reports `valid_lifetime`,
--- so `expire` minus it is a real validity start. Dnsmasq reports no start at
--- all, and a reserved lease reports neither a start nor an expiry; the earlier
--- schema stored the expiry, or the day of observation, in a NOT NULL starts_at
--- and was honest only because a comment beside it said so. A backend that
--- cannot know now says so by storing NULL, and the discriminator that keeps a
--- second poll of one lease from inserting a second row is its own column.
---
--- Identity is (address, generation_key, provider_id): one row per lease
--- generation per server. The server is in it because this kind admits several
--- concurrently active providers (see the registry above), so the SAME address can
--- legitimately be leased by two servers on two scopes, and those are two leases
--- rather than one contested row.
---
--- generation_key is composed by the collector and carries the name of what it
--- rests on, so a reader can tell a real start from a substitute without
--- consulting the backend: `start:<epoch>` when the backend reported a validity
--- start, `expiry:<epoch>` when it reported only an expiry, and
--- `observed_day:<epoch>` for a standing reservation, which is one row per day
--- rather than one per poll. The term is opnview's own and is recorded as such in
--- docs/data-model.md, Vocabulary; nothing in this file parses it or matches on
--- it, and it is opaque to every query.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS dhcp_lease (
-    id             BIGINT PRIMARY KEY,
-    client_id      BIGINT,
-    -- provider_id NAMES THE SERVER THAT ISSUED THIS LEASE, and it is a fact a
-    -- reader is entitled to rather than a component of a de-duplication key.
-    -- This kind admits several concurrently active providers -- one server on one
-    -- VLAN, another on a second -- so a client can hold leases from two servers
-    -- at once, and "which server gave this machine its address" is then a real
-    -- question with a per-lease answer. It joins to provider.display_name, so a
-    -- screen prints the server's name without reconstructing it from an index or
-    -- parsing a composite; the diagnostic query "Leases per client and issuing
-    -- server" in sql/queries/diagnostics.sql is that read, written down and
-    -- executed.
-    --
-    -- NOT NULL, because a lease is issued by a server: there is no provider-less
-    -- lease to model, which is also why the identity below needs no coalesce
-    -- wrapper where measurement_sample's does.
-    provider_id    BIGINT NOT NULL REFERENCES provider (id),
-    -- backend is the normalised vocabulary of RESPONSE SHAPES, and it is kept
-    -- beside provider_id rather than replaced by it: it is what says which
-    -- field-name normalisation produced the row. It is NOT an identity for the
-    -- server, and it is not in the uniqueness constraint any more. The collector writes the
-    -- provider key here, so its values are an open set, as provider_key's are: a third-party
-    -- dhcp_lease plugin writes its own key, and no list of the built-in ones refuses it.
-    backend        TEXT NOT NULL CHECK (length(backend) BETWEEN 1 AND 255),
-    address        TEXT NOT NULL,
-    mac            TEXT CHECK (mac IS NULL OR (length(mac) = 17 AND mac = lower(mac))),
-    hostname       TEXT,
-    dhcp_client_id TEXT,
-    duid           TEXT,
-    iaid           TEXT,
-    vendor_hint    TEXT,
-    lease_state    TEXT NOT NULL
-                   CHECK (lease_state IN ('active', 'expired', 'reserved', 'unknown')),
-    interface_id   BIGINT,
-    starts_at      BIGINT CHECK (starts_at IS NULL
-                                  OR (starts_at >= 0 AND starts_at < 4102444800)),
-    generation_key TEXT NOT NULL CHECK (length(generation_key) > 0),
-    expires_at     BIGINT CHECK (expires_at IS NULL OR (expires_at >= 0 AND expires_at < 4102444800)),
-    observed_at    BIGINT NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
-    -- hostname_label is the host name's FIRST LABEL, lower-cased, a trailing dot
-    -- removed: what a host name the resolver logged as a lookup's client is matched
-    -- on. The resolver logs the name a reverse lookup returned, which may be fully
-    -- qualified, carry a trailing dot or be a bare label, and a lease may carry
-    -- any of the three; comparing the first label of both sides matches all of
-    -- them (step-5A live corrections, causes H1 and H2). lower() folds ASCII case
-    -- only, which is the case DNS names fold (RFC 4343). Generated, so it cannot
-    -- disagree with hostname; nothing writes it.
-    hostname_label TEXT GENERATED ALWAYS AS (
-                       lower(CASE
-                                 WHEN strpos(rtrim(hostname, '.'), '.') > 0
-                                     THEN substr(rtrim(hostname, '.'), 1,
-                                                 strpos(rtrim(hostname, '.'), '.') - 1)
-                                 ELSE rtrim(hostname, '.')
-                             END)) STORED,
-    UNIQUE (address, generation_key, provider_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_dhcp_lease_observed_at ON dhcp_lease (observed_at);
--- A client's lease history, ordered by the instant opnview read the lease rather
--- than by the validity start: the start is now NULL on every backend that cannot
--- report one, and an index leading on a column that is null for a whole backend
--- would order that backend's leases arbitrarily.
-CREATE INDEX IF NOT EXISTS idx_dhcp_lease_client ON dhcp_lease (client_id, observed_at);
--- A host name the resolver logged as a lookup's client, resolved to the address
--- leased under it, by first label.
-CREATE INDEX IF NOT EXISTS idx_dhcp_lease_hostname_label ON dhcp_lease (hostname_label, address);
+-- dhcp_lease -- one observed lease generation per server: the leases plugin's table,
+-- plugin_leases.dhcp_lease, since ADR 0020 wave 4 (plugins/leases/plugin.json), written by the
+-- lease sources it grants and reached unqualified through the bridge by the Go that still reads it.
 
 -- ---------------------------------------------------------------------------
 -- Flow — one filter-log record, allowed or blocked. The blocked events are a
@@ -3566,14 +3469,6 @@ $measure_markers$;
 -- maintainer's default; it is a whole number of seconds, 0 or more, and
 -- internal/config refuses anything else.
 --
--- lease_backend_failure_pass_limit: how many lease passes in a row one DHCP
--- backend may fail before a pass that read every other backend counts as complete,
--- so the unresolved host-name lookups are examined without it (defect L1 of
--- specs/SPEC-test-budget-and-two-live-defects.md; docs/data-model.md, "Host names
--- logged as the client"). 3 is the default, a quarter of an hour at the default
--- lease interval; it is a whole number of passes, 1 or more, and internal/config
--- refuses anything else.
---
 -- heartbeat_interval_seconds and downtime_threshold_seconds: how often the
 -- running service records that it is alive, and how long it must have been gone
 -- for the interval to be recorded in opnview_downtime (SPEC-step-5b-widget-
@@ -3597,7 +3492,6 @@ $measure_markers$;
 SELECT install_assign_id(t::regclass) FROM unnest(ARRAY[
     'account',
     'provider',
-    'dhcp_lease',
     'blocklist',
     'dns_resolution',
     'resource_record_observation',
@@ -3643,7 +3537,6 @@ INSERT INTO setting (key, value, updated_at) VALUES
     ('attribution_max_delay_seconds', '5', CAST(extract(epoch FROM now()) AS BIGINT)),
     ('attribution_max_cache_answer_delay_seconds', '3600', CAST(extract(epoch FROM now()) AS BIGINT)),
     ('leg_pairing_window_seconds', '1', CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('lease_backend_failure_pass_limit', '3', CAST(extract(epoch FROM now()) AS BIGINT)),
     ('heartbeat_interval_seconds', '60', CAST(extract(epoch FROM now()) AS BIGINT)),
     ('downtime_threshold_seconds', '300', CAST(extract(epoch FROM now()) AS BIGINT)),
     ('live_interest_seconds', '30', CAST(extract(epoch FROM now()) AS BIGINT)),

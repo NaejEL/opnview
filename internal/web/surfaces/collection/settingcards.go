@@ -71,10 +71,6 @@ func settingCardSpecs() []settingCardSpec {
 			Key: config.KeyLegPairingWindow, Rule: ruleNonNegative, RefusalKey: msgValueOutOfRange,
 			inForce: func(c config.Config) int64 { return c.LegPairingWindowSeconds },
 		}}},
-		{ID: "lease_backends", Settings: []settingSpec{{
-			Key: config.KeyLeaseBackendFailurePassLimit, Rule: rulePositive, RefusalKey: msgCollectionValueInvalid,
-			inForce: func(c config.Config) int64 { return c.LeaseBackendFailurePassLimit },
-		}}},
 		{ID: "attribution", Settings: []settingSpec{
 			{Key: config.KeyAttributionMaxDelay, Rule: rulePositive, RefusalKey: msgCollectionValueInvalid,
 				inForce: func(c config.Config) int64 { return c.AttributionMaxDelaySeconds }},

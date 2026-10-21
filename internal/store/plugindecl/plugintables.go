@@ -167,10 +167,25 @@ func (t PluginTable) WrittenColumns() []PluginColumn {
 	return written
 }
 
-// WriteGrant is one plugin allowed to write a table of another (ADR 0019).
+// WriteGrant is one plugin allowed to write a table of another (ADR 0019), or, with Kind, every
+// plugin providing a kind, whole (ADR 0020 wave 4).
 type WriteGrant struct {
 	Plugin  string
+	Kind    string
 	Columns []string
+}
+
+// Grants reports whether the grant lets a plugin providing some kinds write the whole table.
+func (g WriteGrant) Grants(plugin string, kinds []string) bool {
+	if g.Kind != "" {
+		for _, kind := range kinds {
+			if kind == g.Kind {
+				return true
+			}
+		}
+		return false
+	}
+	return g.Plugin == plugin && len(g.Columns) == 0
 }
 
 // Growing reports whether the table grows with time, as the schema checks classify every table:
@@ -501,7 +516,31 @@ func (t PluginTable) CounterEmptyDelete(rows []map[string]any) (string, []any, e
 		strings.Join(tuples, ", ") + ") AND " + strings.Join(zero, " AND "), arguments, nil
 }
 
-// UpsertStatement is the INSERT a row of the table is written with: an upsert on the primary key
+// ConflictKey is the key a row written again replaces the held row on: the primary key when the
+// rows carry it, else the table's first unique index (ADR 0020 wave 4: a table numbered by an
+// identity column and written by a pass, such as plugin_leases.dhcp_lease, is keyed by what the
+// source reports). Nil for a table with neither, whose every row is a new row.
+func (t PluginTable) ConflictKey() []string {
+	written := map[string]bool{}
+	for _, column := range t.WrittenColumns() {
+		written[column.Name] = true
+	}
+	carried := len(t.PrimaryKey) > 0
+	for _, name := range t.PrimaryKey {
+		carried = carried && written[name]
+	}
+	if carried {
+		return t.PrimaryKey
+	}
+	for _, index := range t.Indexes {
+		if index.Unique && index.Where == "" && !hasIndexExpression(index.Columns) {
+			return index.Columns
+		}
+	}
+	return nil
+}
+
+// UpsertStatement is the INSERT a row of the table is written with: an upsert on the conflict key
 // when there is one, a plain insert otherwise.
 func (t PluginTable) UpsertStatement() string {
 	names := make([]string, 0, len(t.Columns))
@@ -512,11 +551,12 @@ func (t PluginTable) UpsertStatement() string {
 	}
 	statement := "INSERT INTO " + t.Quoted() + " (" + strings.Join(names, ", ") + ") VALUES (" +
 		strings.Join(marks, ", ") + ")"
-	if len(t.PrimaryKey) == 0 {
+	conflict := t.ConflictKey()
+	if len(conflict) == 0 {
 		return statement
 	}
 	key := map[string]bool{}
-	for _, name := range t.PrimaryKey {
+	for _, name := range conflict {
 		key[name] = true
 	}
 	var updates []string
@@ -526,9 +566,9 @@ func (t PluginTable) UpsertStatement() string {
 		}
 	}
 	if len(updates) == 0 {
-		return statement + " ON CONFLICT (" + quotedList(t.PrimaryKey) + ") DO NOTHING"
+		return statement + " ON CONFLICT (" + quotedList(conflict) + ") DO NOTHING"
 	}
-	return statement + " ON CONFLICT (" + quotedList(t.PrimaryKey) + ") DO UPDATE SET " +
+	return statement + " ON CONFLICT (" + quotedList(conflict) + ") DO UPDATE SET " +
 		strings.Join(updates, ", ")
 }
 
@@ -643,17 +683,29 @@ func (t PluginTable) MultiRowInsert(rows []map[string]any) (string, []any, error
 	return statement, arguments, nil
 }
 
-// LastPerKey keeps, of rows sharing a primary key, the last: one INSERT may not touch a row twice,
-// and the last row written is the one a sequence of single writes would have kept.
+// LastPerKey keeps, of rows sharing a conflict key, the last: one INSERT may not touch a row twice,
+// and the last row written is the one a sequence of single writes would have kept. A key holding a
+// column the rows do not carry -- a generated one -- cannot be compared here, and the rows are
+// written as they are.
 func LastPerKey(table PluginTable, rows []map[string]any) []map[string]any {
-	if len(table.PrimaryKey) == 0 {
+	conflict := table.ConflictKey()
+	written := map[string]bool{}
+	for _, column := range table.WrittenColumns() {
+		written[column.Name] = true
+	}
+	for _, name := range conflict {
+		if !written[name] {
+			return rows
+		}
+	}
+	if len(conflict) == 0 {
 		return rows
 	}
 	position := map[string]int{}
 	var kept []map[string]any
 	for _, row := range rows {
-		parts := make([]string, 0, len(table.PrimaryKey))
-		for _, name := range table.PrimaryKey {
+		parts := make([]string, 0, len(conflict))
+		for _, name := range conflict {
 			parts = append(parts, fmt.Sprintf("%T:%v", row[name], row[name]))
 		}
 		key := strings.Join(parts, "\x00")
@@ -770,4 +822,14 @@ func (t PluginTable) DerivationInsert(rows []map[string]any) (string, []any, err
 			") IS DISTINCT FROM (" + strings.Join(offered, ", ") + ")"
 	}
 	return statement, arguments, nil
+}
+
+// hasIndexExpression reports whether any entry of an index is an expression rather than a column.
+func hasIndexExpression(entries []string) bool {
+	for _, entry := range entries {
+		if IsIndexExpression(entry) {
+			return true
+		}
+	}
+	return false
 }

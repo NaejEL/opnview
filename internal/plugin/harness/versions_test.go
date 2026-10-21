@@ -18,7 +18,7 @@ import (
 // to a script file of its own.
 
 const versionedManifest = `{"api_version": 2, "name": "example_versions", "version": "0.1.0",
-	"display_name": "Example versions", "script": "example_versions.js",
+	"display_name": "Example versions", "script": "example_versions.js", "requires": ["leases"],
 	"script_versions": {"from": "26.1", "before": "27.1"},
 	"scripts": [{"versions": {"from": "27.1"}, "script": "example_versions_next.js"}],
 	"endpoints": [
@@ -37,7 +37,7 @@ exports.dhcp_lease = {
 		return { result: { probe: "leases", state: "reachable", outcome: "healthy", separable: true,
 			detail: "` + which + ` on " + host.firewall.version } };
 	},
-	leases: function (host, pageSize) {
+	collect: function (host, state, provider) {
 		var response = host.call("leases", {});
 		var result = { probe: "leases", state: "unavailable", outcome: "request_not_made" };
 		if (!response.ok) {
@@ -49,13 +49,14 @@ exports.dhcp_lease = {
 		for (var i = 0; i < rows.length; i++) {
 			var address = d.string(rows[i], "address");
 			if (address !== null) {
-				leases.push({ address: address, mac: d.rawString(rows[i], "hwaddr"), lease_state: "active" });
+				leases.push({ provider_id: provider.id, backend: provider.key, address: address, mac: d.lower(d.rawString(rows[i], "hwaddr")),
+					lease_state: "active", observed_at: host.now() });
 			}
 		}
 		result.state = "reachable";
 		result.outcome = leases.length > 0 ? "healthy" : "healthy_empty";
 		result.separable = true;
-		return { result: result, leases: leases };
+		return { result: result, rows: { "leases.dhcp_lease": leases }, state: {} };
 	}
 };
 exports.adapters = { unwrap: function (value) { return value.data; } };
@@ -66,14 +67,15 @@ const versionedTests = `
 test("each route serves the same leases from its own recorded answer", function (t) {
 	t.firewallVersion("26.1.4");
 	t.answer("leases", { fixture: "leases_26_1.json" });
-	var before = t.call("dhcp_lease", "leases", 100);
+	var before = t.call("dhcp_lease", "collect", {});
 	t.firewallVersion("26.7.3");
 	t.answer("leases", { fixture: "leases_26_7.json" });
-	var after = t.call("dhcp_lease", "leases", 100);
-	if (before.error !== null || after.error !== null || before.leases.length !== 2) {
+	var after = t.call("dhcp_lease", "collect", {});
+	var beforeRows = before.rows && before.rows["leases.dhcp_lease"], afterRows = after.rows && after.rows["leases.dhcp_lease"];
+	if (before.error !== null || after.error !== null || !beforeRows || beforeRows.length !== 2) {
 		t.fatal("the reads gave " + JSON.stringify(before) + " and " + JSON.stringify(after));
 	}
-	t.equal(after.leases, before.leases, "the two routes' leases");
+	t.equal(afterRows, beforeRows, "the two routes' leases");
 	var paths = t.requests("leases").map(function (request) { return request.path; });
 	t.equal(paths, ["/api/examplelease/leases/search", "/api/examplelease/leases4/search"],
 		"the version change switched the route, with no restart");
@@ -82,7 +84,7 @@ test("each route serves the same leases from its own recorded answer", function 
 test("a version outside every range is firewall_version_unsupported, and nothing is called", function (t) {
 	t.firewallVersion("25.7.9");
 	t.answer("leases", { fixture: "leases_26_1.json" });
-	var read = t.call("dhcp_lease", "leases", 100);
+	var read = t.call("dhcp_lease", "collect", {});
 	t.equal(read.failure, "firewall_version_unsupported", "the outcome");
 	t.equal(t.requests("leases").length, 0, "the calls made");
 });

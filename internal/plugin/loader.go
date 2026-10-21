@@ -139,6 +139,9 @@ type Plugin struct {
 	// Routes are each endpoint's routes by OPNsense version (versions.go).
 	Routes    map[string][]scripthost.Route
 	OwnTables []plugindecl.PluginTable
+	// grantedTables are the tables of required plugins this plugin may write whole, by
+	// `<owner>.<table>`: where a pass's rows may go besides its own tables (ADR 0020 wave 4).
+	grantedTables map[string]plugindecl.PluginTable
 	// datasets are its tables as datasets of the data catalogue (datasets.go).
 	datasets []dataset.Declaration
 	// Widgets are the widgets it carries, as the widget service loads them.
@@ -438,6 +441,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 	}
 	plugin.OwnTables, plugin.Tables = tables, tables
 	if refusal := checkRequires(manifest, taken); refusal != nil {
+		return nil, refusal
+	}
+	if plugin.grantedTables, refusal = grantedTables(ctx, plugin.Name, manifest, options.Store); refusal != nil {
 		return nil, refusal
 	}
 	if plugin.statements, refusal = checkStatementFiles(plugin, directory); refusal != nil {
@@ -795,11 +801,15 @@ func checkProviders(set *provider.Set, plugin *Plugin) ([]checkedProvider, *cont
 			// receives nothing (D1 of the live validation of 17 October 2026).
 			base.pushFed, base.key = plugin, key
 		}
-		if !core {
-			base.tables = map[string]plugindecl.PluginTable{}
-			for _, table := range plugin.OwnTables {
-				base.tables[table.Table] = table
-			}
+		// Where a collect may write: the plugin's own tables by name, and the tables other plugins granted
+		// it whole, by `<owner>.<table>` -- for a core kind as for a kind of the plugin's own, since a core
+		// kind with no coordinator left is stored by its owner's table (ADR 0020 wave 4).
+		base.tables = map[string]plugindecl.PluginTable{}
+		for _, table := range plugin.OwnTables {
+			base.tables[table.Table] = table
+		}
+		for name, table := range plugin.grantedTables {
+			base.tables[name] = table
 		}
 		if (declaration.Probe != nil || declaration.Read != nil) && declaration.Live != nil {
 			_, refusal := checkLive(plugin, declaration, exports)
@@ -1193,4 +1203,44 @@ func (l *Loaded) Datasets() []dataset.Declaration {
 		result = append(result, plugin.datasets...)
 	}
 	return result
+}
+
+// grantedTables are the tables of other plugins a plugin may write whole, keyed `<owner>.<table>`:
+// where its passes may write rows besides its own tables (ADR 0019, ADR 0020 wave 4). A table of a
+// required plugin granting this one by name; and any table granting the providers of a kind this
+// plugin provides, which is granted to its role here, since the owner loaded first and could not
+// name it. The store's registry holds every table loaded before; without a store there is nothing
+// to write into.
+func grantedTables(ctx context.Context, plugin string, manifest contract.Manifest, database *store.Store) (
+	map[string]plugindecl.PluginTable, *contract.Refusal) {
+	granted := map[string]plugindecl.PluginTable{}
+	if database == nil {
+		return granted, nil
+	}
+	required := map[string]bool{}
+	for _, name := range manifest.Requires {
+		required[name] = true
+	}
+	for _, table := range database.PluginTables() {
+		if !required[table.Plugin] {
+			continue
+		}
+		for _, grant := range table.WritableBy {
+			if grant.Kind == "" && grant.Plugin == plugin && len(grant.Columns) == 0 {
+				granted[table.Plugin+"."+table.Table] = table
+			}
+		}
+	}
+	var kinds []string
+	for _, declaration := range manifest.Providers {
+		kinds = append(kinds, declaration.Kind)
+	}
+	byKind, err := database.GrantKindWrites(ctx, plugin, kinds)
+	if err != nil {
+		return nil, contract.Refuse(plugin, contract.RefusalTableInvalid, "%v", err)
+	}
+	for name, table := range byKind {
+		granted[name] = table
+	}
+	return granted, nil
 }

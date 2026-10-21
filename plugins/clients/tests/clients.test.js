@@ -77,3 +77,41 @@ test("a run over unchanged evidence changes nothing", function (t) {
   t.equal(t.query("SELECT count(*) AS n FROM plugin_pf.flow WHERE changed_at = :at", { at: NOW + 1 })[0].n, 0,
     "no flow changed on the second run");
 });
+
+function lease(t, address, fields) {
+  var row = { address: address, mac: null, client_id: null, hostname: null, iface: null, at: NOW - 60 };
+  Object.keys(fields || {}).forEach(function (key) { row[key] = fields[key]; });
+  t.sql("INSERT INTO plugin_leases.dhcp_lease (provider_id, backend, address, mac, dhcp_client_id, hostname, " +
+    "lease_state, interface_id, expires_at, observed_at) VALUES (1, 'kea', :address, :mac, :client_id, :hostname, " +
+    "'active', CAST(:iface AS BIGINT), :expires, CAST(:at AS BIGINT))", Object.assign({ expires: NOW + 3600 }, row));
+}
+
+test("a lease mints the client it names -- by client identifier, then hardware address, then at the address level -- and is pointed at it",
+  function (t) {
+    t.clock(NOW);
+    var ids = installation(t);
+    lease(t, "10.1.0.10", { client_id: "01:aa:bb", mac: "aa:bb:cc:dd:ee:01", hostname: "printer", iface: ids.lan });
+    lease(t, "10.1.0.11", { mac: "aa:bb:cc:dd:ee:02", iface: ids.lan });
+    lease(t, "10.1.0.12", { iface: ids.lan });
+    var run = t.derive("place");
+    t.equal(run.error, null, "the run");
+    var rows = t.query("SELECT l.address, c.identity_kind, c.identity_key, c.hostname, c.mac, c.interface_id, c.last_address " +
+      "FROM plugin_leases.dhcp_lease l JOIN plugin_installation.client c ON c.id = l.client_id ORDER BY l.address");
+    t.equal(rows.map(function (row) { return [row.identity_kind, row.identity_key]; }),
+      [["dhcp_client_id", "01:aa:bb"], ["mac", "aa:bb:cc:dd:ee:02"],
+        ["address_in_interface", ids.lan + "|10.1.0.12|" + ((Math.floor(NOW / 86400)) * 86400)]], "the identity cascade");
+    t.equal([rows[0].hostname, rows[0].mac, rows[0].interface_id, rows[0].last_address],
+      ["printer", "aa:bb:cc:dd:ee:01", ids.lan, "10.1.0.10"], "what the lease told of the machine");
+  });
+
+test("a lease is on-link evidence: the flow of a leased address is placed on the lease's interface with the lease's client",
+  function (t) {
+    t.clock(NOW);
+    var ids = installation(t);
+    lease(t, "10.1.0.10", { mac: "aa:bb:cc:dd:ee:01", iface: ids.lan });
+    flow(t, "f1", "igb1", "in", "10.1.0.10", "198.51.100.9");
+    t.derive("place");
+    var row = t.query("SELECT f.src_interface_id, c.identity_kind FROM plugin_pf.flow f " +
+      "JOIN plugin_installation.client c ON c.id = f.src_client_id WHERE f.log_digest = 'f1'")[0];
+    t.equal([row.src_interface_id, row.identity_kind], [ids.lan, "mac"], "placed by the lease, with its client");
+  });

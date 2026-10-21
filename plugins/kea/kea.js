@@ -115,20 +115,22 @@ exports.dhcp_lease = {
   },
 
   // leases reads the lease table from the running daemon through its control agent.
-  leases: function (host, pageSize) {
-    var read = readLeaseRows(host, "leases", "/api/kea/leases4/search", pageSize);
+  // collect reads the lease table and answers one row per lease generation for the leases plugin's
+  // table, which grants this plugin the table (ADR 0020 wave 4): what the KIND once did with the leases
+  // in Go -- the identity cascade, the interface, the generation -- is the leases and clients plugins'
+  // SQL now. The pass's page size and the provider's registry id come with the provider.
+  collect: function (host, state, provider) {
+    var read = readLeaseRows(host, "leases", "/api/kea/leases4/search", provider.page_size);
     if (read.error) {
       return { result: read.result, error: read.error };
     }
-    var leases = [];
+    var rows = [];
     for (var i = 0; i < read.rows.length; i++) {
       var row = read.rows[i];
       var lease = decodeLease(row);
       if (lease === null) {
         continue;
       }
-      // Where `valid_lifetime` is absent the start stays absent rather than falling back to the
-      // expiry: "this row does not know" is expressible.
       if (lease.expires_at !== null) {
         var lifetime = d.int(row, "valid_lifetime");
         if (lifetime !== null && lifetime > 0) {
@@ -136,8 +138,35 @@ exports.dhcp_lease = {
           lease.starts_at = startsAt < 0 ? 0 : startsAt;
         }
       }
-      leases.push(lease);
+      rows.push(leaseRow(lease, provider, host.now()));
     }
-    return { result: read.result, leases: leases };
+    return { result: read.result, rows: { "leases.dhcp_lease": rows }, state: {} };
   }
 };
+
+// leaseRow is the row of plugin_leases.dhcp_lease one decoded lease becomes: the provider's registry id
+// and key, the lease as decoded, the interface as the server names it, and the pass's instant. The
+// hardware address is lower-cased; one that is not six colon-separated octets is stored as absent.
+function leaseRow(lease, provider, now) {
+  var mac = lease.mac === null || lease.mac === undefined ? null : d.lower(lease.mac);
+  if (mac !== null && !/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/.test(mac)) {
+    mac = null;
+  }
+  return {
+    provider_id: provider.id,
+    backend: provider.key,
+    address: lease.address,
+    mac: mac,
+    hostname: lease.hostname,
+    dhcp_client_id: lease.dhcp_client_id,
+    duid: lease.duid === undefined ? null : lease.duid,
+    iaid: lease.iaid === undefined ? null : lease.iaid,
+    vendor_hint: lease.vendor_hint,
+    lease_state: lease.lease_state,
+    interface_identifier: lease.interface_identifier,
+    interface_device: lease.interface_device === "" ? null : lease.interface_device,
+    starts_at: lease.starts_at,
+    expires_at: lease.expires_at,
+    observed_at: now
+  };
+}

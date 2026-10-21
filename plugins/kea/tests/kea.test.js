@@ -20,30 +20,33 @@ test("Kea is separable when the daemon runs and DHCPv4 is configured", function 
     "a serving daemon gave " + JSON.stringify(serving));
 });
 
-test("Kea leases are read from the fixture and never start after they expire", function (t) {
-  t.answer("leases", { fixture: "kea_leases.json" });
-  var read = t.call("dhcp_lease", "leases", 100);
-  if (read.error !== null || !read.leases || read.leases.length === 0 || !read.result.separable) {
-    t.fatal("reading the fixture gave " + JSON.stringify(read));
-  }
-  read.leases.forEach(function (lease) {
-    t.assert(lease.address, "an observation carries no address");
-    if (lease.starts_at !== undefined && lease.expires_at !== undefined) {
-      t.assert(lease.starts_at <= lease.expires_at,
-        "a lease starts (" + lease.starts_at + ") after it expires (" + lease.expires_at + ")");
+test("Kea leases are read from the fixture into the leases plugin's table, and never start after they expire",
+  function (t) {
+    t.answer("leases", { fixture: "kea_leases.json" });
+    var read = t.call("dhcp_lease", "collect", {});
+    var rows = read.rows && read.rows["leases.dhcp_lease"];
+    if (read.error !== null || !rows || rows.length === 0 || !read.result.separable) {
+      t.fatal("reading the fixture gave " + JSON.stringify(read));
     }
+    rows.forEach(function (lease) {
+      t.assert(lease.address, "an observation carries no address");
+      if (lease.starts_at !== null && lease.expires_at !== null) {
+        t.assert(lease.starts_at <= lease.expires_at,
+          "a lease starts (" + lease.starts_at + ") after it expires (" + lease.expires_at + ")");
+      }
+    });
   });
-});
 
 // Kea's own fields are decoded here, in the plugin, rather than by a helper of the host that decoded
 // every backend's union (PA11 of the plugin-API amendment): each field of the fixture's first row lands
-// in its contract field, the start is the expiry less the valid lifetime, and the states map onto the
-// closed vocabulary.
-test("Kea's lease fields are decoded into the dhcp_lease contract", function (t) {
+// in its column of plugin_leases.dhcp_lease, the start is the expiry less the valid lifetime, and the
+// states map onto the closed vocabulary. The row names the provider it was handed and the pass's instant.
+test("Kea's lease fields are decoded into the leases table's row", function (t) {
   t.answer("leases", { fixture: "kea_leases.json" });
-  var read = t.call("dhcp_lease", "leases", 100);
-  t.equal(read.leases.length, 2, "the leases read");
-  var first = read.leases[0];
+  var read = t.call("dhcp_lease", "collect", {});
+  var rows = read.rows["leases.dhcp_lease"];
+  t.equal(rows.length, 2, "the leases read");
+  var first = rows[0];
   t.equal(first.address, "198.51.100.13", "the address");
   t.equal(first.mac, "0a:11:22:33:44:88", "the hardware address, as Kea spells it");
   t.equal(first.hostname, "example-host-four", "the host name");
@@ -55,5 +58,8 @@ test("Kea's lease fields are decoded into the dhcp_lease contract", function (t)
   t.equal(first.expires_at, 1750003600, "the expiry");
   t.equal(first.starts_at, 1750000000, "the start, the expiry less the valid lifetime");
   t.equal(first.lease_state, "active", "the state of an active lease");
-  t.equal(read.leases[1].lease_state, "expired", "the state of an expired lease");
+  t.equal(first.backend, "kea", "the provider key, as the backend");
+  t.equal(typeof first.provider_id, "number", "the provider's registry id");
+  t.equal(first.observed_at, t.now(), "the pass's instant");
+  t.equal(rows[1].lease_state, "expired", "the state of an expired lease");
 });

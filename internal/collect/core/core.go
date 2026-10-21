@@ -78,9 +78,6 @@ func (c *Collector) Configure(settings config.Config) {
 	if settings.LegPairingWindowSeconds >= 0 {
 		c.PairingWindowSeconds = settings.LegPairingWindowSeconds
 	}
-	if settings.LeaseBackendFailurePassLimit > 0 {
-		c.LeaseFailureLimit = settings.LeaseBackendFailurePassLimit
-	}
 }
 
 // SetSampleAbsence records what one measurement provider's last pass could not read.

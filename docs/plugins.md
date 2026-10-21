@@ -131,9 +131,12 @@ page (`paginate`), and where each field of the kind's record comes from:
 
 A mapping is a row's field (a dotted path for a nested one), read as the record field's type, or
 read as `epoch`, `iso_time`, `syslog_time`, `filter_log_time` (instants; the firewall's own offset
-applied), `port`, `mac`, `now` (the pass's own instant) or `shape` (the JSON shape the field arrived
+applied), `port`, `mac`, `now` (the pass's own instant), `provider_id` and `provider_key` (the
+provider the pass is, as its `collect` is told it) or `shape` (the JSON shape the field arrived
 in); or a constant `value`. A field the record does not have is refused (`mapping_field_unknown`),
-and so is a required field left unmapped (`mapping_field_missing`).
+and so is a required field left unmapped (`mapping_field_missing`). A kind read by `collect` -- a
+kind of the plugin's own, or a core kind stored by its owner's table (*Kinds*) -- names in `table` where
+the rows go: a table of the plugin's own, or one a required plugin grants it, as `<owner>.<table>`.
 
 ### Live pass
 
@@ -200,7 +203,7 @@ table of the same name; a query names it `plugin_<plugin>.<table>`.
 |---|---|
 | `name` | The table's name: a lower-case snake_case word. |
 | `columns` | Each `name`, `type` (a word of the type vocabulary: `integer`, `real`, `text`, `boolean`, `ip`, `mac` or `instant`; see *Push sources*, *The type vocabulary*), and optionally `nullable`, `carries_domain` (the column holds a domain name, withheld under `aggregate_mode` = `no_domains`), `role` (`time`, `dimension` or `measure`; a dimension by default, time for the retention column), `unit` (a measure's lower-case word, such as `byte`) and `aggregations` (what the data catalogue admits on it; the role's defaults otherwise). |
-| `primary_key`, `indexes` | The keys. A row written again with the same primary key replaces the first. |
+| `primary_key`, `indexes` | The keys. A row written again with the same key replaces the first: the primary key when the rows carry it, else the table's first unique index, as for a table numbered by an identity column and written by a pass. |
 | `retention` | The column holding each row's instant -- an `instant`, or an `integer` of UTC epoch seconds -- and how long a row is kept after it; `seconds` 0 follows the installation's retention; `setting` names one of the plugin's integer settings which, when the operator set it above zero, is how long a row is kept instead. A push output table's is an `instant`. |
 | `nature` | `event` or `sample`: what a bucket of the data catalogue with no row means -- a true zero, or a gap. `sample` by default, which never draws a zero it did not read. |
 | `counters` | `true` makes it a table of counters, which only a derivation writes (*Derivations*): it has a primary key, every other column is a NOT NULL number, and a row written with a key already held adds its figures to the held row's, in one batched write, instead of replacing it; rows of one key written together are added first, and a row whose figures all come back to zero is removed. A counter outlives the purge of whatever it counts. |
@@ -212,7 +215,7 @@ table of the same name; a query names it `plugin_<plugin>.<table>`.
 | an expression (an index entry) | An entry of `columns` that is not a column name is an expression over the row, `canonical_address(src_address)`, checked as every declared expression is. |
 | `nulls_not_distinct` (an index) | `true` on a unique index: two NULLs count as equal, so a key with a nullable column is one holding per value, NULL included. |
 | `default` (a column) | The SQL literal a row written without the column takes: `"false"`, `"0"`, `"'none'"`. |
-| `writable_by` | The other plugins that may write the table (ADR 0019), each `{"plugin", "columns"}`: with `columns`, UPDATE of those columns alone; without, INSERT, UPDATE and DELETE of the whole table. It is the owner's declaration, turned into PostgreSQL's own grants on the other plugin's role at every start, and what the owner no longer grants is revoked. The other plugin `requires` the owner and names the table by its qualified name; its statements are planned under its role when it loads, so one that writes a column it was not granted refuses it by name (`statement_refused`). |
+| `writable_by` | The other plugins that may write the table (ADR 0019), each `{"plugin", "columns"}`: with `columns`, UPDATE of those columns alone; without, INSERT, UPDATE and DELETE of the whole table. An entry `{"kind"}` instead grants the whole table to every plugin providing that kind, whoever ships it -- the table a kind's sources write their rows into (`collect`, *Kinds*) -- applied to each provider's role as it loads. It is the owner's declaration, turned into PostgreSQL's own grants on the other plugin's role at every start, and what the owner no longer grants is revoked. The other plugin `requires` the owner and names the table by its qualified name; its statements are planned under its role when it loads, so one that writes a column it was not granted refuses it by name (`statement_refused`). |
 
 An expression a declaration carries -- a check, a generated column, a partial index's predicate --
 is one expression over the row: no statement terminator, no parameter, no `SELECT` and no word a
@@ -321,7 +324,7 @@ under the kind's name:
 | Function | Answers |
 |---|---|
 | `probe(host)` | `{result, error}`: whether the source can be read (`result` as every kind's, below). |
-| `collect(host, state)` | `{result, rows, state, error, unsupported}`: `rows` an object from each table the plugin declares to the rows to store, each row checked against its columns; `state` the provider's **durable state**, an object of strings handed to the next pass's `collect` as its `state`. The rows and the state are stored in one transaction. A provider whose push entries carry a `sequence_bound` returns `bounds`, `{<value>: {counters, changed}}`: how many sequence counters the sender now runs by what the pass read, and whether its configuration changed (*Push sources*, *Liveness and gaps*). |
+| `collect(host, state, provider)` | `{result, rows, state, error, unsupported}`: `rows` an object from each table the plugin declares -- or, as `<owner>.<table>`, a table of a required plugin that grants this one the whole table (*Tables*, `writable_by`) -- to the rows to store, each row checked against its columns; `provider` which provider the pass is, `{kind, key, id, page_size}`, `id` its registry row's and `page_size` the kind's page size in force, 0 for a kind with none; `state` the provider's **durable state**, an object of strings handed to the next pass's `collect` as its `state`. The rows and the state are stored in one transaction. A provider whose push entries carry a `sequence_bound` returns `bounds`, `{<value>: {counters, changed}}`: how many sequence counters the sender now runs by what the pass read, and whether its configuration changed (*Push sources*, *Liveness and gaps*). |
 
 The durable state is what a pass keeps for the next one -- a cursor, or a previous reading to
 subtract from: the built-in `pf_states` keeps the counters of the pf state table it read, and stores
@@ -522,7 +525,7 @@ measure's per-connection figures, a summary table, counters. It is a function th
 | `cadence_seconds` | Runs it on a cadence too; 0 runs it on its other triggers alone. At least one trigger is named. |
 | `datasets` | The datasets it reads, each also under the manifest's `datasets` (*Datasets a plugin reads*). |
 | `after_derivations` | Derivations of required plugins that run it, each `<plugin>/<derivation>`, after each successful run of theirs (*Requires*). |
-| `statements` | Makes the derivation **SQL-only**: the plugin's statements it runs, in this order, each handed `:since` and `:now`, inside its one transaction, with no script function at all (*Statements*). Exclusive with `function`. |
+| `statements` | Makes the derivation **SQL-only**: the plugin's statements it runs, in this order, each handed `:since` and `:now`, the core's values `:held_margin` (the discovery interval), `:leg_pairing_window` and `:retention` (the installation's retention in seconds, 0 for unlimited), and the plugin's own integer settings as `:setting_<key>`, inside its one transaction, with no script function at all (*Statements*). Exclusive with `function`. |
 | `outputs` | What it may write: tables of the plugin's own, each with a primary key (counter tables among them, *Tables*), measures the plugin declares (*Measures*), and `statements` a script run may return to run. |
 
 A script derivation may return, beside its rows, `statements: [{name, parameters}]`: each one the
@@ -1004,11 +1007,13 @@ that directory: its description, its attributes (`concurrent`, `push`, `bindable
 collection gaps its coordinator records (`gap_reasons`, written to the database's `gap_reason` registry,
 which `collection_gap.reason` references), its cadences and page sizes, what sizing measures, its
 functions, its exported values and its records. Adding a core
-kind's contract is adding a file. Its records are stored in the core's own tables, so a core kind with
-a poll cadence is collected only once a coordinator -- a directory under `internal/collect/kinds/`
-that registers its pass with `core.RegisterPass` -- stores them; a file alone gets no loop. A kind a
-plugin declares for itself needs neither (*Kinds of the plugin's own*). Every contract is rendered, table by table, in `docs/plugin-kinds.md`, which a
-test holds equal to the files. The host converts what a script answers against exactly those tables:
+kind's contract is adding a file. A core kind with a poll cadence is collected one of two ways: by a
+coordinator -- a directory under `internal/collect/kinds/` that registers its pass with
+`core.RegisterPass` and stores the records in the core's own tables -- or, with no coordinator, by the
+generic pass that polls a kind of a plugin's own: each provider's script exports `collect(host, state,
+provider)` and answers rows for the tables of the plugin that owns the kind's data, which grants the
+source the table (ADR 0020 wave 4; `dhcp_lease` into `leases.dhcp_lease`). A kind a plugin declares for
+itself needs neither (*Kinds of the plugin's own*). The host converts what a script answers against exactly those tables:
 a missing required field, or a field the record does not have, is `records_invalid`.
 
 ## Push sources
@@ -1252,7 +1257,7 @@ passes its own tests, and a test of the repository does exactly that for every d
 
 | Example | What it shows |
 |---|---|
-| `docs/examples/example_leases` | A source plugin of a core kind (`dhcp_lease`) declared with no line of code: a `probe` checking a service status and a `read` mapping each row's fields. |
+| `docs/examples/example_leases` | A source plugin of a core kind (`dhcp_lease`) declared with no line of code: a `probe` checking a service status and a `read` mapping each row's fields into the leases plugin's table, which grants it the table. |
 | `docs/examples/example_domains` | A service plugin (`registrable_domain`) that downloads a list of suffixes with `host.fetch`, keeps the copy in its data directory, and asks for it again only when it changed. |
 | `docs/examples/example_latency` | A widget computing what a query cannot -- each target ranked by a percentile of its samples -- with its statements, its script and a golden answer written once with `OPNVIEW_WRITE_GOLDEN=1`. |
 | `docs/examples/example_logins` | A syslog program into a table with a regular expression, and no script. |

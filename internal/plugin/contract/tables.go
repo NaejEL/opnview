@@ -74,6 +74,15 @@ func DeclaredTables(manifest Manifest) ([]plugindecl.PluginTable, *Refusal) {
 		}
 		grantees := map[string]bool{}
 		for _, grant := range declaration.WritableBy {
+			if grant.Kind != "" {
+				if grant.Plugin != "" || len(grant.Columns) > 0 || !NamePattern.MatchString(grant.Kind) || grantees["kind:"+grant.Kind] {
+					return nil, Refuse(manifest.Name, RefusalTableInvalid, "the table %q is writable by the providers of "+
+						"%q, which is not a kind named once, with no plugin and no columns beside it", declaration.Name, grant.Kind)
+				}
+				grantees["kind:"+grant.Kind] = true
+				table.WritableBy = append(table.WritableBy, plugindecl.WriteGrant{Kind: grant.Kind})
+				continue
+			}
 			if !NamePattern.MatchString(grant.Plugin) || grant.Plugin == manifest.Name || grantees[grant.Plugin] {
 				return nil, Refuse(manifest.Name, RefusalTableInvalid, "the table %q is writable by %q, which "+
 					"is not another plugin's name named once", declaration.Name, grant.Plugin)

@@ -21,7 +21,7 @@ import (
 // A kind is in use when the probe round, or the operator, activated a provider of it. A read
 // that failed does not hold the lookups back once its pass says so (NoteHostNameSourceFailed),
 // and its failure is in its own availability row; the lease side never says so, keeping its
-// own rule for a backend that keeps failing (lease_backend_failure_pass_limit, in
+// own rule for a backend that keeps failing (once lease_backend_failure_pass_limit, in
 // internal/collect/kinds/leases/dhcplease.go). The instants are this run's and are kept in
 // memory: after a restart the examination waits until every source has been read once, which
 // costs at most one interval of the slowest and loses nothing, because the mark is stored.

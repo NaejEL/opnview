@@ -1,0 +1,66 @@
+{
+  "api_version": 3,
+  "name": "leases",
+  "version": "1.0.0",
+  "display_name": "DHCP leases",
+  "description": "The lease table every DHCP source reports into: data source 4. Every provider of the dhcp_lease kind -- kea, dnsmasq, isc, or one a third party ships -- is granted the table and writes what its server reports, one row per lease generation; this plugin's derivation then names the interface each lease was given on, from the installation model, and purges what the installation's retention no longer keeps. The clients plugin reads the leases as on-link evidence and names the client each lease belongs to (ADR 0019, ADR 0020 wave 4).",
+  "requires": ["installation"],
+  "tables": [
+    {
+      "name": "dhcp_lease",
+      "columns": [
+        { "name": "id", "type": "integer", "identity": true },
+        { "name": "client_id", "type": "integer", "nullable": true, "references": "installation.client(id)" },
+        { "name": "provider_id", "type": "integer" },
+        { "name": "backend", "type": "text" },
+        { "name": "address", "type": "text" },
+        { "name": "mac", "type": "text", "nullable": true },
+        { "name": "hostname", "type": "text", "nullable": true },
+        { "name": "dhcp_client_id", "type": "text", "nullable": true },
+        { "name": "duid", "type": "text", "nullable": true },
+        { "name": "iaid", "type": "text", "nullable": true },
+        { "name": "vendor_hint", "type": "text", "nullable": true },
+        { "name": "lease_state", "type": "text" },
+        { "name": "interface_identifier", "type": "text", "nullable": true },
+        { "name": "interface_device", "type": "text", "nullable": true },
+        { "name": "interface_id", "type": "integer", "nullable": true, "references": "installation.interface(id)" },
+        { "name": "starts_at", "type": "integer", "nullable": true },
+        { "name": "expires_at", "type": "integer", "nullable": true },
+        { "name": "observed_at", "type": "integer" },
+        { "name": "generation_key", "type": "text",
+          "generated": "CASE WHEN starts_at IS NOT NULL THEN 'start:' || starts_at WHEN expires_at IS NOT NULL THEN 'expiry:' || expires_at ELSE 'observed_day:' || ((observed_at / 86400) * 86400) END" },
+        { "name": "hostname_label", "type": "text", "nullable": true,
+          "generated": "lower(CASE WHEN strpos(rtrim(hostname, '.'), '.') > 0 THEN substr(rtrim(hostname, '.'), 1, strpos(rtrim(hostname, '.'), '.') - 1) ELSE rtrim(hostname, '.') END)" }
+      ],
+      "primary_key": ["id"],
+      "indexes": [
+        { "columns": ["address", "generation_key", "provider_id"], "unique": true },
+        { "columns": ["observed_at"] },
+        { "columns": ["client_id", "observed_at"] },
+        { "columns": ["hostname_label", "address"] }
+      ],
+      "checks": [
+        { "name": "backend_length", "expression": "length(backend) BETWEEN 1 AND 255" },
+        { "name": "address_not_empty", "expression": "length(address) > 0" },
+        { "name": "mac_shape", "expression": "mac IS NULL OR (length(mac) = 17 AND mac = lower(mac))" },
+        { "name": "lease_state_known", "expression": "lease_state IN ('active', 'expired', 'reserved', 'unknown')" },
+        { "name": "starts_at_instant", "expression": "starts_at IS NULL OR (starts_at >= 0 AND starts_at < 4102444800)" },
+        { "name": "expires_at_instant", "expression": "expires_at IS NULL OR (expires_at >= 0 AND expires_at < 4102444800)" },
+        { "name": "observed_at_instant", "expression": "observed_at >= 0 AND observed_at < 4102444800" }
+      ],
+      "writable_by": [
+        { "kind": "dhcp_lease" },
+        { "plugin": "clients", "columns": ["client_id"] }
+      ]
+    }
+  ],
+  "statements": ["leases.statements.sql"],
+  "derivations": [
+    {
+      "name": "resolve",
+      "after_passes": ["dhcp_lease"],
+      "cadence_seconds": 3600,
+      "statements": ["resolve_interfaces", "purge_leases"]
+    }
+  ]
+}

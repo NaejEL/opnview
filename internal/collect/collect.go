@@ -12,7 +12,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/discovery"
 	"github.com/NaejEL/opnview/internal/collect/kinds/declared"
 	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
-	"github.com/NaejEL/opnview/internal/collect/kinds/leases"
 	"github.com/NaejEL/opnview/internal/collect/kinds/lookups"
 	"github.com/NaejEL/opnview/internal/collect/kinds/measurements"
 	"github.com/NaejEL/opnview/internal/collect/kinds/neighbours"
@@ -34,7 +33,6 @@ type Collector struct {
 	*derive.Deriver
 	*discovery.Discoverer
 	*services.ServiceCoordinator
-	*leases.LeaseCoordinator
 	*neighbours.NeighbourCoordinator
 	*lookups.LookupCoordinator
 	*filterlog.FilterLogCoordinator
@@ -51,7 +49,6 @@ func compose(state *core.Collector) *Collector {
 		Deriver:                   derive.On(state),
 		Discoverer:                discovery.On(state),
 		ServiceCoordinator:        services.On(state),
-		LeaseCoordinator:          leases.On(state),
 		NeighbourCoordinator:      neighbours.On(state),
 		LookupCoordinator:         lookups.On(state),
 		FilterLogCoordinator:      filterlog.On(state),
@@ -84,8 +81,6 @@ func NewWithSources(client *opnsense.Client, database *store.Store, clock core.C
 		ReadDetails:             map[int64]string{},
 
 		PairingWindowSeconds: config.DefaultLegPairingWindowSeconds,
-		LeaseFailureLimit:    config.DefaultLeaseBackendFailurePassLimit,
-		LeaseFailures:        map[int64]int64{},
 		Cadences:             config.Defaults(),
 	}
 	var mirrored *mirror.Mirror

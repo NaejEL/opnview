@@ -39,6 +39,8 @@ var readings = map[string]string{
 	"port":            "a port, 0 to 65535 (decode.Port)",
 	"mac":             "a hardware address, lower-cased; any other shape is absent",
 	"now":             "the pass's own instant; no `from`",
+	"provider_id":     "the provider's registry id, as the pass is told it; no `from` (a core kind read into a table)",
+	"provider_key":    "the provider's key; no `from` (a core kind read into a table)",
 	"shape":           "the JSON shape the field arrived in: absent, null, string or other",
 }
 
@@ -90,7 +92,8 @@ func checkDeclarative(plugin *Plugin, declaration contract.ProviderDeclaration, 
 			form.probe.Check)
 	}
 
-	if core {
+	_, collected := kindContract.FunctionOf("collect")
+	if core && !collected {
 		function, recordsField, table, ok := declarativeShape(kindContract)
 		if !ok {
 			return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the %s kind has no declarative form: its records are not "+
@@ -109,6 +112,9 @@ func checkDeclarative(plugin *Plugin, declaration contract.ProviderDeclaration, 
 			}
 		}
 	} else {
+		// A kind read by collect -- a kind of the plugin's own, or a core kind stored by its owner's table
+		// (ADR 0020 wave 4) -- writes into a table: one of the plugin's own by its name, or a table another
+		// plugin granted it, by `<owner>.<table>`.
 		form.function, form.recordsField = "collect", "rows"
 		var table *plugindecl.PluginTable
 		for index := range plugin.OwnTables {
@@ -116,11 +122,14 @@ func checkDeclarative(plugin *Plugin, declaration contract.ProviderDeclaration, 
 				table = &plugin.OwnTables[index]
 			}
 		}
+		if granted, found := plugin.grantedTables[read.Table]; found {
+			table = &granted
+		}
 		if table == nil {
 			return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the read writes into %q, which is not a table the plugin "+
-				"declares", read.Table)
+				"declares or is granted", read.Table)
 		}
-		for _, column := range table.Columns {
+		for _, column := range table.WrittenColumns() {
 			form.columns[column.Name] = map[string]string{"integer": "integer", "real": "number",
 				"text": "text"}[column.Type]
 			if !column.Nullable {
@@ -143,7 +152,8 @@ func checkDeclarative(plugin *Plugin, declaration contract.ProviderDeclaration, 
 		switch {
 		case mapping.Value != nil && (mapping.From != "" || mapping.As != ""):
 			return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the field %q is both a constant and read from a row", field)
-		case mapping.Value == nil && mapping.From == "" && mapping.As != "now":
+		case mapping.Value == nil && mapping.From == "" && mapping.As != "now" && mapping.As != "provider_id" &&
+			mapping.As != "provider_key":
 			return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the field %q names neither a row field nor a value", field)
 		}
 	}
@@ -251,6 +261,7 @@ func (f *declarativeForm) runRead(ctx context.Context, session provider.Session,
 		"outcome": string(vocab.OutcomeRequestNotMade)}
 	answer := map[string]any{"result": result}
 	pageSize, page, now := 0, 1, session.Now()
+	var providerArgument map[string]any
 	switch function {
 	case "lookups":
 		if len(arguments) > 0 {
@@ -263,6 +274,12 @@ func (f *declarativeForm) runRead(ctx context.Context, session provider.Session,
 			}
 		}
 	case "collect":
+		if len(arguments) > 1 {
+			providerArgument, _ = arguments[1].(map[string]any)
+			if size, isNumber := providerArgument["page_size"].(int64); isNumber {
+				pageSize = int(size)
+			}
+		}
 	default:
 		if len(arguments) > 0 {
 			pageSize, _ = arguments[0].(int)
@@ -305,7 +322,7 @@ func (f *declarativeForm) runRead(ctx context.Context, session provider.Session,
 	mapped := make([]any, 0, len(rows))
 	skipped := 0
 	for _, row := range rows {
-		record, complete := f.mapRow(ctx, session, row, now, &normaliser)
+		record, complete := f.mapRow(ctx, session, row, now, providerArgument, &normaliser)
 		if !complete {
 			skipped++
 			continue
@@ -332,11 +349,11 @@ func (f *declarativeForm) runRead(ctx context.Context, session provider.Session,
 
 // mapRow maps one row; it reports false when a required field is absent.
 func (f *declarativeForm) mapRow(ctx context.Context, session provider.Session, row decode.Object, now int64,
-	normaliser **decode.Normaliser) (map[string]any, bool) {
+	providerArgument map[string]any, normaliser **decode.Normaliser) (map[string]any, bool) {
 	record := map[string]any{}
 	for _, field := range scripthost.SortedKeys(f.read.Fields) {
 		mapping := f.read.Fields[field]
-		value, present := f.mapField(ctx, session, row, field, mapping, now, normaliser)
+		value, present := f.mapField(ctx, session, row, field, mapping, now, providerArgument, normaliser)
 		if !present {
 			continue
 		}
@@ -352,12 +369,19 @@ func (f *declarativeForm) mapRow(ctx context.Context, session provider.Session, 
 
 // mapField reads one field of a row.
 func (f *declarativeForm) mapField(ctx context.Context, session provider.Session, row decode.Object, field string,
-	mapping contract.FieldMapping, now int64, normaliser **decode.Normaliser) (any, bool) {
+	mapping contract.FieldMapping, now int64, providerArgument map[string]any, normaliser **decode.Normaliser) (any, bool) {
 	if mapping.Value != nil {
 		return mapping.Value, true
 	}
-	if mapping.As == "now" {
+	switch mapping.As {
+	case "now":
 		return now, true
+	case "provider_id":
+		id, present := providerArgument["id"]
+		return id, present
+	case "provider_key":
+		key, present := providerArgument["key"]
+		return key, present
 	}
 	steps := strings.Split(mapping.From, ".")
 	container := row

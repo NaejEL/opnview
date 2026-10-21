@@ -67,7 +67,7 @@ SELECT p.kind AS provider_kind,
        l.address AS address,
        max(l.observed_at) AS last_observed_at,
        max(l.expires_at) AS expires_at
-FROM dhcp_lease AS l
+FROM plugin_leases.dhcp_lease AS l
 JOIN provider AS p ON p.id = l.provider_id
 WHERE l.client_id = :client_id
 GROUP BY p.kind, p.provider_key, l.backend, l.address

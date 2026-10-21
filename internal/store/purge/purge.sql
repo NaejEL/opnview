@@ -171,13 +171,6 @@ WHERE occurred_at < (
     WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
-DELETE FROM dhcp_lease
-WHERE observed_at < (
-    SELECT :now - CAST(value AS BIGINT)
-    FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
-);
-
 DELETE FROM pair_volume_observation
 WHERE day_start_at < (
     SELECT :now - CAST(value AS BIGINT)

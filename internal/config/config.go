@@ -49,12 +49,6 @@ const (
 	// connection may have been logged and still be paired (decision 4 of the step-5A
 	// live corrections). The schema writes its default row.
 	KeyLegPairingWindow = flows.PairingWindowKey
-	// KeyLeaseBackendFailurePassLimit is how many lease passes in a row a backend may
-	// fail before a pass that read every other backend counts as complete, so the
-	// unresolved host-name lookups are examined without it (defect L1 of
-	// specs/SPEC-test-budget-and-two-live-defects.md). The schema writes its default
-	// row.
-	KeyLeaseBackendFailurePassLimit = "lease_backend_failure_pass_limit"
 	// KeyHeartbeatInterval is how often, in seconds, the running service records that
 	// it is alive (SPEC-step-5b-widget-api.md, D2). The schema writes its default row.
 	KeyHeartbeatInterval = "heartbeat_interval_seconds"
@@ -117,17 +111,6 @@ const DefaultLegPairingWindowSeconds int64 = flows.DefaultPairingWindowSeconds
 // load, naming the setting, rather than stored and quietly applied.
 const MaxLegPairingWindowSeconds int64 = 60
 
-// DefaultLeaseBackendFailurePassLimit is 3 passes: at the default lease interval of
-// five minutes, a backend that has failed for a quarter of an hour stops holding the
-// unresolved host-name lookups back. One or two failed passes are what a restart of
-// the backend's service or of the firewall costs, and examining the lookups against
-// the other backends alone then would spend each lookup's one examination on an
-// incomplete lease table; a backend still failing after three is failing for longer
-// than a restart, and the lookups wait for it no further. Like the pairing window it
-// is written in the schema and read from the database; the constant exists only so a
-// database with no row still behaves.
-const DefaultLeaseBackendFailurePassLimit int64 = 3
-
 // DefaultHeartbeatIntervalSeconds is 60 s. After a crash the last beat is the only bound
 // opnview holds on when it stopped, so the recorded interval can start up to one heartbeat
 // early; a minute is finer than every collection interval but the filter log's, and one
@@ -164,9 +147,6 @@ type Config struct {
 	// LegPairingWindowSeconds is how far apart the two records of one connection may
 	// have been logged and still be paired.
 	LegPairingWindowSeconds int64
-	// LeaseBackendFailurePassLimit is how many lease passes in a row a backend may fail
-	// before the unresolved host-name lookups are examined without it.
-	LeaseBackendFailurePassLimit int64
 	// HeartbeatIntervalSeconds is how often the running service records that it is alive,
 	// and DowntimeThresholdSeconds how long it must have been gone for the interval to be
 	// recorded as opnview not running.
@@ -183,20 +163,19 @@ type Config struct {
 // reach opnview through the interface.
 func Defaults() Config {
 	return Config{
-		RetentionSeconds:             DefaultRetentionSeconds,
-		AggregateMode:                "full",
-		CacheAnswerDelaySeconds:      DefaultCacheAnswerDelaySeconds,
-		DiscoveryInterval:            DefaultDiscoveryInterval,
-		PurgeInterval:                DefaultPurgeInterval,
-		Intervals:                    kindIntervalDefaults(),
-		PageSizes:                    kindPageDefaults(),
-		AttributionMaxDelaySeconds:   DefaultAttributionMaxDelaySeconds,
-		LegPairingWindowSeconds:      DefaultLegPairingWindowSeconds,
-		LeaseBackendFailurePassLimit: DefaultLeaseBackendFailurePassLimit,
-		HeartbeatIntervalSeconds:     DefaultHeartbeatIntervalSeconds,
-		DowntimeThresholdSeconds:     DefaultDowntimeThresholdSeconds,
-		LiveInterestSeconds:          DefaultLiveInterestSeconds,
-		LiveSampleRetentionSeconds:   DefaultLiveSampleRetentionSeconds,
+		RetentionSeconds:           DefaultRetentionSeconds,
+		AggregateMode:              "full",
+		CacheAnswerDelaySeconds:    DefaultCacheAnswerDelaySeconds,
+		DiscoveryInterval:          DefaultDiscoveryInterval,
+		PurgeInterval:              DefaultPurgeInterval,
+		Intervals:                  kindIntervalDefaults(),
+		PageSizes:                  kindPageDefaults(),
+		AttributionMaxDelaySeconds: DefaultAttributionMaxDelaySeconds,
+		LegPairingWindowSeconds:    DefaultLegPairingWindowSeconds,
+		HeartbeatIntervalSeconds:   DefaultHeartbeatIntervalSeconds,
+		DowntimeThresholdSeconds:   DefaultDowntimeThresholdSeconds,
+		LiveInterestSeconds:        DefaultLiveInterestSeconds,
+		LiveSampleRetentionSeconds: DefaultLiveSampleRetentionSeconds,
 	}
 }
 
@@ -241,7 +220,6 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		{KeyAttributionMaxDelay, 1, MaxIntervalSeconds, &loaded.AttributionMaxDelaySeconds},
 		{KeyCacheAnswerDelay, 1, MaxIntervalSeconds, &loaded.CacheAnswerDelaySeconds},
 		{KeyLegPairingWindow, 0, MaxLegPairingWindowSeconds, &loaded.LegPairingWindowSeconds},
-		{KeyLeaseBackendFailurePassLimit, 1, math.MaxInt64, &loaded.LeaseBackendFailurePassLimit},
 		{KeyHeartbeatInterval, 1, MaxIntervalSeconds, &loaded.HeartbeatIntervalSeconds},
 		{KeyDowntimeThreshold, 1, MaxIntervalSeconds, &loaded.DowntimeThresholdSeconds},
 	} {

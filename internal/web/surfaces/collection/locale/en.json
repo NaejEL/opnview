@@ -42,7 +42,6 @@
     "error.collection_kind_unknown": "That source kind does not exist.",
 
     "collection.card.pairing": "Connection legs",
-    "collection.card.lease_backends": "DHCP backends",
     "collection.card.attribution": "Attribution",
     "collection.card.storage": "Storage",
     "notice.retention_confirm": "Older history is deleted at the next purge",

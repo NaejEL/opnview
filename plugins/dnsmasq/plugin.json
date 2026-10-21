@@ -1,10 +1,11 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "dnsmasq",
   "version": "1.0.0",
   "display_name": "Dnsmasq",
   "description": "Reads Dnsmasq's DHCP lease table, and probes Dnsmasq as a resolver, whose lookups, cache and local data the API does not expose (data sources 4 and 5).",
   "script": "dnsmasq.js",
+  "requires": ["leases"],
   "endpoints": [
     {
       "name": "leases",

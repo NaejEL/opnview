@@ -8,8 +8,8 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
-	"github.com/NaejEL/opnview/internal/collect/identity"
 	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -229,7 +229,7 @@ func (c *LookupCoordinator) buildDNSResolution(ctx context.Context, record vocab
 	if clientAddress != "" && (resolution == vocab.ClientResolutionLoggedAddress ||
 		resolution == vocab.ClientResolutionLeased || resolution == vocab.ClientResolutionLocalData) {
 		id, _, found, err := c.Store.ClientRefByAddressSince(ctx, clientAddress,
-			now-identity.AddressIdleWindow)
+			now-flows.AddressIdleWindow)
 		if err != nil {
 			return vocab.DNSResolution{}, err
 		}

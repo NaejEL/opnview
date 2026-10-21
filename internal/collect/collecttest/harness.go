@@ -16,7 +16,6 @@ import (
 	"github.com/NaejEL/opnview/internal/broker/schedule"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
-	"github.com/NaejEL/opnview/internal/collect/kinds/leases"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/config"
@@ -245,40 +244,6 @@ func (h *ProbeHarness) AvailabilityInstant(t *testing.T, kind, providerKey strin
 	t.Helper()
 	_, _, checkedAt := h.AvailabilityOf(t, kind, providerKey)
 	return checkedAt
-}
-
-// LeaseRetryHarness is the lease harness with a pending lookup whose host name a lease
-// names: the lookup is resolved by the first lease pass that examines it.
-func LeaseRetryHarness(t *testing.T, key, hostname string) *ProbeHarness {
-	t.Helper()
-	harness := NewDiscoveredProbeHarness(t)
-	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	arrangement := harness.Arrange(t, "lease_collection")
-	ctx := context.Background()
-	UnresolvedLookup(t, harness.Store, key, hostname+".example.invalid",
-		ReferenceEpoch()-120, ReferenceEpoch()-100)
-	provider, err := harness.Store.ProviderID(ctx, leases.Kind, arrangement.Backend)
-	if err != nil {
-		t.Fatalf("looking up the readable backend: %v", err)
-	}
-	label := hostname
-	if err := harness.Store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
-		Backend: arrangement.Backend, Address: "198.51.100.51", Hostname: &label, LeaseState: "reserved",
-		GenerationKey: vocab.GenerationKeyOf(nil, nil, ReferenceEpoch()), ObservedAt: ReferenceEpoch(),
-	}); err != nil {
-		t.Fatalf("writing the lease: %v", err)
-	}
-	return harness
-}
-
-// MustProviderID looks one lease provider's registry id up.
-func MustProviderID(t *testing.T, harness *ProbeHarness, key string) int64 {
-	t.Helper()
-	id, err := harness.Store.ProviderID(context.Background(), leases.Kind, key)
-	if err != nil {
-		t.Fatalf("looking up %s: %v", key, err)
-	}
-	return id
 }
 
 // UnresolvedLookup stores one lookup whose logged host name named no lease, logged by the resolver

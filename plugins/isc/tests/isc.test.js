@@ -11,7 +11,7 @@ test("an absent plugin is named and never separable", function (t) {
 });
 
 test("the ISC leases are never read and say why", function (t) {
-  var read = t.call("dhcp_lease", "leases", 10);
+  var read = t.call("dhcp_lease", "collect", {});
   if (read.unsupported === null) {
     t.fatal("the read returned " + JSON.stringify(read) + ", not the unsupported state");
   }

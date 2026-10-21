@@ -9,7 +9,7 @@ import "strings"
 func CoreKeys() []string {
 	return append([]string{
 		KeyRetentionSeconds, KeyAggregateMode, KeyDiscoveryInterval, KeyPurgeInterval, KeyAttributionMaxDelay,
-		KeyCacheAnswerDelay, KeyLegPairingWindow, KeyLeaseBackendFailurePassLimit, KeyHeartbeatInterval,
+		KeyCacheAnswerDelay, KeyLegPairingWindow, KeyHeartbeatInterval,
 		KeyDowntimeThreshold, KeyOPNsenseBaseURL, KeyOPNsenseAPIKey, KeyOPNsenseCertificateFingerprint,
 		KeyLiveInterestSeconds, KeyLiveSampleRetentionSeconds, KeyAppearancePalette, KeyAppearanceMode,
 		KeyAppearanceLanguage, KeyDashboardDefaultSeeded,

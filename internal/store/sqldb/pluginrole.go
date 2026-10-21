@@ -87,12 +87,11 @@ func (s *Handle) EnsurePluginRole(ctx context.Context, plugin, schema string) er
 		statements = append(statements, "GRANT UPDATE ("+strings.Join(columns, ", ")+") ON "+
 			pgx.Identifier{CoreSchema, grant.Table}.Sanitize()+" TO "+quotedRole)
 	}
-	for _, statement := range statements {
-		if _, err := s.SQL.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("store: granting the role of the plugin %s: %w", plugin, err)
-		}
+	locked := []string{role}
+	if s.Reader != nil {
+		locked = append(locked, s.Reader.role)
 	}
-	return nil
+	return s.execUnderRoleLocks(ctx, locked, statements, "granting the role of the plugin "+plugin)
 }
 
 // TakePluginRole makes the rest of a transaction run as a plugin's role, under the plugin statement
@@ -142,4 +141,30 @@ func (s *Handle) PlanAsPlugin(ctx context.Context, plugin, text string) error {
 		return err
 	}
 	return rows.Close()
+}
+
+// execUnderRoleLocks runs statements that write the role catalogue in one transaction, under the
+// advisory lock of each role name they touch -- the lock grantReadRole takes -- so two processes
+// building test templates at once, or two loads, never update one role's catalogue row together
+// ("tuple concurrently updated").
+func (s *Handle) execUnderRoleLocks(ctx context.Context, roles []string, statements []string, what string) error {
+	tx, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: %s: %w", what, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, role := range roles {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(2, hashtext($1))", role); err != nil {
+			return fmt.Errorf("store: %s: locking the role %s: %w", what, role, err)
+		}
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("store: %s: %w", what, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: %s: %w", what, err)
+	}
+	return nil
 }

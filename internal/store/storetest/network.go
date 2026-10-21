@@ -169,12 +169,10 @@ func NewNetwork(t *testing.T, interfaceCount, clientCount int) *Network {
 				t.Fatalf("writing a leased client: %v", err)
 			}
 			expiry := network.Now + 3600
-			if err := database.InsertDHCPLease(ctx, leaseProvider, vocab.DHCPLease{
-				ClientID: &clientID, Backend: leaseBackend, Address: client.Address, MAC: &mac,
-				LeaseState: "active", InterfaceID: &iface.ID,
-				GenerationKey: vocab.GenerationKeyOf(nil, &expiry, 0), ExpiresAt: &expiry,
-				ObservedAt: network.Now - 3600,
-			}); err != nil {
+			if _, err := database.DB().ExecContext(ctx, "INSERT INTO plugin_leases.dhcp_lease (client_id, provider_id, "+
+				"backend, address, mac, lease_state, interface_id, expires_at, observed_at) "+
+				"VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, $8)", clientID, leaseProvider, leaseBackend, client.Address,
+				mac, iface.ID, expiry, network.Now-3600); err != nil {
 				t.Fatalf("writing a lease: %v", err)
 			}
 		}

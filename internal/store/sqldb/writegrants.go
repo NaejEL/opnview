@@ -77,10 +77,25 @@ func (s *Handle) ApplyWriteGrants(ctx context.Context, schema, table string, gra
 		}
 		statements = append(statements, "GRANT UPDATE ("+strings.Join(columns, ", ")+") ON "+qualified+" TO "+quotedRole)
 	}
-	for _, statement := range statements {
-		if _, err := s.SQL.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("store: granting the writes on %s.%s: %w", schema, table, err)
-		}
+	locked := []string{owner}
+	for _, grant := range grants {
+		locked = append(locked, PluginRoleName(grant.Plugin))
 	}
-	return nil
+	return s.execUnderRoleLocks(ctx, locked, statements, fmt.Sprintf("granting the writes on %s.%s", schema, table))
+}
+
+// GrantWholeTable gives one plugin's role INSERT, UPDATE and DELETE on a table of another plugin: a
+// grant the owner declared to every provider of a kind, applied when such a provider loads, since
+// the owner loads first and cannot name the providers that come after it (ADR 0020 wave 4). The
+// role is created when absent, as ApplyWriteGrants creates it.
+func (s *Handle) GrantWholeTable(ctx context.Context, schema, table, plugin string) error {
+	qualified := pgx.Identifier{schema, table}.Sanitize()
+	role := PluginRoleName(plugin)
+	quotedRole := pgx.Identifier{role}.Sanitize()
+	return s.execUnderRoleLocks(ctx, []string{role}, []string{
+		"DO $create$ BEGIN CREATE ROLE " + quotedRole + " NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT; " +
+			"EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $create$",
+		"GRANT USAGE ON SCHEMA " + pgx.Identifier{schema}.Sanitize() + " TO " + quotedRole,
+		"GRANT INSERT, UPDATE, DELETE ON " + qualified + " TO " + quotedRole,
+	}, fmt.Sprintf("granting %s the table %s.%s", plugin, schema, table))
 }

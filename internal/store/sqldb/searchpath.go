@@ -17,6 +17,8 @@ var BridgeSchemas = []string{
 	// Wave 2: pf owns flow, classified_flow and blocked_event; refusals owns blocked_decision.
 	"plugin_pf",
 	"plugin_refusals",
+	// Wave 4: leases owns dhcp_lease.
+	"plugin_leases",
 }
 
 // SearchPath is the search path of opnview's own connections and the read role: the core schema, the

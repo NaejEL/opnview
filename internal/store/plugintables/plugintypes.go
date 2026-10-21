@@ -204,6 +204,11 @@ func (s *PluginTableStore) keepPluginTable(ctx context.Context, table plugindecl
 	}
 	grants := make([]sqldb.TableWriteGrant, 0, len(table.WritableBy))
 	for _, grant := range table.WritableBy {
+		if grant.Kind != "" {
+			// A grant to a kind's providers is applied as each of them loads (GrantKindWrites); the
+			// owner's own pass here only names the plugins it granted by name.
+			continue
+		}
 		grants = append(grants, sqldb.TableWriteGrant{Plugin: grant.Plugin, Columns: grant.Columns})
 	}
 	if err := s.ApplyWriteGrants(ctx, plugindecl.PluginSchema(table.Plugin), table.Table, grants); err != nil {
@@ -378,8 +383,8 @@ type PluginRows map[string][]map[string]any
 // tables, upserted on their primary key, and the plugin's durable state. A failure stores nothing,
 // so a watermark is never advanced past rows that were not kept, nor rows kept under a watermark
 // that was not.
-func (s *PluginTableStore) WritePluginPass(ctx context.Context, plugin, provider string, rows PluginRows, state map[string]string,
-	now int64) error {
+func (s *PluginTableStore) WritePluginPass(ctx context.Context, plugin, kind, provider string, rows PluginRows,
+	state map[string]string, now int64) error {
 	transaction, err := s.SQL.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: storing the pass of the plugin %s: %w", plugin, err)
@@ -391,9 +396,9 @@ func (s *PluginTableStore) WritePluginPass(ctx context.Context, plugin, provider
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		table, found := s.LookupPluginTable(plugindecl.PluginTableSQLName(plugin, name))
-		if !found {
-			return fmt.Errorf("store: the plugin %s wrote into %q, which it does not own", plugin, name)
+		table, err := s.passTable(plugin, kind, name)
+		if err != nil {
+			return err
 		}
 		if len(rows[name]) == 0 {
 			continue
@@ -574,4 +579,49 @@ func (s *PluginTableStore) purgeAsideTables(ctx context.Context, transaction *sq
 		}
 	}
 	return nil
+}
+
+// passTable is the table a pass's rows named: one of the plugin's own by its name, or, as
+// `<owner>.<table>`, a table of another plugin whose declaration grants this plugin the whole
+// table -- by its name with no columns, or as a provider of the pass's kind (ADR 0019, ADR 0020
+// wave 4). Anything else is refused by name.
+func (s *PluginTableStore) passTable(plugin, kind, name string) (plugindecl.PluginTable, error) {
+	owner, table, granted := strings.Cut(name, ".")
+	if !granted {
+		held, found := s.LookupPluginTable(plugindecl.PluginTableSQLName(plugin, name))
+		if !found {
+			return plugindecl.PluginTable{}, fmt.Errorf("store: the plugin %s wrote into %q, which it does not own", plugin, name)
+		}
+		return held, nil
+	}
+	held, found := s.LookupPluginTable(plugindecl.PluginTableSQLName(owner, table))
+	if !found {
+		return plugindecl.PluginTable{}, fmt.Errorf("store: the plugin %s wrote into %q, which no plugin declares", plugin, name)
+	}
+	for _, grant := range held.WritableBy {
+		if grant.Grants(plugin, []string{kind}) {
+			return held, nil
+		}
+	}
+	return plugindecl.PluginTable{}, fmt.Errorf("store: the plugin %s wrote into %q, which %s does not grant it", plugin, name,
+		owner)
+}
+
+// GrantKindWrites gives a plugin that provides some kinds the tables other plugins declared writable
+// by those kinds' providers, and returns them by `<owner>.<table>` (ADR 0020 wave 4). The owners
+// loaded first, so their tables are in the registry.
+func (s *PluginTableStore) GrantKindWrites(ctx context.Context, plugin string, kinds []string) (map[string]plugindecl.PluginTable, error) {
+	granted := map[string]plugindecl.PluginTable{}
+	for _, table := range s.PluginTables() {
+		for _, grant := range table.WritableBy {
+			if grant.Kind == "" || !grant.Grants(plugin, kinds) {
+				continue
+			}
+			if err := s.GrantWholeTable(ctx, plugindecl.PluginSchema(table.Plugin), table.Table, plugin); err != nil {
+				return nil, err
+			}
+			granted[table.Plugin+"."+table.Table] = table
+		}
+	}
+	return granted, nil
 }

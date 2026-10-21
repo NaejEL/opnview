@@ -1,7 +1,5 @@
 package vocab
 
-import "strconv"
-
 // The row shapes the collectors write. Each field carries the name of the API
 // field it comes from where there is one, unchanged, so the vocabulary of
 // docs/data-model.md reaches the code without translation.
@@ -411,79 +409,6 @@ type Client struct {
 	VendorHint *string
 	// LastAddress is the most recent address it was seen at.
 	LastAddress *string
-}
-
-// DHCPLease is one observed lease generation.
-type DHCPLease struct {
-	// ClientID is the client this lease named, once identity is resolved.
-	ClientID *int64
-	// Backend is `kea`, `dnsmasq` or `isc`.
-	Backend string
-	// Address is the leased address.
-	Address string
-	// MAC is `hwaddr` on the two current backends, `mac` on the legacy plugin,
-	// normalised here.
-	MAC *string
-	// Hostname is `hostname`, uniform across the backends.
-	Hostname *string
-	// DHCPClientID is `client_id`, the most stable identity level.
-	DHCPClientID *string
-	// DUID is `duid`.
-	DUID *string
-	// IAID is `iaid`.
-	IAID *string
-	// VendorHint is `mac_info`.
-	VendorHint *string
-	// LeaseState is normalised across the backends into one vocabulary.
-	LeaseState string
-	// InterfaceID is the interface the lease was issued on.
-	InterfaceID *int64
-	// StartsAt is the validity start, and nil when the backend does not report
-	// one. On Kea it is `expire` minus `valid_lifetime`, a real figure; Dnsmasq
-	// reports no start at all and a reserved lease reports neither a start nor an
-	// expiry, so both store nil rather than a substitute.
-	StartsAt *int64
-	// GenerationKey is the discriminator that makes one lease generation one row,
-	// so a second poll of the same lease inserts nothing. It is composed by
-	// GenerationKeyOf and names what it rests on, which is what keeps a
-	// substitute from reading as a validity start.
-	GenerationKey string
-	// ExpiresAt is `expire`, or `ends` on the legacy plugin.
-	ExpiresAt *int64
-	// ObservedAt is when opnview read the lease.
-	ObservedAt int64
-}
-
-// The three forms a lease generation key takes, ordered by how much the backend
-// actually knew. The prefix is part of the key, so two backends that happen to
-// report the same number do not collapse into one generation, and a reader can
-// tell a real start from a substitute without consulting the backend.
-const (
-	// GenerationFromStart is a backend that reported a validity start.
-	GenerationFromStart = "start"
-	// GenerationFromExpiry is a backend that reported only an expiry. The key
-	// keeps a re-poll idempotent and makes a renewal a new generation; it is NOT
-	// a claim about when the lease began.
-	GenerationFromExpiry = "expiry"
-	// GenerationFromObservedDay is a standing reservation, which reports neither.
-	// A reservation is configuration rather than a generation, so its key is the
-	// day it was seen and it yields one row per day rather than one per poll.
-	GenerationFromObservedDay = "observed_day"
-)
-
-// GenerationKeyOf composes a lease generation key from the most specific instant
-// the backend supplied. It is here rather than in a collector because the
-// idempotence of the lease table rests on every backend composing it the same
-// way.
-func GenerationKeyOf(startsAt, expiresAt *int64, observedDayStart int64) string {
-	switch {
-	case startsAt != nil:
-		return GenerationFromStart + ":" + strconv.FormatInt(*startsAt, 10)
-	case expiresAt != nil:
-		return GenerationFromExpiry + ":" + strconv.FormatInt(*expiresAt, 10)
-	default:
-		return GenerationFromObservedDay + ":" + strconv.FormatInt(observedDayStart, 10)
-	}
 }
 
 // Flow is one filter-log record.

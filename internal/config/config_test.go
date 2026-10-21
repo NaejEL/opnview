@@ -372,39 +372,6 @@ func TestThePublicSuffixListIsCheckedOnceADayByDefault(t *testing.T) {
 	}
 }
 
-// TestTheLeaseBackendFailureLimitIsAValidatedSettingWhoseDefaultIsThree is the setting of
-// defect L1 (specs/SPEC-test-budget-and-two-live-defects.md): 3 with no row, the schema's
-// own row is 3, a row is read, and anything but a whole number of passes, one or more, is
-// refused by name.
-func TestTheLeaseBackendFailureLimitIsAValidatedSettingWhoseDefaultIsThree(t *testing.T) {
-	ctx := context.Background()
-	loaded, err := Load(ctx, settingTable{rows: map[string]string{}})
-	if err != nil || loaded.LeaseBackendFailurePassLimit != 3 || Defaults().LeaseBackendFailurePassLimit != 3 {
-		t.Errorf("with no row the limit is %d (%v), not 3", loaded.LeaseBackendFailurePassLimit, err)
-	}
-	database, err := store.Open(ctx, storetest.Database(t))
-	if err != nil {
-		t.Fatalf("opening a database: %v", err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	if value, present, err := database.Setting(ctx, KeyLeaseBackendFailurePassLimit); err != nil ||
-		!present || value != "3" {
-		t.Errorf("the schema's row is %q (present %t, %v), not 3", value, present, err)
-	}
-	for value, want := range map[string]int64{"1": 1, "12": 12} {
-		loaded, err := Load(ctx, settingTable{rows: map[string]string{KeyLeaseBackendFailurePassLimit: value}})
-		if err != nil || loaded.LeaseBackendFailurePassLimit != want {
-			t.Errorf("a row of %s gave %d (%v)", value, loaded.LeaseBackendFailurePassLimit, err)
-		}
-	}
-	for _, value := range []string{"0", "-1", "1.5", "three passes", ""} {
-		if _, err := Load(ctx, settingTable{rows: map[string]string{KeyLeaseBackendFailurePassLimit: value}}); err == nil ||
-			!strings.Contains(err.Error(), KeyLeaseBackendFailurePassLimit) {
-			t.Errorf("the limit %q was accepted, or refused without naming the key: %v", value, err)
-		}
-	}
-}
-
 // TestTheResolverCacheSettingsAreValidated is decisions 2 and 4 of
 // specs/SPEC-resolver-cache-attribution.md: the cache-answer cap defaults to 3600 and the
 // schema writes that row; the cache is read every 60 s and the local data every 300 s by
