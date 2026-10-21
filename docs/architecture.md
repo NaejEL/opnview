@@ -96,7 +96,8 @@ discovery:
 
 - **The bridge.** opnview's own connections and the read role resolve an
   unqualified table name through a search path that includes the schemas of
-  the plugins the core tables moved to (`internal/store/sqldb/searchpath.go`).
+  the built-in plugins holding tables or relations, set from their manifests
+  (`internal/store/sqldb/searchpath.go`, `internal/store/builtintables.go`).
   It exists for the Go that still names those tables and is scheduled for
   deletion; the plugin role never has it, and a plugin's SQL names every
   moved table by its qualified name.

@@ -794,6 +794,14 @@ func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, argume
 	for key, value := range checked {
 		reply[key] = value
 	}
+	if gaps, reported := checked["gaps"].([]provider.GapRead); reported {
+		// The gaps a collect reported, as the script wrote them.
+		list := make([]any, 0, len(gaps))
+		for _, gap := range gaps {
+			list = append(list, map[string]any{"from": gap.From, "to": gap.To, "reason": gap.Reason, "detail": gap.Detail})
+		}
+		reply["gaps"] = list
+	}
 	var failed *scripthost.Failure
 	switch {
 	case err == nil:

@@ -1,8 +1,10 @@
 {
   "kind" : "security_event",
-  "description" : "Intrusion-detection events: data source 2. Several providers may be active at once; every event names the provider that reported it, and the kind keeps a watermark per file.",
+  "description" : "Security events an intrusion-detection engine raised: data source 2. Each provider stores what its engine reports into its own table (the suricata plugin's plugin_suricata.security_event, ADR 0020 wave 4), keeps its watermark as its durable state, and reports a lost rotation as a collection gap; the clients plugin places each event's two ends.",
   "concurrent" : true,
-  "gap_reasons" : ["eve_rotation_lost"],
+  "gap_reasons" : [
+    "eve_rotation_lost"
+  ],
   "push" : false,
   "bindable" : true,
   "cadences" : [
@@ -27,20 +29,6 @@
     "survey_heading" : "Data source 2 — Suricata `eve.json`",
     "basis" : "The alert query's `rowCount` defaults to 9999: a page this size is far beyond what an alert feed produces per poll."
   },
-  "bounds" : [
-    {
-      "name" : "rule_info_per_pass",
-      "default" : 25,
-      "unit" : "rule identities",
-      "basis" : "opnview's own, not a survey figure. Suricata's rule metadata is read one sid per request (survey, data source 2, \"Rule metadata, read from source for step 6\"), and each request runs a configd script on the firewall that opens the rule cache, so the bound caps the extra requests one 60-second alert pass makes. 25 a pass resolves 1 500 distinct rules an hour, beyond what any of the rulesets the survey met fires in a day; what is not asked carries over to the next pass that stores an event."
-    },
-    {
-      "name" : "rule_info_recheck_seconds",
-      "default" : 86400,
-      "unit" : "seconds",
-      "basis" : "opnview's own, not a survey figure. A rule's metadata changes only when its ruleset is downloaded again, which OPNsense does on the schedule the user sets on Services > Intrusion Detection > Administration, commonly once a day; asking again after a day follows such a change within one update while costing at most one request per rule per day. It applies to found and not-found answers alike, so a rule installed after it was first asked about is found the next day."
-    }
-  ],
   "functions" : [
     {
       "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
@@ -49,22 +37,10 @@
       "returns" : "probe_answer"
     },
     {
-      "description" : "Called before every read: which of the feed's files still exist, so a lost file is recorded as a permanent gap.",
-      "name" : "rotation",
-      "arguments" : "host",
-      "returns" : "rotation_answer"
-    },
-    {
-      "description" : "Called at every security-event pass: the newest page_size events, newest first.",
-      "name" : "alerts",
-      "arguments" : "host, page_size",
-      "returns" : "alerts_answer"
-    },
-    {
-      "description" : "Called after an alerts pass that stored at least one event, with the rule identities the provider's events carry that the rule-info cache holds no answer for, or an answer older than rule_info_recheck_seconds -- at most rule_info_per_pass of them. Its answers fill the cache; a call that fails fails nothing else, and the identities it did not answer are asked again.",
-      "name" : "rule_info",
-      "arguments" : "host, rule_identities",
-      "returns" : "rule_info_answer"
+      "description" : "Called at every pass: reads the engine's recent events past the watermark the provider keeps in its state, and answers one row per event for the provider's own table, the watermarks as the next pass's state, and the gaps a lost rotation opened (reason eve_rotation_lost).",
+      "name" : "collect",
+      "arguments" : "host, state, provider",
+      "returns" : "collect_answer"
     }
   ],
   "records" : [
@@ -87,8 +63,8 @@
       ]
     },
     {
-      "description" : "What `rotation` returns.",
-      "name" : "rotation_answer",
+      "description" : "What `collect` returns.",
+      "name" : "collect_answer",
       "fields" : [
         {
           "description" : "The `result` record.",
@@ -98,44 +74,19 @@
           "of" : "result"
         },
         {
-          "description" : "Whether the files could be listed; false declares nothing lost.",
-          "name" : "known",
-          "type" : "boolean",
-          "required" : true
+          "description" : "The rows to store, by table of the provider's own.",
+          "name" : "rows",
+          "type" : "object"
         },
         {
-          "description" : "The file identifiers the feed still carries.",
-          "name" : "present",
-          "type" : "text_list"
+          "description" : "The provider's durable state for the next pass: its watermarks.",
+          "name" : "state",
+          "type" : "object"
         },
         {
-          "description" : "The current file's sequence, when the feed reports one.",
-          "name" : "highest_sequence",
-          "type" : "integer"
-        },
-        {
-          "description" : "Why the listing failed, when it did.",
-          "name" : "error",
-          "type" : "text"
-        }
-      ]
-    },
-    {
-      "description" : "What `alerts` returns.",
-      "name" : "alerts_answer",
-      "fields" : [
-        {
-          "description" : "The `result` record.",
-          "name" : "result",
-          "type" : "record",
-          "required" : true,
-          "of" : "result"
-        },
-        {
-          "description" : "The `security_event_alert` records read, absent when the read failed.",
-          "name" : "alerts",
-          "type" : "records",
-          "of" : "security_event_alert"
+          "description" : "The collection gaps the pass detected, each {from, to, reason, detail}, reason one the kind declares.",
+          "name" : "gaps",
+          "type" : "object"
         },
         {
           "description" : "Why the read failed, when it did; the result then says what the firewall answered.",
@@ -145,168 +96,6 @@
         {
           "description" : "Why this implementation's material can never be read, when that is so: a state, recorded with its reason, and not a failure.",
           "name" : "unsupported",
-          "type" : "text"
-        }
-      ]
-    },
-    {
-      "description" : "One event, decoded and normalised.",
-      "name" : "security_event_alert",
-      "fields" : [
-        {
-          "description" : "The file the event was read from; with byte_offset, the coordinate the watermark keeps.",
-          "name" : "file_id",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "Where in the file.",
-          "name" : "byte_offset",
-          "type" : "integer",
-          "required" : true
-        },
-        {
-          "description" : "When the event happened.",
-          "name" : "occurred_at",
-          "type" : "integer",
-          "required" : true,
-          "unit" : "UTC epoch seconds"
-        },
-        {
-          "description" : "The rule or signature's identifier.",
-          "name" : "rule_identity",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "The signature's text; empty when the event carries none.",
-          "name" : "signature",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "What the engine did.",
-          "name" : "event_action",
-          "type" : "text",
-          "required" : true,
-          "values" : [
-            "blocked",
-            "allowed",
-            "unknown"
-          ]
-        },
-        {
-          "description" : "The severity, when the event carries one.",
-          "name" : "normalised_severity",
-          "type" : "text"
-        },
-        {
-          "description" : "The source address.",
-          "name" : "src_address",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "The destination address.",
-          "name" : "dst_address",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "The source port, 0 to 65535.",
-          "name" : "src_port",
-          "type" : "integer",
-          "min" : 0,
-          "max" : 65535
-        },
-        {
-          "description" : "The destination port, 0 to 65535.",
-          "name" : "dst_port",
-          "type" : "integer",
-          "min" : 0,
-          "max" : 65535
-        },
-        {
-          "description" : "The protocol.",
-          "name" : "protocol",
-          "type" : "text"
-        },
-        {
-          "description" : "The device the event was seen on.",
-          "name" : "in_interface_device",
-          "type" : "text"
-        }
-      ]
-    },
-    {
-      "description" : "What `rule_info` returns.",
-      "name" : "rule_info_answer",
-      "fields" : [
-        {
-          "description" : "The `result` record: what the rule-metadata read answered. It is logged, and never changes the provider's availability, which is the alerts read's.",
-          "name" : "result",
-          "type" : "record",
-          "required" : true,
-          "of" : "result"
-        },
-        {
-          "description" : "One `rule_info_entry` record per rule identity answered, absent when the read failed. An identity asked about and left out is not answered, and is asked again.",
-          "name" : "rules",
-          "type" : "records",
-          "of" : "rule_info_entry"
-        },
-        {
-          "description" : "Why the read failed, when it did.",
-          "name" : "error",
-          "type" : "text"
-        }
-      ]
-    },
-    {
-      "description" : "What the provider says of one rule: found, with what it reports of it, or not found.",
-      "name" : "rule_info_entry",
-      "fields" : [
-        {
-          "description" : "The rule identity asked about, exactly as the events carry it.",
-          "name" : "rule_identity",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "Whether the provider knew the rule.",
-          "name" : "lookup_state",
-          "type" : "text",
-          "required" : true,
-          "values" : [
-            "found",
-            "not_found"
-          ]
-        },
-        {
-          "description" : "The rule's severity in opnview's vocabulary, mapped only from a field the provider documents as the rule's severity; absent when it reports none, which is served as unknown and never guessed.",
-          "name" : "normalised_severity",
-          "type" : "text",
-          "values" : [
-            "critical",
-            "high",
-            "medium",
-            "low",
-            "informational"
-          ]
-        },
-        {
-          "description" : "The raw severity the provider reported, verbatim, so the normalisation stays auditable.",
-          "name" : "provider_severity",
-          "type" : "text"
-        },
-        {
-          "description" : "The rule's category, verbatim as the provider names it.",
-          "name" : "category",
-          "type" : "text"
-        },
-        {
-          "description" : "Where the rule comes from: the ruleset, verbatim as the provider names it.",
-          "name" : "rule_source",
           "type" : "text"
         }
       ]

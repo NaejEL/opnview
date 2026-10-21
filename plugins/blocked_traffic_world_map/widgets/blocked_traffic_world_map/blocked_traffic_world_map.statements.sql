@@ -11,7 +11,7 @@
 SELECT CASE WHEN :endpoint = 'source' THEN e.src_address ELSE e.dst_address END AS peer_address,
        e.src_interface_id AS interface_id,
        count(*) AS events
-FROM security_event AS e
+FROM plugin_suricata.security_event AS e
 WHERE e.event_action = 'blocked'
   AND e.occurred_at >= :from
   AND e.occurred_at < :to

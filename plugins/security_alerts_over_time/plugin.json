@@ -1,7 +1,7 @@
 {
   "api_version": 3,
   "name": "security_alerts_over_time",
-  "requires": ["installation"],
+  "requires": ["installation", "suricata"],
   "version": "1.0.0",
   "display_name": "Security alerts over time",
   "description": "The security events of the window in UTC-aligned buckets, one series per severity present -- unknown among them -- each naming the providers that contributed it.",

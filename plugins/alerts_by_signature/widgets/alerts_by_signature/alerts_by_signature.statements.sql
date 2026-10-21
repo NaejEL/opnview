@@ -42,9 +42,9 @@ SELECT e.provider_id AS provider_id,
        m.interface_id AS in_interface_id,
        count(*) AS events,
        max(e.occurred_at) AS newest
-FROM security_event AS e
+FROM plugin_suricata.security_event AS e
 LEFT JOIN provider AS p ON p.id = e.provider_id
-LEFT JOIN provider_rule_info AS r ON r.provider_id = e.provider_id AND r.rule_identity = e.rule_identity
+LEFT JOIN plugin_suricata.provider_rule_info AS r ON r.provider_id = e.provider_id AND r.rule_identity = e.rule_identity
 LEFT JOIN plugin_installation.interface_map AS m ON m.device = e.in_interface_device
 WHERE e.occurred_at >= :from
   AND e.occurred_at < :to

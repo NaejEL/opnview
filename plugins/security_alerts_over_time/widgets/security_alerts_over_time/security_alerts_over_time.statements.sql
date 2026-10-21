@@ -26,9 +26,9 @@ SELECT e.occurred_at - e.occurred_at % :width AS bucket_start,
        r.lookup_state AS lookup_state,
        r.normalised_severity AS rule_severity,
        count(*) AS events
-FROM security_event AS e
+FROM plugin_suricata.security_event AS e
 LEFT JOIN provider AS p ON p.id = e.provider_id
-LEFT JOIN provider_rule_info AS r ON r.provider_id = e.provider_id AND r.rule_identity = e.rule_identity
+LEFT JOIN plugin_suricata.provider_rule_info AS r ON r.provider_id = e.provider_id AND r.rule_identity = e.rule_identity
 WHERE e.occurred_at >= :from
   AND e.occurred_at < :to
   AND (CAST(:provider_ids AS jsonb) IS NULL

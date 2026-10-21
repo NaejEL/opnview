@@ -26,7 +26,7 @@ GROUP BY 1;
 SELECT e.occurred_at - e.occurred_at % :width AS bucket_start,
        count(*) AS events,
        sum(CASE WHEN e.event_action = 'blocked' THEN 1 ELSE 0 END) AS blocked
-FROM security_event AS e
+FROM plugin_suricata.security_event AS e
 WHERE e.occurred_at >= :from
   AND e.occurred_at < :to
   AND (CAST(:provider_id AS BIGINT) IS NULL OR e.provider_id = :provider_id)

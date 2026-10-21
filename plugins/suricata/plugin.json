@@ -1,10 +1,31 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "suricata",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "display_name": "Suricata",
-  "description": "Reads the Suricata intrusion-detection engine's alerts from its eve.json log, the one path OPNsense opens on it (data source 2).",
+  "description": "Reads the Suricata intrusion-detection engine's alerts from its eve.json log, the one path OPNsense opens on it (data source 2), into its own table of security events, with the per-file watermark as its durable state and a lost rotation recorded as a collection gap; and resolves, after each pass, what the installed-rules grid says of the rules that fired, into its rule-info table (ADR 0020 wave 4).",
   "script": "suricata.js",
+  "requires": ["installation"],
+  "settings": [
+    {
+      "key": "rule_info_per_pass",
+      "type": "integer",
+      "default": 25,
+      "min": 1,
+      "max": 500,
+      "label": "plugin.suricata.setting.rule_info_per_pass",
+      "note": "How many rule identities one rule-info run asks the installed-rules grid about: opnview's own, not a survey figure. Suricata's rule metadata is read one sid per request (survey, data source 2, Rule metadata), and each request runs a configd script on the firewall that opens the rule cache, so the bound caps the extra requests one alert pass makes. 25 a run resolves 1 500 distinct rules an hour, beyond what any of the rulesets the survey met fires in a day; what is not asked carries over to the next run."
+    },
+    {
+      "key": "rule_info_recheck_seconds",
+      "type": "integer",
+      "default": 86400,
+      "min": 60,
+      "max": 2592000,
+      "label": "plugin.suricata.setting.rule_info_recheck_seconds",
+      "note": "After how long a rule's answer is asked again: opnview's own, not a survey figure. A rule's metadata changes only when its ruleset is downloaded again, which OPNsense does on the schedule the user sets on Services > Intrusion Detection > Administration, commonly once a day; asking again after a day follows such a change within one update while costing at most one request per rule per day. It applies to found and not-found answers alike, so a rule installed after it was first asked about is found the next day."
+    }
+  ],
   "endpoints": [
     {
       "name": "query_alerts",
@@ -56,6 +77,87 @@
         }
       ],
       "read_strategy": "watermark"
+    }
+  ],
+  "tables": [
+    {
+      "name": "security_event",
+      "columns": [
+        { "name": "id", "type": "integer", "identity": true },
+        { "name": "provider_id", "type": "integer" },
+        { "name": "provider_event_key", "type": "text" },
+        { "name": "occurred_at", "type": "integer" },
+        { "name": "ingested_at", "type": "integer" },
+        { "name": "rule_identity", "type": "text" },
+        { "name": "signature", "type": "text" },
+        { "name": "event_action", "type": "text" },
+        { "name": "normalised_severity", "type": "text", "nullable": true },
+        { "name": "src_address", "type": "text" },
+        { "name": "src_port", "type": "integer", "nullable": true },
+        { "name": "dst_address", "type": "text" },
+        { "name": "dst_port", "type": "integer", "nullable": true },
+        { "name": "protocol", "type": "text", "nullable": true },
+        { "name": "in_interface_device", "type": "text", "nullable": true },
+        { "name": "src_client_id", "type": "integer", "nullable": true, "references": "installation.client(id)" },
+        { "name": "src_interface_id", "type": "integer", "nullable": true, "references": "installation.interface(id)" },
+        { "name": "src_is_this_firewall", "type": "boolean", "default": "false" },
+        { "name": "dst_client_id", "type": "integer", "nullable": true, "references": "installation.client(id)" },
+        { "name": "dst_interface_id", "type": "integer", "nullable": true, "references": "installation.interface(id)" },
+        { "name": "dst_is_this_firewall", "type": "boolean", "default": "false" },
+        { "name": "flow_ref", "type": "integer", "nullable": true }
+      ],
+      "primary_key": ["id"],
+      "indexes": [
+        { "columns": ["provider_id", "provider_event_key"], "unique": true },
+        { "columns": ["occurred_at"] },
+        { "columns": ["src_client_id", "occurred_at"] },
+        { "columns": ["provider_id", "rule_identity", "occurred_at"] },
+        { "columns": ["src_address", "occurred_at"] },
+        { "columns": ["dst_client_id", "occurred_at"] },
+        { "columns": ["dst_interface_id", "occurred_at"] },
+        { "columns": ["dst_address", "occurred_at"] }
+      ],
+      "checks": [
+        { "name": "occurred_at_instant", "expression": "occurred_at >= 0 AND occurred_at < 4102444800" },
+        { "name": "ingested_at_instant", "expression": "ingested_at >= 0 AND ingested_at < 4102444800" },
+        { "name": "event_action_known", "expression": "event_action IN ('allowed', 'blocked', 'unknown')" },
+        { "name": "severity_known", "expression": "normalised_severity IS NULL OR normalised_severity IN ('critical', 'high', 'medium', 'low', 'informational')" },
+        { "name": "src_port_range", "expression": "src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)" },
+        { "name": "dst_port_range", "expression": "dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)" },
+        { "name": "src_firewall_has_no_client", "expression": "NOT src_is_this_firewall OR src_client_id IS NULL" },
+        { "name": "dst_firewall_has_no_client", "expression": "NOT dst_is_this_firewall OR dst_client_id IS NULL" }
+      ],
+      "writable_by": [
+        { "plugin": "clients", "columns": ["src_interface_id", "src_client_id", "src_is_this_firewall", "dst_interface_id", "dst_client_id", "dst_is_this_firewall"] }
+      ]
+    },
+    {
+      "name": "provider_rule_info",
+      "columns": [
+        { "name": "provider_id", "type": "integer" },
+        { "name": "rule_identity", "type": "text" },
+        { "name": "lookup_state", "type": "text" },
+        { "name": "normalised_severity", "type": "text", "nullable": true },
+        { "name": "provider_severity", "type": "text", "nullable": true },
+        { "name": "category", "type": "text", "nullable": true },
+        { "name": "rule_source", "type": "text", "nullable": true },
+        { "name": "fetched_at", "type": "integer" }
+      ],
+      "primary_key": ["provider_id", "rule_identity"],
+      "checks": [
+        { "name": "lookup_state_known", "expression": "lookup_state IN ('found', 'not_found')" },
+        { "name": "severity_known", "expression": "normalised_severity IS NULL OR normalised_severity IN ('critical', 'high', 'medium', 'low', 'informational')" },
+        { "name": "fetched_at_instant", "expression": "fetched_at >= 0 AND fetched_at < 4102444800" },
+        { "name": "not_found_carries_nothing", "expression": "lookup_state = 'found' OR (normalised_severity IS NULL AND provider_severity IS NULL AND category IS NULL AND rule_source IS NULL)" }
+      ]
+    }
+  ],
+  "derivations": [
+    {
+      "name": "rule_info",
+      "after_passes": ["security_event"],
+      "cadence_seconds": 3600,
+      "outputs": { "tables": ["provider_rule_info"] }
     }
   ]
 }

@@ -219,6 +219,25 @@ func (c *DeclaredKindCoordinator) CollectDeclaredKind(ctx context.Context, kind,
 			return err
 		}
 	}
+	// The gaps the pass detected, each under a reason the kind declares (ADR 0020 wave 4).
+	gaps, _ := pass["gaps"].([]provider.GapRead)
+	for _, gap := range gaps {
+		declared := false
+		if attributes, found := c.SourceSet.Attributes(kind); found {
+			for _, reason := range attributes.GapReasons {
+				declared = declared || reason == gap.Reason
+			}
+		}
+		if !declared {
+			return fmt.Errorf("collect: the %s provider %q reported a gap for the reason %q, which the kind does not declare",
+				kind, key, gap.Reason)
+		}
+		detail := gap.Detail
+		if err := c.Store.RecordCollectionGap(ctx, vocab.CollectionGap{ProviderID: providerID, IntervalStartAt: gap.From,
+			IntervalEndAt: gap.To, Reason: vocab.GapReason(gap.Reason), Detail: &detail, DetectedAt: passAt}); err != nil {
+			return err
+		}
+	}
 	for _, derivation := range c.SourceSet.Derivations() {
 		for _, trigger := range derivation.AfterPasses() {
 			if passKind, passKey, scoped := strings.Cut(trigger, "/"); passKind == kind && (!scoped || passKey == key) {

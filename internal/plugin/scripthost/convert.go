@@ -293,7 +293,8 @@ func checkRow(table plugindecl.PluginTable, row map[string]any, path string) (ma
 	for _, column := range table.WrittenColumns() {
 		value, present := row[column.Name]
 		if !present || value == nil {
-			if !column.Nullable {
+			// A column with a declared default takes it when the row leaves it out (ADR 0020).
+			if !column.Nullable && column.Default == "" {
 				return nil, fmt.Errorf("%s.%s is NOT NULL and is missing", path, column.Name)
 			}
 			converted[column.Name] = nil

@@ -71,3 +71,11 @@ func PushConversionOf(kind string) PushConversion {
 	defer pushConversions.RUnlock()
 	return pushConversions.byKind[kind]
 }
+
+// GapRead is one collection gap a pass reported: an interval of the provider's data that is missing,
+// for a reason the kind declares (ADR 0020 wave 4).
+type GapRead struct {
+	From, To int64
+	Reason   string
+	Detail   string
+}

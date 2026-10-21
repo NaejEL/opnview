@@ -100,10 +100,15 @@ func (i implementation) call(ctx context.Context, session provider.Session, func
 		if err != nil {
 			return i.invalid(err.Error())
 		}
-		own = map[string]any{"rows": rows, "state": state, "bounds": bounds}
+		gaps, err := checkGaps(object["gaps"])
+		if err != nil {
+			return i.invalid(err.Error())
+		}
+		own = map[string]any{"rows": rows, "state": state, "bounds": bounds, "gaps": gaps}
 		delete(object, "rows")
 		delete(object, "state")
 		delete(object, "bounds")
+		delete(object, "gaps")
 	}
 	answerErr, _ := object["error"].(error)
 	delete(object, "error")
@@ -237,6 +242,7 @@ func declaredContract(kind string) provider.Contract {
 				{Name: "result", Type: provider.FieldRecord, Of: "result", Required: true},
 				{Name: "rows", Type: provider.FieldObject},
 				{Name: "state", Type: provider.FieldObject},
+				{Name: "gaps", Type: provider.FieldObject},
 				{Name: "error", Type: provider.FieldText},
 				{Name: "unsupported", Type: provider.FieldText},
 			}},
@@ -337,4 +343,32 @@ func (l *Loaded) EnablePages(kind, providerKey string) []provider.EnablePage {
 		}
 	}
 	return nil
+}
+
+// checkGaps reads the collection gaps a collect reports: a list of {from, to, reason, detail}, each an
+// interval of the provider's data that is missing for a reason the kind declares (ADR 0020 wave 4).
+func checkGaps(raw any) ([]provider.GapRead, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	list, isList := raw.([]any)
+	if !isList {
+		return nil, fmt.Errorf("gaps is not a list")
+	}
+	var gaps []provider.GapRead
+	for index, element := range list {
+		object, isObject := element.(map[string]any)
+		if !isObject {
+			return nil, fmt.Errorf("gaps[%d] is not an object", index)
+		}
+		from, fromOK := scripthost.IntegerOf(object["from"])
+		to, toOK := scripthost.IntegerOf(object["to"])
+		reason, _ := object["reason"].(string)
+		detail, _ := object["detail"].(string)
+		if !fromOK || !toOK || reason == "" {
+			return nil, fmt.Errorf("gaps[%d] needs from and to, instants, and a reason", index)
+		}
+		gaps = append(gaps, provider.GapRead{From: from, To: to, Reason: reason, Detail: detail})
+	}
+	return gaps, nil
 }

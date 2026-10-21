@@ -545,61 +545,6 @@ const (
 	ClientResolutionThisFirewall = "this_firewall_hostname"
 )
 
-// SecurityEvent is one event from a provider of the security_event kind.
-type SecurityEvent struct {
-	// ProviderEventKey is the key the provider guarantees stable. For Suricata
-	// it is composed from the eve file id and the byte offset inside it.
-	ProviderEventKey string
-	// OccurredAt is `timestamp`, normalised from the ISO string.
-	OccurredAt int64
-	// IngestedAt is when opnview stored it.
-	IngestedAt int64
-	// RuleIdentity is `alert_sid`, kept as text so a provider whose rules are
-	// named rather than numbered fits.
-	RuleIdentity string
-	// Signature is the `alert` key, which the backend has already overwritten
-	// with the signature text.
-	Signature string
-	// EventAction is `alert_action`, normalised.
-	EventAction string
-	// NormalisedSeverity is nil for every Suricata event: the backend destroys
-	// the nested alert object, so severity is resolved through the rule-info
-	// cache and from nowhere else.
-	NormalisedSeverity *string
-	// SrcAddress is `src_ip`.
-	SrcAddress string
-	// SrcPort is `src_port`.
-	SrcPort *int64
-	// DstAddress is `dest_ip`.
-	DstAddress string
-	// DstPort is `dest_port`.
-	DstPort *int64
-	// Protocol is `proto`.
-	Protocol *string
-	// InInterfaceDevice is `in_iface`.
-	InInterfaceDevice *string
-	// SrcClientID and SrcInterfaceID are resolved from the source address.
-	SrcClientID *int64
-	// SrcInterfaceID is the interface the event's source sits behind.
-	SrcInterfaceID *int64
-}
-
-// EveCursor is one per-file byte-offset watermark over the alert feed.
-type EveCursor struct {
-	// FileID is `fileid`.
-	FileID string
-	// ByteOffset is the highest `filepos` read in that file.
-	ByteOffset int64
-	// FileSequence is get_alert_logs' `sequence`, which is how rotation is
-	// detected.
-	FileSequence *int64
-	// RotationState is `current`, `rotated` or `lost`. `lost` is a permanent
-	// loss and is recorded as a gap as well.
-	RotationState string
-	// ObservedAt is when the watermark was written.
-	ObservedAt int64
-}
-
 // There is deliberately NO row shape for pair_volume_observation. That table is
 // DERIVED and not collected -- the maintainer's ruling, recorded on the table
 // itself -- and its rows are computed from `flow` by the refresh, through the

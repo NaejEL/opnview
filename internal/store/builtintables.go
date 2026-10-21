@@ -8,7 +8,9 @@ import (
 
 	opnview "github.com/NaejEL/opnview"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/store/plugindecl"
 	"github.com/NaejEL/opnview/internal/store/plugintables"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // The built-in plugins' tables and relations, as a started service has them (ADR 0020). The test
@@ -131,4 +133,20 @@ func builtinTablesText() ([]byte, error) {
 		}
 	}
 	return text, nil
+}
+
+// The bridge (ADR 0020, sqldb/searchpath.go): the schema of every built-in plugin holding tables or
+// relations, in load order, set once for the process before any connection is opened.
+func init() {
+	manifests, _, err := builtinManifests()
+	if err != nil {
+		panic(fmt.Sprintf("store: reading the built-in plugins for the bridge: %v", err))
+	}
+	var schemas []string
+	for _, manifest := range manifests {
+		if len(manifest.Tables) > 0 || len(manifest.Relations) > 0 {
+			schemas = append(schemas, plugindecl.PluginSchema(manifest.Name))
+		}
+	}
+	sqldb.SetBridgeSchemas(schemas)
 }

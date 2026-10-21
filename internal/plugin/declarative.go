@@ -207,12 +207,6 @@ func (f *declarativeForm) invoke(ctx context.Context, session provider.Session, 
 	switch function {
 	case "probe":
 		return f.runProbe(ctx, session), nil, nil
-	case "rotation":
-		// A declarative security_event read keeps no file list: it reports that it cannot ask,
-		// so the kind declares nothing lost.
-		answer := f.runProbe(ctx, session)
-		answer["known"] = false
-		return answer, nil, nil
 	case f.function:
 		return f.runRead(ctx, session, function, arguments), nil, nil
 	}

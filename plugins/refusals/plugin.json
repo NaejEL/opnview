@@ -4,6 +4,6 @@
   "version": "1.0.0",
   "display_name": "Refusals",
   "description": "Every refusal under one vocabulary, whichever engine decided it: the filter log's blocks and rejects, the resolver's refused lookups, the security engine's blocked events. A relation plugin: it owns no table and joins the tables of the sources it requires (ADR 0020 wave 2).",
-  "requires": ["installation", "pf"],
+  "requires": ["installation", "pf", "suricata"],
   "relations": ["refusals.relations.sql"]
 }

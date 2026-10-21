@@ -160,10 +160,9 @@ WHERE covered_until_at < (
   AND NOT EXISTS (SELECT 1 FROM domain_attribution a
                   WHERE a.address_observation_id = resource_record_observation.id);
 
--- security_event is purged by occurred_at, like every other observation. It
--- has no provider-named detail table to follow: the one thing such a table
--- would have carried is the ingestion coordinate, which lives in
--- eve_ingest_cursor and is a watermark rather than event data.
+-- security_event is purged by occurred_at, like every other observation: the suricata plugin's table,
+-- reached through the bridge until wave 5 (ADR 0020). The ingestion coordinate is the provider's
+-- durable state, a watermark rather than event data.
 DELETE FROM security_event
 WHERE occurred_at < (
     SELECT :now - CAST(value AS BIGINT)

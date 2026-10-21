@@ -35,9 +35,9 @@ SELECT e.provider_id AS provider_id,
             THEN e.src_address END AS unmatched_address,
        count(*) AS events,
        max(e.occurred_at) AS newest
-FROM security_event AS e
+FROM plugin_suricata.security_event AS e
 LEFT JOIN provider AS p ON p.id = e.provider_id
-LEFT JOIN provider_rule_info AS r ON r.provider_id = e.provider_id AND r.rule_identity = e.rule_identity
+LEFT JOIN plugin_suricata.provider_rule_info AS r ON r.provider_id = e.provider_id AND r.rule_identity = e.rule_identity
 WHERE e.occurred_at >= :from
   AND e.occurred_at < :to
   AND (CAST(:interface_ids AS jsonb) IS NULL

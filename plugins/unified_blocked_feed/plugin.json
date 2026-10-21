@@ -1,7 +1,7 @@
 {
   "api_version": 3,
   "name": "unified_blocked_feed",
-  "requires": ["installation", "pf", "refusals"],
+  "requires": ["installation", "pf", "refusals", "suricata"],
   "version": "1.0.0",
   "display_name": "Unified blocked feed",
   "description": "Every refusal of the window, newest first, over the four engines, each naming the engine, the client, the target and the rule, list or signature that decided it, with each contributing source's condition.",

@@ -1082,125 +1082,10 @@ CREATE INDEX IF NOT EXISTS idx_geo_asn_looked_up_at ON geo_asn (looked_up_at);
 CREATE INDEX IF NOT EXISTS idx_geo_asn_country_code ON geo_asn (country_code);
 CREATE INDEX IF NOT EXISTS idx_geo_asn_asn ON geo_asn (asn);
 
--- ---------------------------------------------------------------------------
--- Rule-info cache — the normalised severity and category of one rule identity,
--- per provider, and the lookups that found nothing.
--- Source: the rule_info function of the security_event contract; for the
--- Suricata provider, POST /api/ids/settings/search_installed_rules filtered on
--- the sid (survey, data source 2, "Rule metadata, read from source for step 6").
--- Survey: data source 2, response shape, and gap 3: query_alerts overwrites
--- the nested alert object with the signature string, so severity and category
--- are not in the event record and must be resolved separately and cached.
---
--- THE CACHE STATES ITS MISSES. lookup_state is 'found' when the provider knew
--- the rule, and 'not_found' when it was asked and knew no such rule; a rule
--- identity with no row here has never been fetched. A found rule may carry no
--- severity: normalised_severity is then NULL, which the served rows report as
--- unknown with the reason not_reported_by_provider, never as a guess. A
--- not_found row carries nothing but its instant.
---
--- Keyed per provider: two providers may name a rule identically and mean
--- different rules, so the identity alone is not a key. The identity is TEXT,
--- because a provider whose rules are named rather than numbered cannot use an
--- integer.
---
--- normalised_severity is opnview's own ordered vocabulary; provider_severity
--- keeps the raw value the provider reported, verbatim, so the normalisation
--- stays auditable. docs/data-model.md gives the vocabulary, its order and the
--- mapping from the Suricata numeric scale.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS provider_rule_info (
-    provider_id         BIGINT NOT NULL REFERENCES provider (id),
-    rule_identity       TEXT NOT NULL,
-    lookup_state        TEXT NOT NULL CHECK (lookup_state IN ('found', 'not_found')),
-    normalised_severity TEXT
-                        CHECK (normalised_severity IS NULL
-                               OR normalised_severity IN ('critical', 'high', 'medium',
-                                                          'low', 'informational')),
-    provider_severity   TEXT,
-    category            TEXT,
-    rule_source         TEXT,
-    fetched_at          BIGINT NOT NULL CHECK (fetched_at >= 0 AND fetched_at < 4102444800),
-    PRIMARY KEY (provider_id, rule_identity),
-    CHECK (lookup_state = 'found'
-           OR (normalised_severity IS NULL AND provider_severity IS NULL
-               AND category IS NULL AND rule_source IS NULL))
-);
-
--- ---------------------------------------------------------------------------
--- Security event — one event contributed by a provider of the security_event
--- kind. Today that is Suricata, which on 26.7 is an alert source and nothing
--- else; the table describes the kind, not the product.
--- Source: /api/ids/service/query_alerts (timestamp, src_ip, src_port,
--- dest_ip, dest_port, proto, in_iface, alert as signature text, alert_sid,
--- alert_action, fileid, filepos). Survey: data source 2.
---
--- Identity is (provider_id, provider_event_key): the key the provider itself
--- guarantees stable, composed by the collector — for Suricata, from the eve
--- file id and the byte offset inside it. That is ONE idempotence guarantee,
--- placed on the core. The ingestion coordinate is NOT duplicated here: it is
--- a transport concern and lives in eve_ingest_cursor, which carries a
--- different guarantee about a different thing (see docs/data-model.md).
---
--- normalised_severity is nullable and is NULL for every Suricata event,
--- because the API destroys the nested alert object before opnview can read it
--- (survey, gap 3): its severity is resolved through provider_rule_info. The
--- column exists for a provider that ships severity inside its event.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS security_event (
-    id                  BIGINT PRIMARY KEY,
-    provider_id         BIGINT NOT NULL REFERENCES provider (id),
-    provider_event_key  TEXT NOT NULL,
-    occurred_at         BIGINT NOT NULL CHECK (occurred_at >= 0 AND occurred_at < 4102444800),
-    ingested_at         BIGINT NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
-    rule_identity       TEXT NOT NULL,
-    signature           TEXT NOT NULL,
-    event_action        TEXT NOT NULL CHECK (event_action IN ('allowed', 'blocked', 'unknown')),
-    normalised_severity TEXT
-                        CHECK (normalised_severity IS NULL
-                               OR normalised_severity IN ('critical', 'high', 'medium',
-                                                          'low', 'informational')),
-    src_address         TEXT NOT NULL,
-    src_port            BIGINT CHECK (src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)),
-    dst_address         TEXT NOT NULL,
-    dst_port            BIGINT CHECK (dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)),
-    protocol            TEXT,
-    in_interface_device TEXT,
-    src_client_id       BIGINT,
-    src_interface_id    BIGINT,
-    -- 1 when the event's source is this firewall, as flow.src_is_this_firewall
-    -- decides it for a record's end; such a source has no client.
-    src_is_this_firewall BOOLEAN NOT NULL DEFAULT false,
-    -- The destination end, placed by the same classification as the source end
-    -- (gap G7, closed in step 6): many detections fire on the server-to-client
-    -- packet, where the client is the destination. An outside destination has
-    -- no interface and no client.
-    dst_client_id       BIGINT,
-    dst_interface_id    BIGINT,
-    -- 1 when the event's destination is this firewall; such a destination has
-    -- no client.
-    dst_is_this_firewall BOOLEAN NOT NULL DEFAULT false,
-    flow_ref            BIGINT,
-    UNIQUE (provider_id, provider_event_key),
-    CHECK (NOT src_is_this_firewall OR src_client_id IS NULL),
-    CHECK (NOT dst_is_this_firewall OR dst_client_id IS NULL)
-);
-
-CREATE INDEX IF NOT EXISTS idx_security_event_occurred_at ON security_event (occurred_at);
-CREATE INDEX IF NOT EXISTS idx_security_event_client_occurred_at ON security_event (src_client_id, occurred_at);
-CREATE INDEX IF NOT EXISTS idx_security_event_rule_occurred_at
-    ON security_event (provider_id, rule_identity, occurred_at);
--- Classification rewrites an event's source end with the flows of that address.
-CREATE INDEX IF NOT EXISTS idx_security_event_src_address
-    ON security_event (src_address, occurred_at);
--- The destination end: a client's events as the destination, an interface's
--- events as the target, and the rows classification rewrites per address.
-CREATE INDEX IF NOT EXISTS idx_security_event_dst_client_occurred_at
-    ON security_event (dst_client_id, occurred_at);
-CREATE INDEX IF NOT EXISTS idx_security_event_dst_interface_occurred_at
-    ON security_event (dst_interface_id, occurred_at);
-CREATE INDEX IF NOT EXISTS idx_security_event_dst_address
-    ON security_event (dst_address, occurred_at);
+-- provider_rule_info and security_event -- the rule-info cache and the security events: the
+-- suricata plugin's tables, plugin_suricata.provider_rule_info and plugin_suricata.security_event,
+-- since ADR 0020 wave 4 (plugins/suricata/plugin.json), reached unqualified through the bridge by the
+-- Go that still reads them. The eve.json watermark is the provider's durable state (plugin_state).
 
 -- ---------------------------------------------------------------------------
 -- blocked_decision — every refusal, whichever engine decided it, under one
@@ -1238,25 +1123,6 @@ CREATE INDEX IF NOT EXISTS idx_security_event_dst_address
 -- ADR 0020 wave 1): plugin_installation.blocked_decision, since it reads interface_address, which
 -- moved there, and three sources' tables that no single source owns.
 -- ---------------------------------------------------------------------------
-
--- ---------------------------------------------------------------------------
--- eve.json ingestion cursor — a per-file byte-offset watermark over an
--- alert-only feed, with rotation detection.
--- Source: /api/ids/service/query_alerts (fileid, filepos) and
--- /api/ids/service/get_alert_logs (filename, size, modified, sequence).
--- Survey: data source 2 (a). Paging is offset-from-end-of-file and therefore
--- unstable, so (file_id, byte_offset) is the only durable resume point; it is
--- unique, and a duplicate insert fails.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS eve_ingest_cursor (
-    id             BIGINT PRIMARY KEY,
-    file_id        TEXT NOT NULL,
-    byte_offset    BIGINT NOT NULL CHECK (byte_offset >= 0),
-    file_sequence  BIGINT,
-    rotation_state TEXT NOT NULL CHECK (rotation_state IN ('current', 'rotated', 'lost')),
-    observed_at    BIGINT NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
-    UNIQUE (file_id, byte_offset)
-);
 
 -- ---------------------------------------------------------------------------
 -- Source availability — the modelled health of each registered provider, one
@@ -3495,8 +3361,6 @@ SELECT install_assign_id(t::regclass) FROM unnest(ARRAY[
     'blocklist',
     'dns_resolution',
     'resource_record_observation',
-    'security_event',
-    'eve_ingest_cursor',
     'pair_volume_observation',
     'volume_aggregate_1h',
     'volume_aggregate_24h',

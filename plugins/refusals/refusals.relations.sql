@@ -85,5 +85,5 @@ SELECT
     'address',
     CAST(CAST(EXISTS (SELECT 1 FROM plugin_installation.interface_address AS a
             WHERE a.address = e.dst_address AND a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6')) AS INTEGER) AS BIGINT)
-FROM opnview.security_event AS e
+FROM plugin_suricata.security_event AS e
 WHERE e.event_action = 'blocked';

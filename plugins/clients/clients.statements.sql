@@ -105,11 +105,11 @@ FROM (SELECT f.src_address AS address FROM plugin_pf.flow AS f
         AND ((SELECT changed FROM plugin_clients.onlink) OR CAST(:since AS BIGINT) IS NULL
              OR c.last_seen_at >= CAST(:since AS BIGINT))
       UNION ALL
-      SELECT e.src_address FROM opnview.security_event AS e
+      SELECT e.src_address FROM plugin_suricata.security_event AS e
       WHERE (SELECT changed FROM plugin_clients.onlink) OR CAST(:since AS BIGINT) IS NULL
          OR e.ingested_at >= CAST(:since AS BIGINT)
       UNION ALL
-      SELECT e.dst_address FROM opnview.security_event AS e
+      SELECT e.dst_address FROM plugin_suricata.security_event AS e
       WHERE (SELECT changed FROM plugin_clients.onlink) OR CAST(:since AS BIGINT) IS NULL
          OR e.ingested_at >= CAST(:since AS BIGINT)
       UNION ALL
@@ -423,7 +423,7 @@ WHERE flow.id = n.id
 
 
 -- statement: place_event_sources
-UPDATE opnview.security_event AS security_event
+UPDATE plugin_suricata.security_event AS security_event
 SET src_interface_id = n.interface_id,
     src_client_id = n.client_id,
     src_is_this_firewall = n.this_firewall
@@ -456,7 +456,7 @@ FROM (SELECT p.id,
                       AND (h.is_current = 1 OR h.last_seen_at + CAST(:held_margin AS BIGINT) >= e.occurred_at)
                     ORDER BY h.last_seen_at DESC, h.interface_id
                     LIMIT 1) AS firewall_interface_id
-            FROM opnview.security_event AS e
+            FROM plugin_suricata.security_event AS e
             JOIN plugin_clients.placement AS pl ON pl.address = e.src_address
             WHERE pl.placed_in_full OR e.src_interface_id IS NULL) AS p) AS n
 WHERE security_event.id = n.id
@@ -466,7 +466,7 @@ WHERE security_event.id = n.id
 
 
 -- statement: place_event_destinations
-UPDATE opnview.security_event AS security_event
+UPDATE plugin_suricata.security_event AS security_event
 SET dst_interface_id = n.interface_id,
     dst_client_id = n.client_id,
     dst_is_this_firewall = n.this_firewall
@@ -499,7 +499,7 @@ FROM (SELECT p.id,
                       AND (h.is_current = 1 OR h.last_seen_at + CAST(:held_margin AS BIGINT) >= e.occurred_at)
                     ORDER BY h.last_seen_at DESC, h.interface_id
                     LIMIT 1) AS firewall_interface_id
-            FROM opnview.security_event AS e
+            FROM plugin_suricata.security_event AS e
             JOIN plugin_clients.placement AS pl ON pl.address = e.dst_address
             WHERE pl.placed_in_full OR e.dst_interface_id IS NULL) AS p) AS n
 WHERE security_event.id = n.id
@@ -601,8 +601,8 @@ WHERE client.last_address IN (SELECT p.address FROM plugin_clients.placement AS 
        OR client.interface_id IN (SELECT id FROM plugin_installation.interface WHERE is_upstream))
   AND NOT EXISTS (SELECT 1 FROM plugin_pf.flow AS f WHERE f.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_pf.flow AS f WHERE f.dst_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.src_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.dst_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.src_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
@@ -618,8 +618,8 @@ WHERE (SELECT changed FROM plugin_clients.onlink)
        OR client.interface_id IN (SELECT id FROM plugin_installation.interface WHERE is_upstream))
   AND NOT EXISTS (SELECT 1 FROM plugin_pf.flow AS f WHERE f.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_pf.flow AS f WHERE f.dst_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.src_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.dst_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.src_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
@@ -638,8 +638,8 @@ WHERE client.owner_id IS NULL
                 AND (h.is_current = 1 OR h.last_seen_at + CAST(:held_margin AS BIGINT) >= client.last_seen_at))
   AND NOT EXISTS (SELECT 1 FROM plugin_pf.flow AS f WHERE f.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_pf.flow AS f WHERE f.dst_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.src_client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.security_event AS e WHERE e.dst_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.src_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)

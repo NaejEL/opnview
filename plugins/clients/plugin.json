@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "display_name": "Clients",
   "description": "Which interface an address belongs to and which machine stands behind it, from on-link evidence alone -- a lease, a client identity, an interface network, a sighting -- this firewall's own addresses recognised first; the client each lease names minted from it; and the two legs of one pf connection paired. One SQL-only derivation after every pass that brings evidence, and after the leases plugin resolved a lease pass (ADR 0019, ADR 0020 waves 3 and 4).",
-  "requires": ["installation", "pf", "leases"],
+  "requires": ["installation", "pf", "leases", "suricata"],
   "settings": [
     {
       "key": "address_idle_window_seconds",

@@ -28,7 +28,7 @@ SELECT d.source_table AS source_table,
        coalesce(f.protocol, e.protocol) AS protocol
 FROM plugin_refusals.blocked_decision AS d
 LEFT JOIN plugin_pf.flow AS f ON d.source_table = 'flow' AND f.id = d.source_id
-LEFT JOIN security_event AS e ON d.source_table = 'security_event' AND e.id = d.source_id
+LEFT JOIN plugin_suricata.security_event AS e ON d.source_table = 'security_event' AND e.id = d.source_id
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
   AND (CAST(:engine_kinds AS jsonb) IS NULL OR d.engine_kind IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:engine_kinds AS jsonb)) AS j(value)))

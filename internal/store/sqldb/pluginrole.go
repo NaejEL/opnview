@@ -42,12 +42,10 @@ type TransitionGrant struct {
 
 // TransitionGrants are the transition writes in force (ADR 0020, the progress table names each wave).
 var TransitionGrants = []TransitionGrant{
-	// The classification places the ends of lookups and security events until wave 4 moves
-	// dns_resolution to unbound and security_event to suricata, which then grant these columns.
+	// The classification places the ends of lookups until wave 4 moves dns_resolution to unbound, which
+	// then grants these columns (suricata grants the events' ends since wave 4b).
 	{Plugin: "clients", Table: "dns_resolution", Columns: []string{"interface_id", "interface_lookup_state", "client_id",
 		"client_is_this_firewall"}},
-	{Plugin: "clients", Table: "security_event", Columns: []string{"src_interface_id", "src_client_id", "src_is_this_firewall",
-		"dst_interface_id", "dst_client_id", "dst_is_this_firewall"}},
 	// The purged part follows its flows when an identity replaces an address-level client, until wave 5
 	// moves purged_flow_hour with the rollups.
 	{Plugin: "clients", Table: "purged_flow_hour", Columns: []string{"local_client_id", "src_client_id"}},

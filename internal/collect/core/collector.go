@@ -118,7 +118,7 @@ type Collector struct {
 	SequenceBoundObserver SequenceBoundObserver
 	// Notice is told what a pass met that is not a failure of the pass: a secondary read whose
 	// outcome the operator should be able to find in the log, such as a rule-info call that did not
-	// answer (internal/collect/kinds/securityevents). It is set once, before the collector runs, and
+	// answer. It is set once, before the collector runs, and
 	// nil discards the notice.
 	Notice func(message string)
 	// firstDiscovery is closed when the run's first discovery pass has ended, and the two

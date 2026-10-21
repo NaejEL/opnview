@@ -1,4 +1,7 @@
-// The suricata plugin's own tests.
+// The suricata plugin's own tests: its probe, its pass into its own table with the watermark as
+// its state and a lost rotation as a gap, and its rule-info derivation against the installed-rules
+// grid.
+var NOW = 1790000400;
 
 test("the Suricata implementation declares itself as the security_event kind", function (t) {
   t.assert(t.registered("security_event"), "the suricata implementation is not registered in the security_event kind");
@@ -32,77 +35,148 @@ test("an event action outside the vocabulary is unknown", function (t) {
   });
 });
 
-test("the recorded alerts are read with their file and offset", function (t) {
-  t.answer("query_alerts", { fixture: "query_alerts.json" });
-  var read = t.call("security_event", "alerts", 100);
-  if (read.error !== null || !read.alerts || read.alerts.length === 0) {
-    t.fatal("reading the fixture gave " + JSON.stringify(read));
-  }
-  read.alerts.forEach(function (alert) {
-    t.assert(alert.file_id !== "" && alert.byte_offset >= 0, "an alert carries no coordinate");
-    t.assert(alert.normalised_severity === undefined, "an alert carries a severity the feed never gives");
+// The pass: the recorded alerts become rows of the plugin's table, keyed by file and offset, and the
+// watermark per file is the state handed to the next pass, which reads past it.
+
+test("the recorded alerts are read into the plugin's table with their file and offset, and the watermarks advance",
+  function (t) {
+    t.clock(NOW);
+    t.answer("alert_logs", { fixture: "get_alert_logs.json" });
+    t.answer("query_alerts", { fixture: "query_alerts.json" });
+    var read = t.call("security_event", "collect", {});
+    var rows = read.rows && read.rows.security_event;
+    if (read.error !== null || !rows || rows.length === 0) {
+      t.fatal("reading the fixture gave " + JSON.stringify(read));
+    }
+    rows.forEach(function (event) {
+      t.assert(/^[0-9]+:[0-9]+$/.test(event.provider_event_key), "an event carries no coordinate: " + event.provider_event_key);
+      t.equal(event.normalised_severity, null, "an event carries a severity the feed never gives");
+      t.equal(typeof event.provider_id, "number", "the provider's registry id");
+      t.equal(event.ingested_at, NOW, "the pass's instant");
+    });
+    var first = rows[0];
+    t.equal([first.provider_event_key, first.rule_identity, first.event_action, first.src_address, first.dst_port, first.protocol],
+      ["3:8192", "2000001", "blocked", "198.51.100.10", 443, "TCP"], "the first record's fields");
+    t.equal(read.state["file.3"], "8192:" + NOW + ":current", "the current file's watermark, at its highest offset");
+    t.equal(read.state["file.2"], "2048:" + NOW + ":rotated", "a rotated file's watermark");
+    t.equal(read.gaps, [], "no gap");
+
+    // The next pass, handed that state, reads nothing new.
+    var again = t.call("security_event", "collect", read.state);
+    t.equal((again.rows && again.rows.security_event) || [], [], "nothing past the watermarks");
+    t.equal(again.state["file.3"], read.state["file.3"], "the watermark is kept");
   });
+
+test("a watermarked file the rotation list no longer carries is lost: a gap, once", function (t) {
+  t.clock(NOW);
+  t.answer("alert_logs", { fixture: "get_alert_logs.json" });
+  t.answer("query_alerts", { fixture: "query_alerts.json" });
+  var read = t.call("security_event", "collect", { "file.9": "100:1700000000:rotated" });
+  t.equal(read.gaps.length, 1, "one gap");
+  t.equal([read.gaps[0].from, read.gaps[0].to, read.gaps[0].reason], [1700000000, NOW, "eve_rotation_lost"], "the gap");
+  t.assert(read.gaps[0].detail.indexOf("event file 9") >= 0, "the detail names the file");
+  t.equal(read.state["file.9"], "100:" + NOW + ":lost", "the file is marked lost");
+  var again = t.call("security_event", "collect", read.state);
+  t.equal(again.gaps, [], "a lost file is reported once");
 });
 
-// rule_info (S6-6 of specs/SPEC-step-6-alerts.md): the installed-rules grid, one sid per request.
+test("when the rotation list does not answer, nothing is declared lost", function (t) {
+  t.clock(NOW);
+  t.answer("alert_logs", { status: 503, json: {} });
+  t.answer("query_alerts", { fixture: "query_alerts.json" });
+  var read = t.call("security_event", "collect", { "file.9": "100:1700000000:rotated" });
+  t.equal(read.error, null, "the alerts are still read");
+  t.equal(read.gaps, [], "no gap without the list");
+  t.equal(read.state["file.9"], "100:1700000000:rotated", "the watermark is untouched");
+});
+
+// The rule-info derivation: the installed-rules grid, one sid per request, for the rules that fired.
+
+function providerID(t) {
+  return t.query("SELECT id FROM provider WHERE kind = 'security_event' AND provider_key = 'suricata'")[0].id;
+}
+
+function event(t, identity, key) {
+  t.sql("INSERT INTO plugin_suricata.security_event (provider_id, provider_event_key, occurred_at, ingested_at, " +
+    "rule_identity, signature, event_action, src_address, dst_address) VALUES (:provider, :key, :at, :at, :identity, " +
+    "'example', 'blocked', '198.51.100.10', '203.0.113.30')", { provider: providerID(t), key: key, at: NOW - 60, identity: identity });
+}
+
+function ruleInfo(t) {
+  return t.query("SELECT rule_identity, lookup_state, category, rule_source, normalised_severity, provider_severity, fetched_at " +
+    "FROM plugin_suricata.provider_rule_info ORDER BY rule_identity");
+}
 
 test("a rule found carries its classtype verbatim as the category, its ruleset as the source, and no severity", function (t) {
+  t.clock(NOW);
+  event(t, "9000001", "1:10");
   t.answer("installed_rules", { fixture: "installed_rules_found.json" });
-  var answer = t.call("security_event", "rule_info", ["9000001"]);
-  t.equal(answer.error, undefined, "no error");
-  t.equal(answer.rules, [{ rule_identity: "9000001", lookup_state: "found", category: "example-classtype",
-    rule_source: "example-ruleset.rules" }], "the answer");
-  t.equal([answer.result.state, answer.result.outcome], ["reachable", "healthy"], "the read's result");
-  var requests = t.requests("installed_rules");
-  t.equal(requests.length, 1, "one request for one sid");
-});
-
-test("a metadata tag named like a severity is no severity: the grid serves none, so none is answered", function (t) {
-  t.answer("installed_rules", { fixture: "installed_rules_found.json" });
-  var rule = t.call("security_event", "rule_info", ["9000001"]).rules[0];
-  t.equal([rule.normalised_severity, rule.provider_severity], [undefined, undefined],
-    "neither a normalised nor a raw severity");
+  var run = t.derive("rule_info");
+  t.equal(run.error, null, "the run");
+  t.equal(ruleInfo(t), [{ rule_identity: "9000001", lookup_state: "found", category: "example-classtype",
+    rule_source: "example-ruleset.rules", normalised_severity: null, provider_severity: null, fetched_at: NOW }], "the answer");
+  t.equal(t.requests("installed_rules").length, 1, "one request for one sid");
+  // Answered within the recheck window: not asked again.
+  t.derive("rule_info");
+  t.equal(t.requests("installed_rules").length, 1, "no second request");
 });
 
 test("a rule that declares no classtype is found with no category", function (t) {
+  t.clock(NOW);
+  event(t, "9000002", "1:10");
   t.answer("installed_rules", { fixture: "installed_rules_no_classtype.json" });
-  t.equal(t.call("security_event", "rule_info", ["9000002"]).rules,
-    [{ rule_identity: "9000002", lookup_state: "found", rule_source: "example-ruleset.rules" }],
-    "found, with the marker of no classtype left out");
+  t.derive("rule_info");
+  t.equal(ruleInfo(t).map(function (r) { return [r.lookup_state, r.category, r.rule_source]; }),
+    [["found", null, "example-ruleset.rules"]], "found, with no category");
 });
 
-test("a sid the grid does not hold is not found", function (t) {
-  t.answer("installed_rules", { fixture: "installed_rules_none.json" });
-  t.equal(t.call("security_event", "rule_info", ["9000003"]).rules,
-    [{ rule_identity: "9000003", lookup_state: "not_found" }], "not found");
-});
-
-test("a row whose sid is not the one asked is no answer about it", function (t) {
+test("a sid the grid does not hold, or a row about another sid, is not found", function (t) {
+  t.clock(NOW);
+  event(t, "9000003", "1:10");
+  event(t, "9000004", "1:20");
   t.answer("installed_rules", { fixture: "installed_rules_found.json" });
-  t.equal(t.call("security_event", "rule_info", ["9000004"]).rules,
-    [{ rule_identity: "9000004", lookup_state: "not_found" }], "not found");
+  t.derive("rule_info");
+  t.equal(ruleInfo(t).map(function (r) { return [r.rule_identity, r.lookup_state, r.category]; }),
+    [["9000003", "not_found", null], ["9000004", "not_found", null]], "not found");
 });
 
 test("an identity that is no sid is not found, and is not asked", function (t) {
+  t.clock(NOW);
+  event(t, "named-rule", "1:10");
   t.answer("installed_rules", { fixture: "installed_rules_found.json" });
-  t.equal(t.call("security_event", "rule_info", ["named-rule"]).rules,
-    [{ rule_identity: "named-rule", lookup_state: "not_found" }], "not found");
+  t.derive("rule_info");
+  t.equal(ruleInfo(t).map(function (r) { return [r.rule_identity, r.lookup_state]; }), [["named-rule", "not_found"]], "not found");
   t.equal(t.requests("installed_rules").length, 0, "no request");
 });
 
-test("a 404 or a 403 answers nothing and says why, so nothing is cached", function (t) {
+test("a 404 or a 403 answers nothing, so nothing is cached and the rule is asked again", function (t) {
+  t.clock(NOW);
+  event(t, "9000001", "1:10");
   [404, 403].forEach(function (status) {
     t.answer("installed_rules", { status: status, json: {} });
-    var answer = t.call("security_event", "rule_info", ["9000001", "9000002"]);
-    t.assert(typeof answer.error === "string" && answer.error !== "", status + ": no error was returned");
-    t.equal(answer.rules, [], status + ": no rule answered");
-    t.equal(answer.result.state, "unavailable", status + ": the read's state");
+    var run = t.derive("rule_info");
+    t.equal(run.error, null, status + ": the run itself is not a failure");
+    t.equal(ruleInfo(t), [], status + ": no rule cached");
   });
+  t.equal(t.requests("installed_rules").length, 2, "asked at each run");
 });
 
 test("an empty list instead of a grid is a failure to ask, never a rule found missing", function (t) {
+  t.clock(NOW);
+  event(t, "9000001", "1:10");
   t.answer("installed_rules", { fixture: "installed_rules_backend_failed.json" });
-  var answer = t.call("security_event", "rule_info", ["9000001"]);
-  t.equal([answer.rules, answer.result.outcome], [[], "undecodable"], "nothing answered");
-  t.assert(typeof answer.error === "string", "the failure is said");
+  t.derive("rule_info");
+  t.equal(ruleInfo(t), [], "nothing cached");
+});
+
+test("the per-run bound caps how many rules are asked, in identity order; the rest wait for the next run", function (t) {
+  t.clock(NOW);
+  t.setting("rule_info_per_pass", 1);
+  event(t, "9000002", "1:10");
+  event(t, "9000001", "1:20");
+  t.answer("installed_rules", { fixture: "installed_rules_found.json" });
+  t.derive("rule_info");
+  t.equal(ruleInfo(t).map(function (r) { return r.rule_identity; }), ["9000001"], "the first identity");
+  t.derive("rule_info");
+  t.equal(ruleInfo(t).map(function (r) { return r.rule_identity; }), ["9000001", "9000002"], "then the second");
 });

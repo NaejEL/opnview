@@ -1,7 +1,7 @@
 {
   "api_version": 3,
   "name": "alerts_by_client_and_interface",
-  "requires": ["installation"],
+  "requires": ["installation", "suricata"],
   "version": "1.0.0",
   "display_name": "Alerts by client and interface",
   "description": "One row per client at either end of the security events of the window -- its count split by source and destination, the worst severity seen, its interfaces and its top signatures -- with this firewall's end its own row and the addresses matched to no client kept as rows.",

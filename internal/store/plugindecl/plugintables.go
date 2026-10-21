@@ -665,6 +665,11 @@ func (t PluginTable) MultiRowInsert(rows []map[string]any) (string, []any, error
 	for _, row := range rows {
 		marks := make([]string, 0, len(t.Columns))
 		for _, column := range t.WrittenColumns() {
+			if row[column.Name] == nil && column.Default != "" {
+				// A row leaving out a column with a declared default takes the default (ADR 0020).
+				marks = append(marks, "DEFAULT")
+				continue
+			}
 			argument, err := PluginArgument(column, row[column.Name])
 			if err != nil {
 				return "", nil, fmt.Errorf("store: a row of %s: %w", t.SQLName(), err)
