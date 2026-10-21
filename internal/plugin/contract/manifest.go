@@ -280,6 +280,10 @@ type TableDeclaration struct {
 	WritableBy []WriteGrant `json:"writable_by,omitempty"`
 	// Checks are the table's CHECK constraints (ADR 0019).
 	Checks []CheckDeclaration `json:"checks,omitempty"`
+	// OnConflict says what a row written again with the key of a held row does: "replace" (the
+	// default) or "keep", which leaves the held row as it is -- for a table whose rows are read again
+	// at every pass and placed by another plugin after they were stored (ADR 0020 wave 4).
+	OnConflict string `json:"on_conflict,omitempty"`
 }
 
 // WriteGrant is one plugin allowed to write a table of another (ADR 0019): with Columns, UPDATE of

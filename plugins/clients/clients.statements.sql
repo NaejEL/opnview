@@ -113,7 +113,7 @@ FROM (SELECT f.src_address AS address FROM plugin_pf.flow AS f
       WHERE (SELECT changed FROM plugin_clients.onlink) OR CAST(:since AS BIGINT) IS NULL
          OR e.ingested_at >= CAST(:since AS BIGINT)
       UNION ALL
-      SELECT r.client_address FROM opnview.dns_resolution AS r
+      SELECT r.client_address FROM plugin_unbound.dns_resolution AS r
       WHERE (SELECT changed FROM plugin_clients.onlink) OR CAST(:since AS BIGINT) IS NULL
          OR r.ingested_at >= CAST(:since AS BIGINT) OR r.interface_lookup_state = 'pending') AS a
 WHERE a.address IS NOT NULL AND a.address <> '';
@@ -512,7 +512,7 @@ WHERE security_event.id = n.id
 -- lookup still carries its interface. A lookup whose querier is this firewall carries the interface the
 -- address belonged to and no client.
 -- statement: place_lookups
-UPDATE opnview.dns_resolution AS dns_resolution
+UPDATE plugin_unbound.dns_resolution AS dns_resolution
 SET interface_id = n.interface_id,
     interface_lookup_state = CASE WHEN n.interface_id IS NULL THEN 'not_found' ELSE 'resolved' END,
     client_id = n.client_id,
@@ -546,7 +546,7 @@ FROM (SELECT p.id,
                       AND (h.is_current = 1 OR h.last_seen_at + CAST(:held_margin AS BIGINT) >= r.looked_up_at)
                     ORDER BY h.last_seen_at DESC, h.interface_id
                     LIMIT 1) AS firewall_interface_id
-            FROM opnview.dns_resolution AS r
+            FROM plugin_unbound.dns_resolution AS r
             JOIN plugin_clients.placement AS pl ON pl.address = r.client_address
             WHERE pl.placed_in_full OR r.interface_lookup_state = 'pending') AS p) AS n
 WHERE dns_resolution.id = n.id
@@ -604,7 +604,7 @@ WHERE client.last_address IN (SELECT p.address FROM plugin_clients.placement AS 
   AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.dns_resolution AS r WHERE r.client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_unbound.dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.src_client_id = client.id);
 
@@ -621,7 +621,7 @@ WHERE (SELECT changed FROM plugin_clients.onlink)
   AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.dns_resolution AS r WHERE r.client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_unbound.dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.src_client_id = client.id);
 
@@ -641,7 +641,7 @@ WHERE client.owner_id IS NULL
   AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.src_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.dst_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = client.id)
-  AND NOT EXISTS (SELECT 1 FROM opnview.dns_resolution AS r WHERE r.client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_unbound.dns_resolution AS r WHERE r.client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.local_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM opnview.purged_flow_hour AS h WHERE h.src_client_id = client.id);
 

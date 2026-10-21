@@ -246,21 +246,6 @@ func (h *ProbeHarness) AvailabilityInstant(t *testing.T, kind, providerKey strin
 	return checkedAt
 }
 
-// UnresolvedLookup stores one lookup whose logged host name named no lease, logged by the resolver
-// the lease world's lookups name.
-func UnresolvedLookup(t *testing.T, database *store.Store, key, hostname string, lookedUpAt, ingestedAt int64) {
-	t.Helper()
-	resolver := ReadArrangement(t, "lease_collection").Resolver
-	name := hostname
-	if err := storetest.InsertDNSResolution(context.Background(), database, vocab.DNSResolution{
-		LookupKey: key, ClientAddress: name, ClientHostname: &name,
-		ClientResolution: vocab.ClientResolutionUnknown, Domain: "example-site.example.invalid",
-		Resolver: resolver, Action: "pass", LookedUpAt: lookedUpAt, IngestedAt: ingestedAt,
-	}); err != nil {
-		t.Fatalf("writing the lookup: %v", err)
-	}
-}
-
 // Examined reads whether a lease pass has examined one lookup, and its resolution.
 func Examined(t *testing.T, database *store.Store, key string) (bool, string) {
 	t.Helper()

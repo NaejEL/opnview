@@ -1,6 +1,11 @@
 {
   "language": "en",
   "strings": {
+    "plugin.unbound.dataset.blocklist": "Resolver blocklists",
+    "plugin.unbound.dataset.dns_resolution": "Resolver lookups",
+    "plugin.unbound.dataset.resource_record_observation": "Resolver records",
+    "plugin.unbound.dataset.resource_record_read": "Resolver record reads",
+    "plugin.unbound.dataset.domain_attribution": "Site attributions",
     "provider.dns_lookup.unbound": "Unbound",
     "provider.resolver_cache.unbound": "Unbound cache",
     "provider.resolver_local_data.unbound": "Unbound local data",

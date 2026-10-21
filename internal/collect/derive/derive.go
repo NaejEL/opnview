@@ -36,12 +36,6 @@ type Derivation struct {
 	Attribute     bool
 	attributeFrom int64
 	attributeTo   int64
-	// Hostnames resolves again the lookups whose logged host name named no single
-	// address, which a lease pass that read every active backend calls for, and only
-	// those ingested before hostnamesBefore, the instant its lease read began: a lookup
-	// ingested since may postdate the leases read, and waits for the next pass.
-	Hostnames       bool
-	HostnamesBefore int64
 }
 
 // Widen extends the attribution window to cover [from, to].
@@ -88,18 +82,6 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 	// after every pass that brings evidence and stamps every flow it changed with changed_at. What is
 	// left here is the attribution, which wave 4 moves to unbound, and the refresh, which reads the
 	// changed flows' slots below as it read the forced instants the Go returned.
-
-	if request.Hostnames {
-		// Every lookup no lease pass has examined since it was ingested -- the mark is
-		// stored, so a restart loses none -- as of its own instant.
-		resolved, err := c.Store.ResolveLoggedHostnames(ctx, request.HostnamesBefore, now)
-		if err != nil {
-			return err
-		}
-		if low, high, ok := spanOf(resolved.Instants); ok {
-			request.Widen(low, high+maxDelay)
-		}
-	}
 
 	// The flows the clients plugin's derivation changed since the last refresh: their slots are rewritten,
 	// and the attribution of their window is decided again, as the Go's placed instants once did.

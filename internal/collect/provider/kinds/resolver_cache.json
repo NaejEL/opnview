@@ -1,6 +1,6 @@
 {
   "kind" : "resolver_cache",
-  "description" : "The records a resolver holds in its cache, with the seconds each has left. The kind stores A, AAAA and CNAME records as observations and counts every other type.",
+  "description" : "The records a resolver holds in its cache, with the seconds each has left: stored by the provider plugin as observations over the intervals its polls saw them (plugin_unbound.resource_record_observation, ADR 0020 wave 4); A, AAAA and CNAME records are kept, every other type counted.",
   "concurrent" : true,
   "push" : false,
   "bindable" : true,
@@ -13,7 +13,9 @@
     }
   ],
   "collection" : {
-    "after" : ["dns_lookup"]
+    "after" : [
+      "dns_lookup"
+    ]
   },
   "functions" : [
     {
@@ -23,10 +25,10 @@
       "returns" : "probe_answer"
     },
     {
-      "description" : "Called at every cache pass: every record the cache holds now.",
-      "name" : "cache",
-      "arguments" : "host",
-      "returns" : "dump_answer"
+      "description" : "Called at every pass: reads the resolver and answers one row per record for the provider's own tables.",
+      "name" : "collect",
+      "arguments" : "host, state, provider",
+      "returns" : "collect_answer"
     }
   ],
   "records" : [
@@ -49,8 +51,8 @@
       ]
     },
     {
-      "description" : "What `cache` and `local_data` return.",
-      "name" : "dump_answer",
+      "description" : "What `collect` returns.",
+      "name" : "collect_answer",
       "fields" : [
         {
           "description" : "The `result` record.",
@@ -60,91 +62,29 @@
           "of" : "result"
         },
         {
-          "description" : "The `resolver_record` records, of every type.",
-          "name" : "records",
-          "type" : "records",
-          "of" : "resolver_record"
+          "description" : "The rows to store, by table of the provider's own.",
+          "name" : "rows",
+          "type" : "object"
         },
         {
-          "description" : "The size of the answer.",
-          "name" : "response_bytes",
-          "type" : "integer",
-          "unit" : "bytes"
+          "description" : "The provider's durable state for the next pass.",
+          "name" : "state",
+          "type" : "object"
         },
         {
-          "description" : "The `not_record_count` records: rows the implementation recognised as not being records at all.",
-          "name" : "not_records",
-          "type" : "records",
-          "of" : "not_record_count"
+          "description" : "The collection gaps the pass detected, each {from, to, reason, detail}.",
+          "name" : "gaps",
+          "type" : "object"
         },
         {
-          "description" : "Why the read failed, when it did.",
+          "description" : "Why the read failed, when it did; the result then says what the firewall answered.",
           "name" : "error",
           "type" : "text"
         },
         {
-          "description" : "Why this resolver's records can never be read, when that is so.",
+          "description" : "Why this implementation's material can never be read, when that is so.",
           "name" : "unsupported",
           "type" : "text"
-        }
-      ]
-    },
-    {
-      "description" : "One record as the endpoint returned it.",
-      "name" : "resolver_record",
-      "fields" : [
-        {
-          "description" : "The owner name.",
-          "name" : "owner_name",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "The TTL as text.",
-          "name" : "ttl",
-          "type" : "text"
-        },
-        {
-          "description" : "The JSON shape the TTL arrived in.",
-          "name" : "ttl_shape",
-          "type" : "text",
-          "required" : true,
-          "values" : [
-            "absent",
-            "null",
-            "string",
-            "other"
-          ]
-        },
-        {
-          "description" : "The record type.",
-          "name" : "rrtype",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "The record's value.",
-          "name" : "value",
-          "type" : "text",
-          "required" : true
-        }
-      ]
-    },
-    {
-      "description" : "A number of rows that are not records.",
-      "name" : "not_record_count",
-      "fields" : [
-        {
-          "description" : "How many.",
-          "name" : "count",
-          "type" : "integer",
-          "required" : true
-        },
-        {
-          "description" : "What they are, worded so that \"skipped <count> <wording>\" reads as a sentence.",
-          "name" : "wording",
-          "type" : "text",
-          "required" : true
         }
       ]
     }

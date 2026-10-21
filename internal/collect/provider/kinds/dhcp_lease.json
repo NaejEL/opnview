@@ -4,7 +4,6 @@
   "concurrent" : true,
   "push" : false,
   "bindable" : true,
-  "names_hosts" : true,
   "cadences" : [
     {
       "role" : "poll",

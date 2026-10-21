@@ -1,15 +1,34 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "unbound",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "display_name": "Unbound",
-  "description": "Reads the Unbound resolver: its query report, the sole source of site names (data source 5), the records it holds in its cache, the records it serves from its local data, and, when the firewall sends them over syslog, its query and reply log lines.",
+  "description": "Reads the Unbound resolver's query report, its cache and its local data (data source 5) into its own tables: the lookups, the sole source of site names, the lists they were refused against, and the records the resolver held over the intervals the polls saw them; names the querying machine behind a host name the report logged; and, by its attribution, the site each flow was for (ADR 0020 wave 4).",
   "script": "unbound.js",
+  "requires": [
+    "installation",
+    "leases"
+  ],
+  "datasets": [
+    "retention_purge"
+  ],
   "endpoints": [
     {
       "name": "search_queries",
       "path": "/api/unbound/overview/search_queries",
-      "corrections": {"nature": "record_stream", "cursor": ["time"], "dedupe_on_content": true, "parameters": {"timeStart": "ignored", "timeEnd": "ignored", "current": "page", "rowCount": "page_size"}},
+      "corrections": {
+        "nature": "record_stream",
+        "cursor": [
+          "time"
+        ],
+        "dedupe_on_content": true,
+        "parameters": {
+          "timeStart": "ignored",
+          "timeEnd": "ignored",
+          "current": "page",
+          "rowCount": "page_size"
+        }
+      },
       "method": "POST",
       "body": "json",
       "survey_section": "Verified against a live firewall, 2026-09-27",
@@ -57,36 +76,25 @@
       "note": "{status, data: [{name, ttl, type, rrtype, value}]}; ttl is the configured TTL, type is the class. configd: https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_unbound.conf [listlocaldata]; script: https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/wrapper.py; ACL: https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/ACL/ACL.xml"
     }
   ],
-  "tables": [
-    {
-      "name": "query_log",
-      "columns": [
-        {"name": "logged_at", "type": "instant"},
-        {"name": "client", "type": "ip"},
-        {"name": "name", "type": "text", "carries_domain": true},
-        {"name": "type", "type": "text"},
-        {"name": "class", "type": "text"},
-        {"name": "rcode", "type": "text", "nullable": true},
-        {"name": "resolve_seconds", "type": "real", "nullable": true, "role": "measure", "unit": "second"},
-        {"name": "cached", "type": "integer", "nullable": true, "role": "dimension"},
-        {"name": "reply_bytes", "type": "integer", "nullable": true, "role": "measure", "unit": "byte"}
-      ],
-      "retention": {"column": "logged_at"},
-      "nature": "event"
-    }
-  ],
   "push": [
     {
       "name": "query_log",
       "protocol": "syslog",
-      "filter": {"program": ["unbound"]},
+      "filter": {
+        "program": [
+          "unbound"
+        ]
+      },
       "pattern": "^\\[\\d+:\\d+\\] info: (?P<client>[0-9A-Fa-f:.]+) (?P<name>\\S+) (?P<type>\\S+) (?P<class>\\S+)(?: (?P<rcode>[A-Z]+) (?P<resolve_seconds>\\d+\\.\\d+) (?P<cached>[01]) (?P<reply_bytes>\\d+))?(?: on \\S+ \\S+ \\d+)?$",
       "output_table": "query_log",
       "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources"
     }
   ],
   "kinds": [
-    { "kind": "unbound_query_log", "push": true }
+    {
+      "kind": "unbound_query_log",
+      "push": true
+    }
   ],
   "providers": [
     {
@@ -138,6 +146,619 @@
         }
       ],
       "read_strategy": "full_reread"
+    }
+  ],
+  "tables": [
+    {
+      "name": "query_log",
+      "columns": [
+        {
+          "name": "logged_at",
+          "type": "instant"
+        },
+        {
+          "name": "client",
+          "type": "ip"
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "carries_domain": true
+        },
+        {
+          "name": "type",
+          "type": "text"
+        },
+        {
+          "name": "class",
+          "type": "text"
+        },
+        {
+          "name": "rcode",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "resolve_seconds",
+          "type": "real",
+          "nullable": true,
+          "role": "measure",
+          "unit": "second"
+        },
+        {
+          "name": "cached",
+          "type": "integer",
+          "nullable": true,
+          "role": "dimension"
+        },
+        {
+          "name": "reply_bytes",
+          "type": "integer",
+          "nullable": true,
+          "role": "measure",
+          "unit": "byte"
+        }
+      ],
+      "retention": {
+        "column": "logged_at"
+      },
+      "nature": "event"
+    },
+    {
+      "name": "blocklist",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "name",
+          "type": "text"
+        },
+        {
+          "name": "purpose",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "purpose_assigned_at",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "first_seen_at",
+          "type": "integer"
+        },
+        {
+          "name": "last_seen_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "name"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "purpose_known",
+          "expression": "purpose IS NULL OR purpose IN ('advertising', 'tracking', 'threat', 'parental', 'other')"
+        },
+        {
+          "name": "purpose_assigned_at_instant",
+          "expression": "purpose_assigned_at IS NULL OR (purpose_assigned_at >= 0 AND purpose_assigned_at < 4102444800)"
+        },
+        {
+          "name": "first_seen_at_instant",
+          "expression": "first_seen_at >= 0 AND first_seen_at < 4102444800"
+        },
+        {
+          "name": "last_seen_at_instant",
+          "expression": "last_seen_at >= 0 AND last_seen_at < 4102444800"
+        },
+        {
+          "name": "purpose_with_its_instant",
+          "expression": "(purpose IS NULL) = (purpose_assigned_at IS NULL)"
+        }
+      ]
+    },
+    {
+      "name": "dns_resolution",
+      "on_conflict": "keep",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "lookup_key",
+          "type": "text"
+        },
+        {
+          "name": "client_address",
+          "type": "text"
+        },
+        {
+          "name": "client_hostname",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "client_resolution",
+          "type": "text",
+          "default": "'logged_address'"
+        },
+        {
+          "name": "client_family",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "client_id",
+          "type": "integer",
+          "nullable": true,
+          "references": "installation.client(id)"
+        },
+        {
+          "name": "client_is_this_firewall",
+          "type": "boolean",
+          "default": "false"
+        },
+        {
+          "name": "hostname_examined_at",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "domain",
+          "type": "text",
+          "carries_domain": true
+        },
+        {
+          "name": "resolver",
+          "type": "text"
+        },
+        {
+          "name": "action",
+          "type": "text"
+        },
+        {
+          "name": "answer_source",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "rcode",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "dnssec_status",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "blocklist_name",
+          "type": "text",
+          "default": "''"
+        },
+        {
+          "name": "blocklist_id",
+          "type": "integer",
+          "nullable": true,
+          "references": "blocklist(id)"
+        },
+        {
+          "name": "looked_up_at",
+          "type": "integer"
+        },
+        {
+          "name": "ingested_at",
+          "type": "integer"
+        },
+        {
+          "name": "interface_id",
+          "type": "integer",
+          "nullable": true,
+          "references": "installation.interface(id)"
+        },
+        {
+          "name": "interface_lookup_state",
+          "type": "text",
+          "default": "'pending'"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "lookup_key"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "looked_up_at"
+          ]
+        },
+        {
+          "columns": [
+            "client_address",
+            "looked_up_at"
+          ]
+        },
+        {
+          "columns": [
+            "client_id",
+            "looked_up_at"
+          ]
+        },
+        {
+          "columns": [
+            "lower(rtrim(domain, '.'))",
+            "looked_up_at"
+          ]
+        },
+        {
+          "columns": [
+            "lower(rtrim(domain, '.'))",
+            "client_id",
+            "looked_up_at"
+          ]
+        },
+        {
+          "columns": [
+            "lower(rtrim(domain, '.'))",
+            "client_address",
+            "looked_up_at"
+          ]
+        },
+        {
+          "columns": [
+            "blocklist_id",
+            "looked_up_at"
+          ]
+        },
+        {
+          "columns": [
+            "client_resolution",
+            "hostname_examined_at",
+            "ingested_at",
+            "id"
+          ],
+          "where": "client_resolution IN ('ambiguous_hostname', 'unknown_hostname', 'dual_stack_hostname') AND hostname_examined_at IS NULL"
+        },
+        {
+          "columns": [
+            "blocklist_name"
+          ],
+          "where": "blocklist_id IS NULL AND blocklist_name <> ''"
+        }
+      ],
+      "checks": [
+        {
+          "name": "client_resolution_known",
+          "expression": "client_resolution IN ('logged_address', 'lease_hostname', 'ambiguous_hostname', 'unknown_hostname', 'this_firewall_hostname', 'local_data_hostname', 'dual_stack_hostname')"
+        },
+        {
+          "name": "client_family_known",
+          "expression": "client_family IS NULL OR client_family IN (4, 6)"
+        },
+        {
+          "name": "hostname_examined_at_instant",
+          "expression": "hostname_examined_at IS NULL OR (hostname_examined_at >= 0 AND hostname_examined_at < 4102444800)"
+        },
+        {
+          "name": "resolver_length",
+          "expression": "length(resolver) BETWEEN 1 AND 255"
+        },
+        {
+          "name": "action_known",
+          "expression": "action IN ('pass', 'block', 'drop', 'unknown')"
+        },
+        {
+          "name": "looked_up_at_instant",
+          "expression": "looked_up_at >= 0 AND looked_up_at < 4102444800"
+        },
+        {
+          "name": "ingested_at_instant",
+          "expression": "ingested_at >= 0 AND ingested_at < 4102444800"
+        },
+        {
+          "name": "interface_lookup_state_known",
+          "expression": "interface_lookup_state IN ('resolved', 'not_found', 'pending')"
+        },
+        {
+          "name": "resolved_names_an_interface",
+          "expression": "(interface_lookup_state = 'resolved') = (interface_id IS NOT NULL)"
+        },
+        {
+          "name": "hostname_with_its_resolution",
+          "expression": "(client_resolution = 'logged_address') = (client_hostname IS NULL)"
+        },
+        {
+          "name": "firewall_has_no_client",
+          "expression": "NOT client_is_this_firewall OR client_id IS NULL"
+        }
+      ],
+      "writable_by": [
+        {
+          "plugin": "clients",
+          "columns": [
+            "interface_id",
+            "interface_lookup_state",
+            "client_id",
+            "client_is_this_firewall"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "resource_record_observation",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "provider_id",
+          "type": "integer"
+        },
+        {
+          "name": "held_in",
+          "type": "text"
+        },
+        {
+          "name": "owner_name",
+          "type": "text"
+        },
+        {
+          "name": "rrtype",
+          "type": "text"
+        },
+        {
+          "name": "value",
+          "type": "text"
+        },
+        {
+          "name": "address",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "host_label",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "first_seen_at",
+          "type": "integer"
+        },
+        {
+          "name": "last_seen_at",
+          "type": "integer"
+        },
+        {
+          "name": "covered_from_at",
+          "type": "integer"
+        },
+        {
+          "name": "covered_until_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "provider_id",
+            "owner_name",
+            "rrtype",
+            "value",
+            "first_seen_at"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "address",
+            "covered_until_at"
+          ]
+        },
+        {
+          "columns": [
+            "value",
+            "covered_until_at"
+          ],
+          "where": "rrtype = 'CNAME'"
+        },
+        {
+          "columns": [
+            "owner_name",
+            "covered_until_at"
+          ]
+        },
+        {
+          "columns": [
+            "host_label",
+            "covered_until_at"
+          ],
+          "where": "held_in = 'local_data'"
+        },
+        {
+          "columns": [
+            "covered_until_at"
+          ]
+        },
+        {
+          "columns": [
+            "provider_id",
+            "last_seen_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "held_in_known",
+          "expression": "held_in IN ('cache', 'local_data')"
+        },
+        {
+          "name": "owner_name_canonical",
+          "expression": "length(owner_name) > 0 AND owner_name = lower(owner_name) AND substr(owner_name, -1) <> '.'"
+        },
+        {
+          "name": "rrtype_known",
+          "expression": "rrtype IN ('A', 'AAAA', 'CNAME', 'PTR')"
+        },
+        {
+          "name": "value_not_empty",
+          "expression": "length(value) > 0"
+        },
+        {
+          "name": "instants",
+          "expression": "first_seen_at >= 0 AND last_seen_at >= 0 AND covered_from_at >= 0 AND covered_until_at >= 0 AND covered_until_at < 4102444800"
+        },
+        {
+          "name": "types_of_where_held",
+          "expression": "(held_in = 'cache' AND rrtype IN ('A', 'AAAA', 'CNAME')) OR (held_in = 'local_data' AND rrtype IN ('A', 'AAAA', 'PTR'))"
+        },
+        {
+          "name": "address_unless_cname",
+          "expression": "(address IS NULL) = (rrtype = 'CNAME')"
+        },
+        {
+          "name": "host_label_of_local_data",
+          "expression": "(host_label IS NULL) = (held_in = 'cache')"
+        },
+        {
+          "name": "coverage_holds_the_sightings",
+          "expression": "covered_from_at <= first_seen_at AND first_seen_at <= last_seen_at AND last_seen_at <= covered_until_at"
+        }
+      ]
+    },
+    {
+      "name": "resource_record_read",
+      "columns": [
+        {
+          "name": "provider_id",
+          "type": "integer"
+        },
+        {
+          "name": "read_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "provider_id"
+      ],
+      "checks": [
+        {
+          "name": "read_at_instant",
+          "expression": "read_at >= 0 AND read_at < 4102444800"
+        }
+      ]
+    },
+    {
+      "name": "domain_attribution",
+      "columns": [
+        {
+          "name": "flow_id",
+          "type": "integer"
+        },
+        {
+          "name": "dns_resolution_id",
+          "type": "integer",
+          "references": "dns_resolution(id)"
+        },
+        {
+          "name": "site_name",
+          "type": "text",
+          "carries_domain": true
+        },
+        {
+          "name": "correlation_delay_seconds",
+          "type": "integer"
+        },
+        {
+          "name": "attributed_at",
+          "type": "integer"
+        },
+        {
+          "name": "method",
+          "type": "text"
+        },
+        {
+          "name": "address_observation_id",
+          "type": "integer",
+          "nullable": true,
+          "references": "resource_record_observation(id)"
+        }
+      ],
+      "primary_key": [
+        "flow_id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "dns_resolution_id"
+          ]
+        },
+        {
+          "columns": [
+            "address_observation_id"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "delay_not_negative",
+          "expression": "correlation_delay_seconds >= 0"
+        },
+        {
+          "name": "attributed_at_instant",
+          "expression": "attributed_at >= 0 AND attributed_at < 4102444800"
+        },
+        {
+          "name": "method_known",
+          "expression": "method IN ('resolver_cache_answer', 'lookup_timing')"
+        },
+        {
+          "name": "cache_answer_names_its_observation",
+          "expression": "(method = 'resolver_cache_answer') = (address_observation_id IS NOT NULL)"
+        }
+      ]
+    }
+  ],
+  "statements": [
+    "unbound.statements.sql"
+  ],
+  "derivations": [
+    {
+      "name": "resolve",
+      "after_passes": [
+        "dns_lookup",
+        "dhcp_lease",
+        "resolver_local_data"
+      ],
+      "cadence_seconds": 600,
+      "statements": [
+        "insert_blocklists",
+        "link_blocklists",
+        "resolve_hostnames"
+      ]
     }
   ]
 }

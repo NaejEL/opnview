@@ -28,10 +28,7 @@ var kindNameAllowed = map[string]struct {
 	reason string
 }{
 	"internal/collect/kinds/filterlog/firewalllog.go": {1, "the firewall_log coordinator's own kind constant"},
-	"internal/collect/kinds/lookups/dnslookup.go":     {1, "the dns_lookup coordinator's own kind constant"},
 	"internal/collect/kinds/neighbours/neighbour.go":  {1, "the neighbour coordinator's own kind constant"},
-	"internal/collect/kinds/resolverrecords/handle.go": {2, "the resolver-record coordinator's two kinds, the cache and " +
-		"the local data, one constant each"},
 	"internal/collect/services/services.go": {3, "the service coordinator's two kinds, one constant each, and the " +
 		"grouping record's registrable_domain field, which is a field name and not a kind"},
 	"internal/collect/provider/pushed_firewall_log.go": {1, "the firewall_log kind's own push rule, in its own file"},

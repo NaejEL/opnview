@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store/plugintables"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -181,20 +180,6 @@ func (c *DeclaredKindCoordinator) CollectDeclaredKind(ctx context.Context, kind,
 			if passKind, passKey, scoped := strings.Cut(trigger, "/"); passKind == kind && (!scoped || passKey == key) {
 				derivation.Note(provider.DerivationChange{Trigger: provider.TriggerPass, Kind: kind, Provider: key, At: passAt})
 				break
-			}
-		}
-	}
-	if kindContract, isCore := provider.ContractOf(kind); isCore && kindContract.NamesHosts {
-		// A pass of a kind that names hosts -- the leases -- lets the lookups whose logged host name named
-		// no address be examined again, as the Go lease pass asked before it was deleted (ADR 0020 wave 4);
-		// the attribution that examines them is the Go's until wave 4 moves it to unbound.
-		before, examine, err := c.NoteHostNameSourceRead(ctx, kind, passAt)
-		if err != nil {
-			return err
-		}
-		if examine {
-			if err := derive.On(c.Collector).Derive(ctx, derive.Derivation{Hostnames: true, HostnamesBefore: before}); err != nil {
-				return err
 			}
 		}
 	}

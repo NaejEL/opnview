@@ -59,7 +59,7 @@ test("the Dnsmasq resolver is registered, probed and never read", function (t) {
   t.assert(t.registered("dns_lookup"), "the dnsmasq implementation is not registered in the dns_lookup kind");
   t.equal(t.value("dns_lookup", "page_bound"), 1, "the page bound");
   t.equal(t.value("dns_lookup", "requested_span_seconds"), 0, "the requested span");
-  var read = t.call("dns_lookup", "lookups", 1);
+  var read = t.call("dns_lookup", "collect", {});
   t.assert(read.unsupported !== null, "the read returned " + JSON.stringify(read) + ", not the unsupported state");
   t.equal(read.result.outcome, "log_grammar_not_recorded", "the outcome");
 });
@@ -76,7 +76,7 @@ test("a running Dnsmasq resolver is never separable whatever its logging", funct
 
 test("the Dnsmasq cache is registered, probed and never read", function (t) {
   t.assert(t.registered("resolver_cache"), "the dnsmasq implementation is not registered in the resolver_cache kind");
-  var read = t.call("resolver_cache", "cache");
+  var read = t.call("resolver_cache", "collect", {});
   t.assert(read.unsupported !== null && read.result.outcome === "no_cache_read",
     "the read gave " + JSON.stringify(read));
 });
@@ -93,7 +93,7 @@ test("a running Dnsmasq names the absence of a cache read and is never separable
 test("the Dnsmasq local data is registered, probed and never read", function (t) {
   t.assert(t.registered("resolver_local_data"),
     "the dnsmasq implementation is not registered in the resolver_local_data kind");
-  var read = t.call("resolver_local_data", "local_data");
+  var read = t.call("resolver_local_data", "collect", {});
   t.assert(read.unsupported !== null && read.result.outcome === "no_local_data_read",
     "the read gave " + JSON.stringify(read));
 });

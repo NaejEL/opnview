@@ -54,7 +54,7 @@ WITH flows AS (
     FROM plugin_pf.classified_flow AS f
     LEFT JOIN plugin_installation.client AS c ON c.id = f.local_client_id
     LEFT JOIN plugin_maxmind.geo_asn AS g ON g.address = f.peer_address
-    LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
+    LEFT JOIN plugin_unbound.domain_attribution AS a ON a.flow_id = f.id
     WHERE f.observed_at >= :from
       AND f.observed_at < :to
       AND f.exit_leg_device IS NULL
@@ -391,7 +391,7 @@ WITH flows AS (
     FROM plugin_pf.classified_flow AS f
     LEFT JOIN plugin_installation.client AS c ON c.id = f.local_client_id
     LEFT JOIN plugin_maxmind.geo_asn AS g ON g.address = f.peer_address
-    LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
+    LEFT JOIN plugin_unbound.domain_attribution AS a ON a.flow_id = f.id
     LEFT JOIN LATERAL flow_measure(f.id, NULL, NULL, f.action, CAST(:measure AS TEXT)) AS n ON true
     WHERE f.observed_at >= :from
       AND f.observed_at < :to

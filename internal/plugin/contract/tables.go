@@ -65,6 +65,14 @@ func DeclaredTables(manifest Manifest) ([]plugindecl.PluginTable, *Refusal) {
 			table.Indexes = append(table.Indexes, plugindecl.PluginIndex{Columns: index.Columns, Unique: index.Unique,
 				Where: index.Where, NullsNotDistinct: index.NullsNotDistinct})
 		}
+		switch declaration.OnConflict {
+		case "", "replace":
+		case "keep":
+			table.KeepHeld = true
+		default:
+			return nil, Refuse(manifest.Name, RefusalTableInvalid, "the table %q has on_conflict %q, which is neither "+
+				"replace nor keep", declaration.Name, declaration.OnConflict)
+		}
 		for _, check := range declaration.Checks {
 			if err := sqldb.CheckExpression(check.Expression); err != nil {
 				return nil, Refuse(manifest.Name, RefusalTableInvalid, "the check %q of %s: %v", check.Name,

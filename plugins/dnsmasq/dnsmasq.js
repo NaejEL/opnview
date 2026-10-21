@@ -186,7 +186,7 @@ exports.dns_lookup = {
 
   // lookups refuses, with the reason: the lookups exist only as the free-text line of the generic
   // log endpoint, under a grammar that is dnsmasq's own and that nobody has recorded.
-  lookups: function () {
+  collect: function () {
     return {
       result: { probe: "settings", state: "present_but_disabled", outcome: "log_grammar_not_recorded" },
       unsupported: "this resolver exposes its lookups only as free text under a grammar nobody has recorded"
@@ -198,7 +198,7 @@ exports.resolver_cache = {
   probe: function (host) {
     return noReadProbe(host, noCacheRead, "no_cache_read");
   },
-  cache: function () {
+  collect: function () {
     return {
       result: { probe: "status", state: "unavailable", outcome: "no_cache_read" },
       unsupported: noCacheRead
@@ -210,7 +210,7 @@ exports.resolver_local_data = {
   probe: function (host) {
     return noReadProbe(host, noLocalDataRead, "no_local_data_read");
   },
-  local_data: function () {
+  collect: function () {
     return {
       result: { probe: "status", state: "unavailable", outcome: "no_local_data_read" },
       unsupported: noLocalDataRead

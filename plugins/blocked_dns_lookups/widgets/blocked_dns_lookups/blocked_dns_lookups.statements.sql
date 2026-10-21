@@ -17,8 +17,8 @@ SELECT lower(rtrim(r.domain, '.')) AS domain,
        r.interface_id AS interface_id,
        count(*) AS lookups,
        max(r.looked_up_at) AS newest
-FROM dns_resolution AS r
-LEFT JOIN blocklist AS b ON b.id = r.blocklist_id
+FROM plugin_unbound.dns_resolution AS r
+LEFT JOIN plugin_unbound.blocklist AS b ON b.id = r.blocklist_id
 WHERE r.action IN ('block', 'drop')
   AND r.looked_up_at >= :from
   AND r.looked_up_at < :to

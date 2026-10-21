@@ -11,7 +11,7 @@
 SELECT r.looked_up_at - r.looked_up_at % :width AS bucket_start,
        count(*) AS lookups,
        sum(CASE WHEN r.action IN ('block', 'drop') THEN 1 ELSE 0 END) AS blocked
-FROM dns_resolution AS r
+FROM plugin_unbound.dns_resolution AS r
 WHERE r.looked_up_at >= :from
   AND r.looked_up_at < :to
   AND (CAST(:resolver AS TEXT) IS NULL OR r.resolver = :resolver)

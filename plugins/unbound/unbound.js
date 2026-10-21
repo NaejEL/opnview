@@ -3,9 +3,11 @@
 //
 // Everything here is a fact about Unbound and about OPNsense's Unbound controllers, read at
 // opnsense/core 26.7.3 (docs/opnsense-api-survey.md, data source 5, and "Resolver cache and local
-// data, read from source for the resolver-cache cycle"). What the KINDS do with the records --
-// resolving the querying machine, detecting a gap, storing the A, AAAA and CNAME records as
-// observations, refusing to present what came back as coverage of a window -- is opnview's core.
+// data, read from source for the resolver-cache cycle"). The lookups, the records and the site
+// attributions are this plugin's own tables (ADR 0019, ADR 0020 wave 4): the passes below store
+// them, a gap of the ring buffer is reported as such, and what came back is never presented as
+// coverage of a window; which machine a logged host name is, and which site a flow was for, are the
+// plugin's derivations.
 
 var d = opnview.decode;
 
@@ -224,6 +226,339 @@ function readRecords(host, endpoint, path, ownerField, messageCacheReferences) {
   return answer;
 }
 
+// readLookupPage reads one page of the ring buffer: { result, lookups, error }.
+function readLookupPage(host, page) {
+  var result = { probe: "search_queries", state: "unavailable", outcome: "request_not_made" };
+  var now = host.now();
+  // Integers, in a JSON body: a string would reach the controller as a PHP string, is_int()
+  // would fail, and the call would silently degrade to the unwindowed branch.
+  var response = host.call("search_queries", {
+    json: { current: page, rowCount: pageSize, timeStart: now - requestedSpan, timeEnd: now }
+  });
+  if (response.error) {
+    return { result: result, error: response.error };
+  }
+  if (!response.ok) {
+    result.outcome = response.availability_outcome;
+    result.detail = response.detail;
+    return { result: result, error: "collect: the resolver query report answered " + response.outcome };
+  }
+  var rows = response.decodable ? d.rows(response.value) : null;
+  if (rows === null) {
+    result.outcome = "undecodable";
+    result.detail = "the query report body could not be read";
+    return { result: result, error: "collect: reading the resolver query report: the body holds no rows" };
+  }
+  result.state = "reachable";
+  result.outcome = "healthy";
+  result.separable = true;
+  var lookups = [];
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    var lookedUpAt = d.epoch(row, "time");
+    if (lookedUpAt === null) {
+      continue;
+    }
+    var domain = d.string(row, "domain");
+    if (domain === null) {
+      continue;
+    }
+    var action = normaliseAction(d.rawString(row, "action"));
+    var blocklistName = "";
+    if (action === "block" || action === "drop") {
+      // The endpoint does not attribute every block. An unattributed one stays "blocked, list
+      // not recorded", which is its own state, so the name is taken only when given.
+      blocklistName = d.rawString(row, "blocklist");
+    }
+    lookups.push({
+      deduplication_key: lookupKey(row, lookedUpAt),
+      client_address: d.rawString(row, "client"),
+      client_family: queryFamily(d.rawString(row, "family")),
+      domain: domain,
+      action: action,
+      answer_source: d.string(row, "source"),
+      rcode: d.string(row, "rcode"),
+      dnssec_status: d.string(row, "dnssec_status"),
+      blocklist_name: blocklistName,
+      looked_up_at: lookedUpAt
+    });
+  }
+  return { result: result, lookups: lookups };
+}
+
+// isAddress reports whether the report's client is an address rather than a host name a reverse
+// lookup returned: four dotted decimal octets, or a text with a colon, which no host name holds.
+function isAddress(text) {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(text) || text.indexOf(":") >= 0;
+}
+
+// lookupRow is the row of dns_resolution one lookup becomes. A client logged as a host name is kept
+// as both the address and the name, unresolved, until the derivation resolve names the machine.
+function lookupRow(lookup, provider, now) {
+  var hostname = isAddress(lookup.client_address) ? null : lookup.client_address;
+  return {
+    lookup_key: lookup.deduplication_key,
+    client_address: lookup.client_address,
+    client_hostname: hostname,
+    client_resolution: hostname === null ? "logged_address" : "unknown_hostname",
+    client_family: lookup.client_family,
+    domain: lookup.domain,
+    resolver: provider.key,
+    action: lookup.action,
+    answer_source: lookup.answer_source,
+    rcode: lookup.rcode,
+    dnssec_status: lookup.dnssec_status,
+    blocklist_name: lookup.blocklist_name,
+    looked_up_at: lookup.looked_up_at,
+    ingested_at: now
+  };
+}
+
+// THE RESOLVER'S RECORDS. A record of the cache dump or of the local data is normalised -- the name
+// lower-cased with no trailing dot, an A or AAAA value checked to be an address of its family, a PTR
+// owner decoded to the address it names, a cache TTL a whole number of seconds -- and stored as an
+// observation covering an interval: a record seen at two consecutive polls is one observation
+// extended, a record seen again after a gap is a new one. The types kept are A, AAAA and CNAME of
+// the cache, A, AAAA and PTR of the local data; every other type is counted and not stored.
+
+// dnsName is a name as the records store it: lower-cased, trailing dot removed.
+function dnsName(name) {
+  return String(name || "").trim().replace(/\.+$/, "").toLowerCase();
+}
+
+// hostLabel is the first label of a host name, lower-cased, a trailing dot removed: what a host name
+// the resolver logged as a lookup's client is matched on.
+function hostLabel(name) {
+  var trimmed = String(name || "").replace(/\.+$/, "");
+  var dot = trimmed.indexOf(".");
+  return (dot >= 0 ? trimmed.slice(0, dot) : trimmed).toLowerCase();
+}
+
+// canonicalAddress is an address text with no zone, lower-cased, or null for a text that is not one.
+function canonicalAddress(text) {
+  var value = String(text || "").trim().toLowerCase();
+  if (value.indexOf("%") >= 0) {
+    return null;
+  }
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) {
+    var octets = value.split(".");
+    for (var i = 0; i < 4; i++) {
+      if (parseInt(octets[i], 10) > 255 || (octets[i].length > 1 && octets[i].charAt(0) === "0")) {
+        return null;
+      }
+    }
+    return octets.map(function (o) { return String(parseInt(o, 10)); }).join(".");
+  }
+  if (/^[0-9a-f:]+(:\d{1,3}(\.\d{1,3}){3})?$/.test(value) && value.indexOf(":") >= 0 && value.indexOf(":::") < 0 &&
+    value.split("::").length <= 2) {
+    return value;
+  }
+  return null;
+}
+
+// reverseNameAddress decodes the address a PTR owner names, or null.
+function reverseNameAddress(name) {
+  if (name.slice(-13) === ".in-addr.arpa") {
+    var labels = name.slice(0, -13).split(".");
+    if (labels.length !== 4) {
+      return null;
+    }
+    var octets = [];
+    for (var i = 3; i >= 0; i--) {
+      if (!/^\d{1,3}$/.test(labels[i]) || parseInt(labels[i], 10) > 255 || (labels[i].length > 1 && labels[i].charAt(0) === "0")) {
+        return null;
+      }
+      octets.push(String(parseInt(labels[i], 10)));
+    }
+    return octets.join(".");
+  }
+  if (name.slice(-9) === ".ip6.arpa") {
+    var nibbles = name.slice(0, -9).split(".");
+    if (nibbles.length !== 32) {
+      return null;
+    }
+    var groups = [];
+    for (var g = 0; g < 8; g++) {
+      var group = "";
+      for (var n = 0; n < 4; n++) {
+        var nibble = nibbles[31 - (g * 4 + n)];
+        if (!/^[0-9a-f]$/.test(nibble)) {
+          return null;
+        }
+        group += nibble;
+      }
+      groups.push(group.replace(/^0+(?=.)/, ""));
+    }
+    return compressIPv6(groups);
+  }
+  return null;
+}
+
+// compressIPv6 writes eight groups as the canonical text: the longest run of zero groups, of two or
+// more, written as ::.
+function compressIPv6(groups) {
+  var bestStart = -1, bestLength = 0, start = -1;
+  for (var i = 0; i <= 8; i++) {
+    if (i < 8 && groups[i] === "0") {
+      if (start < 0) { start = i; }
+    } else if (start >= 0) {
+      if (i - start > bestLength) { bestStart = start; bestLength = i - start; }
+      start = -1;
+    }
+  }
+  if (bestLength < 2) {
+    return groups.join(":");
+  }
+  var head = groups.slice(0, bestStart).join(":");
+  var tail = groups.slice(bestStart + bestLength).join(":");
+  return head + "::" + tail;
+}
+
+// normaliseRecords turns the raw records of one read into the observations to store, counting what
+// was not stored and why: { records, counts }.
+function normaliseRecords(raw, heldIn) {
+  var kept = heldIn === "cache" ? { A: true, AAAA: true, CNAME: true } : { A: true, AAAA: true, PTR: true };
+  var counts = { total: 0, stored: 0, byType: {}, badTTL: 0, badName: 0, badValue: 0 };
+  var records = [];
+  for (var i = 0; i < raw.length; i++) {
+    var record = raw[i];
+    counts.total++;
+    var rrtype = String(record.rrtype || "").trim();
+    counts.byType[rrtype] = (counts.byType[rrtype] || 0) + 1;
+    if (!kept[rrtype]) {
+      continue;
+    }
+    var owner = dnsName(record.owner_name);
+    if (owner === "") {
+      counts.badName++;
+      continue;
+    }
+    var normalised = { owner_name: owner, rrtype: rrtype, ttl: 0, address: null, host_label: null };
+    if (heldIn === "cache") {
+      if (record.ttl_shape !== "string" || !/^\d+$/.test(String(record.ttl || "").trim())) {
+        counts.badTTL++;
+        continue;
+      }
+      normalised.ttl = parseInt(String(record.ttl).trim(), 10);
+    }
+    if (rrtype === "A" || rrtype === "AAAA") {
+      var address = canonicalAddress(record.value);
+      if (address === null || (rrtype === "A") !== (address.indexOf(":") < 0)) {
+        counts.badValue++;
+        continue;
+      }
+      normalised.value = address;
+      normalised.address = address;
+      if (heldIn === "local_data") {
+        normalised.host_label = hostLabel(owner);
+      }
+    } else if (rrtype === "CNAME") {
+      var target = dnsName(record.value);
+      if (target === "") {
+        counts.badValue++;
+        continue;
+      }
+      normalised.value = target;
+    } else {
+      var ptrTarget = dnsName(record.value);
+      var named = reverseNameAddress(owner);
+      if (named === null || ptrTarget === "") {
+        counts.badValue++;
+        continue;
+      }
+      normalised.value = ptrTarget;
+      normalised.address = named;
+      normalised.host_label = hostLabel(ptrTarget);
+    }
+    if (heldIn === "local_data" && normalised.host_label === "") {
+      counts.badValue++;
+      continue;
+    }
+    records.push(normalised);
+    counts.stored++;
+  }
+  return { records: records, counts: counts };
+}
+
+// observationRows is the extend-or-insert over what the previous poll saw: a record the previous poll
+// saw is its observation extended to this poll, any other starts one. { rows, inserted, extended }
+function observationRows(host, provider, heldIn, records, polledAt) {
+  var previousRead = host.query("SELECT read_at FROM plugin_unbound.resource_record_read WHERE provider_id = :p",
+    { p: provider.id });
+  var previous = previousRead.length > 0 ? Math.min(previousRead[0].read_at, polledAt) : null;
+  var coveredFrom = previous === null ? polledAt : previous;
+  var current = {};
+  if (previous !== null) {
+    host.query("SELECT owner_name, rrtype, value, first_seen_at, covered_from_at, covered_until_at " +
+      "FROM plugin_unbound.resource_record_observation WHERE provider_id = :p AND last_seen_at = :prev " +
+      "ORDER BY first_seen_at", { p: provider.id, prev: previous }).forEach(function (row) {
+      // Of two observations the previous poll saw, the one started last is extended.
+      current[row.owner_name + "\u001f" + row.rrtype + "\u001f" + row.value] = row;
+    });
+  }
+  var deduped = {};
+  records.forEach(function (record) {
+    var key = record.owner_name + "\u001f" + record.rrtype + "\u001f" + record.value;
+    if (!deduped[key] || record.ttl > deduped[key].ttl) {
+      deduped[key] = record;
+    }
+  });
+  var rows = [];
+  var inserted = 0, extended = 0;
+  Object.keys(deduped).sort().forEach(function (key) {
+    var record = deduped[key];
+    var until = heldIn === "cache" && record.ttl > 0 ? polledAt + record.ttl : polledAt;
+    var held = current[key];
+    var row = { provider_id: provider.id, held_in: heldIn, owner_name: record.owner_name, rrtype: record.rrtype,
+      value: record.value, address: record.address, host_label: record.host_label };
+    if (held) {
+      row.first_seen_at = held.first_seen_at;
+      row.covered_from_at = held.covered_from_at;
+      row.last_seen_at = Math.max(held.first_seen_at, polledAt);
+      row.covered_until_at = Math.max(held.covered_until_at, until);
+      extended++;
+    } else {
+      row.first_seen_at = polledAt;
+      row.covered_from_at = Math.min(coveredFrom, polledAt);
+      row.last_seen_at = polledAt;
+      row.covered_until_at = until;
+      inserted++;
+    }
+    rows.push(row);
+  });
+  return { rows: rows, inserted: inserted, extended: extended };
+}
+
+// collectRecords is one pass of the cache or of the local data into the plugin's table.
+function collectRecords(host, provider, heldIn, endpoint, path, ownerField, messageCacheReferences) {
+  var polledAt = host.now();
+  var read = readRecords(host, endpoint, path, ownerField, messageCacheReferences);
+  if (read.error) {
+    return { result: read.result, error: read.error };
+  }
+  var normalised = normaliseRecords(read.records, heldIn);
+  var stored = observationRows(host, provider, heldIn, normalised.records, polledAt);
+  var counts = normalised.counts;
+  var types = Object.keys(counts.byType).sort(function (a, b) {
+    return counts.byType[b] - counts.byType[a] || (a < b ? -1 : 1);
+  }).map(function (type) { return (type === "" ? "no type" : type) + " " + counts.byType[type]; });
+  var detail = "read " + counts.total + " records of " + (heldIn === "cache" ? "the cache" : "the local data") +
+    " (" + read.response_bytes + " bytes)" + (types.length > 0 ? ": " + types.join(", ") : "") +
+    "; kept " + counts.stored + " of the " + (heldIn === "cache" ? "A, AAAA, CNAME" : "A, AAAA, PTR") +
+    " records (" + stored.inserted + " observations started, " + stored.extended + " extended); every other type " +
+    "is counted and not stored";
+  (read.not_records || []).forEach(function (entry) {
+    if (entry.count > 0) { detail += "; skipped " + entry.count + " " + entry.wording; }
+  });
+  if (counts.badTTL > 0) { detail += "; skipped " + counts.badTTL + " whose ttl is not a whole number of seconds"; }
+  if (counts.badValue > 0) { detail += "; skipped " + counts.badValue + " whose value is not valid for their type"; }
+  if (counts.badName > 0) { detail += "; skipped " + counts.badName + " with no owner name"; }
+  read.result.detail = detail;
+  read.result.outcome = counts.total === 0 ? "healthy_empty" : "healthy";
+  return { result: read.result, rows: { resource_record_observation: stored.rows,
+    resource_record_read: [{ provider_id: provider.id, read_at: polledAt }] }, state: {} };
+}
+
 // normaliseAction maps the query report's `action` onto the closed vocabulary of the dns_lookup
 // contract. Anything else is `unknown`: a lookup whose verdict opnview cannot name must not be
 // counted as allowed.
@@ -283,83 +618,111 @@ exports.dns_lookup = {
     return { result: result };
   },
 
-  // lookups reads one page of the ring buffer.
-  lookups: function (host, page) {
-    var result = { probe: "search_queries", state: "unavailable", outcome: "request_not_made" };
-    var now = host.now();
-    // Integers, in a JSON body: a string would reach the controller as a PHP string, is_int()
-    // would fail, and the call would silently degrade to the unwindowed branch.
-    var response = host.call("search_queries", {
-      json: { current: page, rowCount: pageSize, timeStart: now - requestedSpan, timeEnd: now }
-    });
-    if (response.error) {
-      return { result: result, error: response.error };
-    }
-    if (!response.ok) {
-      result.outcome = response.availability_outcome;
-      result.detail = response.detail;
-      return { result: result, error: "collect: the resolver query report answered " + response.outcome };
-    }
-    var rows = response.decodable ? d.rows(response.value) : null;
-    if (rows === null) {
-      result.outcome = "undecodable";
-      result.detail = "the query report body could not be read";
-      return { result: result, error: "collect: reading the resolver query report: the body holds no rows" };
-    }
-    result.state = "reachable";
-    result.outcome = "healthy";
-    result.separable = true;
+  // readPage reads one page of the ring buffer: { result, lookups, error }.
+  readPage: function (host, page) {
+    return readLookupPage(host, page);
+  },
 
-    var lookups = [];
-    for (var i = 0; i < rows.length; i++) {
-      var row = rows[i];
-      var lookedUpAt = d.epoch(row, "time");
-      if (lookedUpAt === null) {
-        continue;
+  // collect walks the ring buffer newest first, page by page, until a page brings nothing new or
+  // the bound is reached, and stores the lookups past what the table holds: a lookup whose client
+  // the report logged as a host name is stored under that name, unresolved, for the derivation
+  // resolve to name the machine; a refused lookup carries its list's name, which the same derivation
+  // links. An interval that rotated out of the buffer before it was read is a gap, since the
+  // endpoint honours no window and nothing can recover it.
+  collect: function (host, state, provider) {
+    var now = host.now();
+    var purge = host.datasets.latest("retention_purge");
+    var purgedBefore = purge && typeof purge.purged_before === "number" ? purge.purged_before : null;
+    var newest = host.query("SELECT max(looked_up_at) AS newest FROM plugin_unbound.dns_resolution", {})[0].newest;
+    var rows = [];
+    var pushed = {};
+    var lastResult = null;
+    var total = 0;
+    var outside = 0;
+    var oldestSeen = null;
+    var failure = null;
+    for (var page = 1; page <= pageBound; page++) {
+      var read = readLookupPage(host, page);
+      lastResult = read.result;
+      if (read.error) {
+        if (page === 1) {
+          return { result: read.result, error: read.error };
+        }
+        failure = read.error;
+        break;
       }
-      var domain = d.string(row, "domain");
-      if (domain === null) {
-        continue;
+      if (read.lookups.length === 0) {
+        break;
       }
-      var action = normaliseAction(d.rawString(row, "action"));
-      var blocklistName = "";
-      if (action === "block" || action === "drop") {
-        // The endpoint does not attribute every block. An unattributed one stays "blocked, list
-        // not recorded", which is its own state, so the name is taken only when given.
-        blocklistName = d.rawString(row, "blocklist");
-      }
-      lookups.push({
-        deduplication_key: lookupKey(row, lookedUpAt),
-        client_address: d.rawString(row, "client"),
-        client_family: queryFamily(d.rawString(row, "family")),
-        domain: domain,
-        action: action,
-        answer_source: d.string(row, "source"),
-        rcode: d.string(row, "rcode"),
-        dnssec_status: d.string(row, "dnssec_status"),
-        blocklist_name: blocklistName,
-        looked_up_at: lookedUpAt
+      total += read.lookups.length;
+      var parameters = {};
+      var marks = [];
+      read.lookups.forEach(function (lookup, index) {
+        parameters["k" + index] = lookup.deduplication_key;
+        marks.push(":k" + index);
       });
+      var held = {};
+      host.query("SELECT lookup_key FROM plugin_unbound.dns_resolution WHERE lookup_key IN (" + marks.join(", ") + ")",
+        parameters).forEach(function (row) { held[row.lookup_key] = true; });
+      var fresh = 0;
+      for (var i = 0; i < read.lookups.length; i++) {
+        var lookup = read.lookups[i];
+        if (oldestSeen === null || lookup.looked_up_at < oldestSeen) {
+          oldestSeen = lookup.looked_up_at;
+        }
+        if (requestedSpan > 0 && (lookup.looked_up_at < now - requestedSpan || lookup.looked_up_at > now)) {
+          outside++;
+        }
+        if (held[lookup.deduplication_key] || pushed[lookup.deduplication_key] ||
+          (purgedBefore !== null && lookup.looked_up_at < purgedBefore)) {
+          continue;
+        }
+        pushed[lookup.deduplication_key] = true;
+        fresh++;
+        rows.push(lookupRow(lookup, provider, now));
+      }
+      if (fresh === 0) {
+        break;
+      }
     }
-    return { result: result, lookups: lookups };
+    var result = lastResult;
+    result.state = "reachable";
+    result.outcome = total === 0 ? "healthy_empty" : "healthy";
+    result.separable = true;
+    result.detail = total === 0 ?
+      "reachable and the query report returned no lookup, which is not an absence of lookups" :
+      "read " + total + " of the most recent lookups; the endpoint ignores timeStart and timeEnd, so this is not " +
+      "coverage of the " + requestedSpan + "-second window that was requested" +
+      (outside > 0 ? " (" + outside + " of the rows fell outside it, which is that behaviour showing)" : "") +
+      (failure ? "; a later page failed: " + failure : "");
+    var gaps = [];
+    if (newest !== null && oldestSeen !== null && oldestSeen > newest) {
+      gaps.push({ from: newest, to: oldestSeen, reason: "resolver_window_not_honoured",
+        detail: "the oldest of the " + total + " lookups read is newer than the newest lookup stored, so the interval " +
+          "between them rotated out of the endpoint's ring buffer before it was read; the endpoint honours no " +
+          "window, so nothing can recover it" });
+    }
+    return { result: result, rows: { dns_resolution: rows }, state: {}, gaps: gaps };
   }
 };
 
 exports.resolver_cache = {
   probe: recordsProbe,
-  // cache reads the dump: every record Unbound holds and has not expired, `host` naming the owner.
-  cache: function (host) {
-    return readRecords(host, "dump_cache", "/api/unbound/diagnostics/dumpcache", "host", true);
+  // collect reads the dump -- every record Unbound holds and has not expired, `host` naming the
+  // owner -- into the plugin's observations.
+  collect: function (host, state, provider) {
+    return collectRecords(host, provider, "cache", "dump_cache", "/api/unbound/diagnostics/dumpcache", "host", true);
   }
 };
 
 exports.resolver_local_data = {
   probe: recordsProbe,
-  // local_data reads the local data, host overrides among them: OPNsense writes host overrides as
+  // collect reads the local data, host overrides among them: OPNsense writes host overrides as
   // `local-data:` lines (src/etc/inc/plugins.inc.d/unbound.inc), so this is where a host with no
   // DHCP lease is named. `name` names the owner, and `ttl` is the configured TTL.
-  local_data: function (host) {
-    return readRecords(host, "list_local_data", "/api/unbound/diagnostics/listlocaldata", "name", false);
+  collect: function (host, state, provider) {
+    return collectRecords(host, provider, "local_data", "list_local_data", "/api/unbound/diagnostics/listlocaldata",
+      "name", false);
   }
 };
 
@@ -367,5 +730,8 @@ exports.resolver_local_data = {
 exports.helpers = {
   lookup_key: lookupKey,
   query_family: queryFamily,
-  normalise_action: normaliseAction
+  normalise_action: normaliseAction,
+  canonical_address: canonicalAddress,
+  reverse_name_address: reverseNameAddress,
+  normalise_records: normaliseRecords
 };

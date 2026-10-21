@@ -28,7 +28,7 @@ function seed(t) {
   t.sql("INSERT INTO plugin_installation.client (id, identity_kind, identity_key, interface_id, mac, last_address, " +
     "first_seen_at, last_seen_at) VALUES " +
     "(10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', '192.0.2.10', :at, :at)", { at: at });
-  t.sql("INSERT INTO dns_resolution (id, lookup_key, client_address, domain, resolver, action, " +
+  t.sql("INSERT INTO plugin_unbound.dns_resolution (id, lookup_key, client_address, domain, resolver, action, " +
     "looked_up_at, ingested_at) VALUES (1, 'k1', '192.0.2.10', 'example.org', 'unbound', 'pass', :at, :at)",
     { at: at });
   var flow = function (id, action, port, bytes) {
@@ -42,7 +42,7 @@ function seed(t) {
   flow(1, "pass", 443, 1000);
   flow(2, "pass", 80, 400);
   flow(3, "block", 22, 300);
-  t.sql("INSERT INTO domain_attribution (flow_id, dns_resolution_id, site_name, correlation_delay_seconds, " +
+  t.sql("INSERT INTO plugin_unbound.domain_attribution (flow_id, dns_resolution_id, site_name, correlation_delay_seconds, " +
     "attributed_at, method) VALUES (1, 1, 'example.org', 2, :at, 'lookup_timing')", { at: at + 60 });
 }
 

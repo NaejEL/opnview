@@ -1,8 +1,10 @@
 {
   "kind" : "dns_lookup",
-  "description" : "The lookups a resolver answered, per querying client: data source 5, the sole source of site names. The kind never presents what it read as coverage of a window.",
+  "description" : "The lookups a resolver answered, per querying client: data source 5, the sole source of site names. Each provider stores what its resolver reports into its own table (the unbound plugin's plugin_unbound.dns_resolution, ADR 0020 wave 4), reports an interval that rotated out of the resolver's buffer as a collection gap, and never presents what it read as coverage of a window.",
   "concurrent" : false,
-  "gap_reasons" : ["resolver_window_not_honoured"],
+  "gap_reasons" : [
+    "resolver_window_not_honoured"
+  ],
   "push" : false,
   "bindable" : true,
   "cadences" : [
@@ -30,10 +32,10 @@
       "returns" : "probe_answer"
     },
     {
-      "description" : "Called for pages 1 to page_bound at every lookup pass.",
-      "name" : "lookups",
-      "arguments" : "host, page",
-      "returns" : "lookups_answer"
+      "description" : "Called at every pass: reads the resolver and answers one row per record for the provider's own tables.",
+      "name" : "collect",
+      "arguments" : "host, state, provider",
+      "returns" : "collect_answer"
     }
   ],
   "records" : [
@@ -56,8 +58,8 @@
       ]
     },
     {
-      "description" : "What `lookups` returns.",
-      "name" : "lookups_answer",
+      "description" : "What `collect` returns.",
+      "name" : "collect_answer",
       "fields" : [
         {
           "description" : "The `result` record.",
@@ -67,10 +69,19 @@
           "of" : "result"
         },
         {
-          "description" : "The `dns_lookup_record` records read, absent when the read failed.",
-          "name" : "lookups",
-          "type" : "records",
-          "of" : "dns_lookup_record"
+          "description" : "The rows to store, by table of the provider's own.",
+          "name" : "rows",
+          "type" : "object"
+        },
+        {
+          "description" : "The provider's durable state for the next pass.",
+          "name" : "state",
+          "type" : "object"
+        },
+        {
+          "description" : "The collection gaps the pass detected, each {from, to, reason, detail}.",
+          "name" : "gaps",
+          "type" : "object"
         },
         {
           "description" : "Why the read failed, when it did; the result then says what the firewall answered.",
@@ -78,81 +89,9 @@
           "type" : "text"
         },
         {
-          "description" : "Why this implementation's material can never be read, when that is so: a state, recorded with its reason, and not a failure.",
+          "description" : "Why this implementation's material can never be read, when that is so.",
           "name" : "unsupported",
           "type" : "text"
-        }
-      ]
-    },
-    {
-      "description" : "One lookup, decoded and normalised.",
-      "name" : "dns_lookup_record",
-      "fields" : [
-        {
-          "description" : "The lookup's identity, composed by the implementation; a lookup read twice is stored once.",
-          "name" : "deduplication_key",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "The querying client's address, or the host name the resolver logged for it.",
-          "name" : "client_address",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "4 or 6: the querying address's family.",
-          "name" : "client_family",
-          "type" : "integer",
-          "integer_values" : [
-            4,
-            6
-          ]
-        },
-        {
-          "description" : "The name looked up.",
-          "name" : "domain",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "The resolver's verdict.",
-          "name" : "action",
-          "type" : "text",
-          "required" : true,
-          "values" : [
-            "pass",
-            "block",
-            "drop",
-            "unknown"
-          ]
-        },
-        {
-          "description" : "Where the answer came from.",
-          "name" : "answer_source",
-          "type" : "text"
-        },
-        {
-          "description" : "The response code.",
-          "name" : "rcode",
-          "type" : "text"
-        },
-        {
-          "description" : "The DNSSEC status.",
-          "name" : "dnssec_status",
-          "type" : "text"
-        },
-        {
-          "description" : "The list that refused it, when one did and the resolver names it.",
-          "name" : "blocklist_name",
-          "type" : "text"
-        },
-        {
-          "description" : "When the lookup was made.",
-          "name" : "looked_up_at",
-          "type" : "integer",
-          "required" : true,
-          "unit" : "UTC epoch seconds"
         }
       ]
     }

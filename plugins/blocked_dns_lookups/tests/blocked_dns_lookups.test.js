@@ -19,10 +19,10 @@ function seed(t) {
   t.sql("INSERT INTO plugin_installation.client (id, identity_kind, identity_key, interface_id, mac, last_address, " +
     "first_seen_at, last_seen_at) VALUES (10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', " +
     "'192.0.2.10', :at, :at)", { at: at });
-  t.sql("INSERT INTO blocklist (id, name, purpose, purpose_assigned_at, first_seen_at, last_seen_at) VALUES " +
+  t.sql("INSERT INTO plugin_unbound.blocklist (id, name, purpose, purpose_assigned_at, first_seen_at, last_seen_at) VALUES " +
     "(1, 'list-one', 'advertising', :at, :at, :at), (2, 'list-two', NULL, NULL, :at, :at)", { at: at });
   var lookup = function (id, domain, action, list, client, address) {
-    t.sql("INSERT INTO dns_resolution (id, lookup_key, client_address, client_id, domain, resolver, " +
+    t.sql("INSERT INTO plugin_unbound.dns_resolution (id, lookup_key, client_address, client_id, domain, resolver, " +
       "action, blocklist_id, looked_up_at, ingested_at, interface_id, interface_lookup_state) VALUES " +
       "(:id, :key, :address, :client, :domain, 'unbound', :action, :list, :at, :at, :interface, :state)",
       { id: id, key: "k" + id, address: address, client: client, domain: domain, action: action, list: list,

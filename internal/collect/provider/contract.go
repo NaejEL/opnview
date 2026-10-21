@@ -121,10 +121,6 @@ type Contract struct {
 	// OwnCadence says each provider of the kind states its own cadence in its manifest, since no
 	// surveyed cadence exists for its sources.
 	OwnCadence bool `json:"own_cadence,omitempty"`
-	// NamesHosts says the kind's records can name a host the resolver's query report logged as a client,
-	// so the unresolved host-name lookups wait for a read of it when it is in use
-	// (internal/collect/core/hostnamesources.go).
-	NamesHosts bool `json:"names_hosts,omitempty"`
 	// PushRecord names the record table a push entry delivering the kind fills, exactly when Push is set.
 	PushRecord string `json:"push_record,omitempty"`
 	// LiveAnswer names the answer table a live pass of the kind returns, when the kind accepts a live pass

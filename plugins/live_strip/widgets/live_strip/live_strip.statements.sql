@@ -34,4 +34,4 @@ GROUP BY 1, 2;
 -- The earliest record of each kind the strip counts, which bounds what the store covers.
 -- statement: widget_live_strip_earliest
 SELECT (SELECT min(observed_at) FROM plugin_pf.flow) AS earliest_flow,
-       (SELECT min(looked_up_at) FROM dns_resolution) AS earliest_lookup;
+       (SELECT min(looked_up_at) FROM plugin_unbound.dns_resolution) AS earliest_lookup;

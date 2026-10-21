@@ -12,9 +12,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/discovery"
 	"github.com/NaejEL/opnview/internal/collect/kinds/declared"
 	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
-	"github.com/NaejEL/opnview/internal/collect/kinds/lookups"
 	"github.com/NaejEL/opnview/internal/collect/kinds/neighbours"
-	"github.com/NaejEL/opnview/internal/collect/kinds/resolverrecords"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/collect/services"
 	"github.com/NaejEL/opnview/internal/config"
@@ -32,24 +30,20 @@ type Collector struct {
 	*discovery.Discoverer
 	*services.ServiceCoordinator
 	*neighbours.NeighbourCoordinator
-	*lookups.LookupCoordinator
 	*filterlog.FilterLogCoordinator
-	*resolverrecords.ResolverRecordCoordinator
 	*declared.DeclaredKindCoordinator
 }
 
 // compose is the collector whose parts all share state.
 func compose(state *core.Collector) *Collector {
 	return &Collector{
-		Collector:                 state,
-		Deriver:                   derive.On(state),
-		Discoverer:                discovery.On(state),
-		ServiceCoordinator:        services.On(state),
-		NeighbourCoordinator:      neighbours.On(state),
-		LookupCoordinator:         lookups.On(state),
-		FilterLogCoordinator:      filterlog.On(state),
-		ResolverRecordCoordinator: resolverrecords.On(state),
-		DeclaredKindCoordinator:   declared.On(state),
+		Collector:               state,
+		Deriver:                 derive.On(state),
+		Discoverer:              discovery.On(state),
+		ServiceCoordinator:      services.On(state),
+		NeighbourCoordinator:    neighbours.On(state),
+		FilterLogCoordinator:    filterlog.On(state),
+		DeclaredKindCoordinator: declared.On(state),
 	}
 }
 

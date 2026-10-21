@@ -71,12 +71,6 @@ type Collector struct {
 	ReadDetails map[int64]string
 	// ReadOutcomes holds the outcome code of the same reads, beside their words.
 	ReadOutcomes map[int64]vocab.AvailabilityOutcome
-	// HostNameReads are the instants the last complete pass of each host-naming kind of this run began,
-	// absent before one, and HostNameFailed the kinds whose last pass failed. The unresolved host-name
-	// lookups are examined only once every source in use has been read after they were ingested; see
-	// hostnamesources.go. The mutex guards both.
-	HostNameReads  map[string]int64
-	HostNameFailed map[string]bool
 	// LastRefreshAt is the instant of the last successful aggregate refresh, and
 	// onLinkFingerprint what classification read of the interfaces themselves --
 	// which are upstream, their link-local rule, the networks that count -- at the

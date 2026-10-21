@@ -20,7 +20,7 @@ function seed(t) {
     "first_seen_at, last_seen_at) VALUES " +
     "(10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', '192.0.2.10', :at, :at), " +
     "(11, 'mac', '00:11:22:33:44:66', 1, '00:11:22:33:44:66', '192.0.2.11', :at, :at)", { at: at });
-  t.sql("INSERT INTO dns_resolution (id, lookup_key, client_address, domain, resolver, action, " +
+  t.sql("INSERT INTO plugin_unbound.dns_resolution (id, lookup_key, client_address, domain, resolver, action, " +
     "looked_up_at, ingested_at) VALUES " +
     "(1, 'k1', '192.0.2.10', 'example.org', 'unbound', 'pass', :at, :at), " +
     "(2, 'k2', '192.0.2.11', 'example.net', 'unbound', 'pass', :at, :at)", { at: at });
@@ -37,7 +37,7 @@ function seed(t) {
   flow(3, 10, "192.0.2.10", 500);
   flow(4, 11, "192.0.2.11", 700);
   var attribution = function (flowId, resolution, site, delay) {
-    t.sql("INSERT INTO domain_attribution (flow_id, dns_resolution_id, site_name, " +
+    t.sql("INSERT INTO plugin_unbound.domain_attribution (flow_id, dns_resolution_id, site_name, " +
       "correlation_delay_seconds, attributed_at, method) VALUES " +
       "(:flow, :resolution, :site, :delay, :at, 'lookup_timing')",
       { flow: flowId, resolution: resolution, site: site, delay: delay, at: at + 60 });

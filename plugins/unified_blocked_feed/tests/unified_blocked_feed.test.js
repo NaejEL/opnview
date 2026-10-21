@@ -21,7 +21,7 @@ function seed(t) {
     "'192.0.2.10', :at, :at)", { at: at });
   t.sql("INSERT INTO plugin_installation.rule (id, pf_label, description, action, discovered_at) " +
     "VALUES (5, 'label-five', 'Block the guests', 'block', :at)", { at: at });
-  t.sql("INSERT INTO blocklist (id, name, purpose, purpose_assigned_at, first_seen_at, last_seen_at) " +
+  t.sql("INSERT INTO plugin_unbound.blocklist (id, name, purpose, purpose_assigned_at, first_seen_at, last_seen_at) " +
     "VALUES (1, 'list-one', 'advertising', :at, :at, :at)", { at: at });
   var flow = function (id, rid, rule) {
     t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +
@@ -34,7 +34,7 @@ function seed(t) {
   flow(1, "label-five", 5);
   flow(2, "label-gone", null);
   var lookup = function (id, domain, list) {
-    t.sql("INSERT INTO dns_resolution (id, lookup_key, client_address, client_id, domain, resolver, " +
+    t.sql("INSERT INTO plugin_unbound.dns_resolution (id, lookup_key, client_address, client_id, domain, resolver, " +
       "action, blocklist_id, looked_up_at, ingested_at, interface_id, interface_lookup_state) VALUES " +
       "(:id, :key, '192.0.2.10', 10, :domain, 'unbound', 'block', :list, :at, :at, 1, 'resolved')",
       { id: id, key: "k" + id, domain: domain, list: list, at: at + 10 + id });

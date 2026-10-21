@@ -69,8 +69,8 @@ SELECT
     r.domain,
     'domain',
     0
-FROM opnview.dns_resolution AS r
-LEFT JOIN opnview.blocklist AS b ON b.id = r.blocklist_id
+FROM plugin_unbound.dns_resolution AS r
+LEFT JOIN plugin_unbound.blocklist AS b ON b.id = r.blocklist_id
 WHERE r.action IN ('block', 'drop')
 UNION ALL
 SELECT

@@ -39,13 +39,6 @@ func AvailabilityOutcomeOf(ctx context.Context, database *store.Store, providerI
 	return vocab.AvailabilityOutcome(outcome), nil
 }
 
-// InsertDNSResolution stores one lookup through the store's own write, as the resolver collector does,
-// without the report of whether it was new.
-func InsertDNSResolution(ctx context.Context, database *store.Store, lookup vocab.DNSResolution) error {
-	_, err := database.StoreDNSResolution(ctx, lookup)
-	return err
-}
-
 // ActiveProviderID returns the active provider of an exclusive kind, and whether there is one. It refuses a
 // kind that admits several active providers: asking for THE active one would read one source where there
 // may be several.

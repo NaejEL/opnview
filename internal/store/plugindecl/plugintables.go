@@ -153,6 +153,8 @@ type PluginTable struct {
 	WritableBy []WriteGrant
 	// Checks are the table's CHECK constraints (ADR 0019).
 	Checks []PluginCheck
+	// KeepHeld makes a row written with the key of a held row leave the held row as it is (ADR 0020).
+	KeepHeld bool
 }
 
 // WrittenColumns are the columns a row written to the table carries: every column but the identity
@@ -656,7 +658,7 @@ func PluginArgument(column PluginColumn, value any) (any, error) {
 
 // MultiRowInsert is one INSERT of several rows, with the upsert of upsertStatement.
 func (t PluginTable) MultiRowInsert(rows []map[string]any) (string, []any, error) {
-	return t.multiRowInsert(rows, false)
+	return t.multiRowInsert(rows, t.KeepHeld)
 }
 
 // MultiRowInsertKeeping is MultiRowInsert for rows that never replace a held row of their key: a live
