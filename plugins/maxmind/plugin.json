@@ -1,10 +1,11 @@
 {
-  "api_version": 2,
+  "api_version": 3,
   "name": "maxmind",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "display_name": "MaxMind GeoLite2",
-  "description": "Downloads MaxMind's GeoLite2 City and ASN databases on the operator's own account, keeps them current, and places public addresses with them.",
+  "description": "Downloads MaxMind's GeoLite2 City and ASN databases on the operator's own account, keeps them current, and places the public addresses the flows name with them, into its own table (ADR 0020 wave 4).",
   "script": "maxmind.js",
+  "requires": ["pf", "clients"],
   "destinations": [
     "https://download.maxmind.com",
     "https://mm-prod-geoip-databases.a2649acb697e2c09b632799562c076f2.r2.cloudflarestorage.com"
@@ -28,6 +29,52 @@
       "key": "maxmind_geolite2",
       "display_name": "MaxMind GeoLite2",
       "read_strategy": "full_reread"
+    }
+  ],
+  "tables": [
+    {
+      "name": "geo_asn",
+      "columns": [
+        { "name": "address", "type": "text" },
+        { "name": "provider_id", "type": "integer", "nullable": true },
+        { "name": "lookup_state", "type": "text" },
+        { "name": "country_code", "type": "text", "nullable": true },
+        { "name": "country_name", "type": "text", "nullable": true },
+        { "name": "latitude", "type": "real", "nullable": true },
+        { "name": "longitude", "type": "real", "nullable": true },
+        { "name": "asn", "type": "integer", "nullable": true },
+        { "name": "operator", "type": "text", "nullable": true },
+        { "name": "dataset_build_at", "type": "integer", "nullable": true },
+        { "name": "looked_up_at", "type": "integer" }
+      ],
+      "primary_key": ["address"],
+      "indexes": [
+        { "columns": ["looked_up_at"] },
+        { "columns": ["country_code"] },
+        { "columns": ["asn"] },
+        { "columns": ["lookup_state"], "where": "lookup_state = 'pending'" }
+      ],
+      "checks": [
+        { "name": "lookup_state_known", "expression": "lookup_state IN ('resolved', 'miss', 'pending')" },
+        { "name": "dataset_build_at_instant", "expression": "dataset_build_at IS NULL OR (dataset_build_at >= 0 AND dataset_build_at < 4102444800)" },
+        { "name": "looked_up_at_instant", "expression": "looked_up_at >= 0 AND looked_up_at < 4102444800" },
+        { "name": "resolved_is_placed", "expression": "lookup_state <> 'resolved' OR (country_code IS NOT NULL AND dataset_build_at IS NOT NULL AND provider_id IS NOT NULL)" }
+      ]
+    }
+  ],
+  "statements": ["maxmind.statements.sql"],
+  "derivations": [
+    {
+      "name": "mark",
+      "after_passes": ["firewall_log"],
+      "cadence_seconds": 300,
+      "statements": ["mark_addresses", "mark_other_providers"]
+    },
+    {
+      "name": "locate",
+      "after_derivations": ["maxmind/mark"],
+      "cadence_seconds": 300,
+      "outputs": { "tables": ["geo_asn"] }
     }
   ]
 }

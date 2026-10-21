@@ -1041,46 +1041,9 @@ CREATE INDEX IF NOT EXISTS idx_domain_attribution_resolution ON domain_attributi
 CREATE INDEX IF NOT EXISTS idx_domain_attribution_address_observation
     ON domain_attribution (address_observation_id);
 
--- ---------------------------------------------------------------------------
--- Geo / ASN — the geo and ASN enrichment of one address.
--- Keyed per address rather than per prefix: the dataset answers with a prefix
--- but SQL has no natural longest-prefix join. dataset_build_at is the build
--- date of the dataset that answered and provider_id names the provider that
--- supplied it, so a stale enrichment is visible and attributable. A cache miss
--- is a row whose lookup_state is 'miss', never an absent row; a 'pending' row
--- has not been looked up yet and names no provider.
--- Source: the geo_asn kind of the provider registry — today the MaxMind
--- GeoLite2 City and ASN databases, the second of the three outbound
--- calls the project allows. Acquisition is step 4.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS geo_asn (
-    address          TEXT PRIMARY KEY,
-    provider_id      BIGINT REFERENCES provider (id),
-    lookup_state     TEXT NOT NULL CHECK (lookup_state IN ('resolved', 'miss', 'pending')),
-    country_code     TEXT,
-    country_name     TEXT,
-    latitude         DOUBLE PRECISION,
-    longitude        DOUBLE PRECISION,
-    asn              BIGINT,
-    operator         TEXT,
-    dataset_build_at BIGINT
-                     CHECK (dataset_build_at IS NULL
-                            OR (dataset_build_at >= 0 AND dataset_build_at < 4102444800)),
-    looked_up_at     BIGINT NOT NULL CHECK (looked_up_at >= 0 AND looked_up_at < 4102444800),
-    CHECK (lookup_state <> 'resolved'
-           OR (country_code IS NOT NULL
-               AND dataset_build_at IS NOT NULL
-               AND provider_id IS NOT NULL))
-);
-
-CREATE INDEX IF NOT EXISTS idx_geo_asn_looked_up_at ON geo_asn (looked_up_at);
-
--- A widget reference to a country or to an operator (docs/dashboard-format.md, "The
--- reference object": `country` by `iso_3166_1_alpha_2`, `operator` by `asn`) resolves
--- against these columns by exact match, and the widget API may not scan a growing table
--- (specs/SPEC-step-5b-widget-api.md, A12). One entry each per geolocated address.
-CREATE INDEX IF NOT EXISTS idx_geo_asn_country_code ON geo_asn (country_code);
-CREATE INDEX IF NOT EXISTS idx_geo_asn_asn ON geo_asn (asn);
+-- geo_asn -- the geo and ASN enrichment of one address: the maxmind plugin's table,
+-- plugin_maxmind.geo_asn, since ADR 0020 wave 4 (plugins/maxmind/plugin.json), reached unqualified
+-- through the bridge by the Go that still reads it.
 
 -- provider_rule_info and security_event -- the rule-info cache and the security events: the
 -- suricata plugin's tables, plugin_suricata.provider_rule_info and plugin_suricata.security_event,

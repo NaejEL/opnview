@@ -1,7 +1,7 @@
 {
   "api_version": 3,
   "name": "traffic_sankey",
-  "requires": ["installation", "pf"],
+  "requires": ["installation", "pf", "maxmind"],
   "version": "1.0.0",
   "display_name": "Traffic Sankey",
   "description": "Interfaces or clients on the left, another interface, the destination operator or the country on the right, with every ribbon not drawn in one explicit Other band.",

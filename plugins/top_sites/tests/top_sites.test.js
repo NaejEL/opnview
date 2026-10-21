@@ -86,7 +86,7 @@ test("a client reference narrows the names to that client's", function (t) {
 test("a partly named address gives its named flows to the site and the rest to its address row",
   function (t) {
     seed(t);
-    t.sql("INSERT INTO geo_asn (address, provider_id, lookup_state, country_code, asn, operator, " +
+    t.sql("INSERT INTO plugin_maxmind.geo_asn (address, provider_id, lookup_state, country_code, asn, operator, " +
       "dataset_build_at, looked_up_at) VALUES ('203.0.113.7', (SELECT id FROM provider WHERE kind = " +
       "'ip_geolocation' ORDER BY id LIMIT 1), 'resolved', 'NL', 64500, 'Example Operator', :at, :at)",
       { at: AT - 600 });

@@ -65,7 +65,7 @@ ORDER BY f.local_client_id;
 SELECT DISTINCT f.peer_address AS peer_address,
        CASE WHEN g.address IS NULL THEN 'no_row' ELSE g.lookup_state END AS lookup_state
 FROM plugin_pf.classified_flow AS f
-LEFT JOIN geo_asn AS g ON g.address = f.peer_address
+LEFT JOIN plugin_maxmind.geo_asn AS g ON g.address = f.peer_address
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.peer_address IS NOT NULL

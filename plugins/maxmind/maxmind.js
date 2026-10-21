@@ -1,4 +1,6 @@
-// MaxMind GeoLite2: one implementation of the ip_geolocation kind.
+// MaxMind GeoLite2: one implementation of the ip_geolocation kind, and the owner of the table the
+// placed addresses go into (ADR 0019, ADR 0020 wave 4). Its derivation mark, in SQL, lists the public
+// addresses the flows name that no row holds; its derivation locate places them from the databases.
 //
 // The City and ASN databases are downloaded on the operator's own account (the account ID and the
 // licence key it enters in the settings), kept in this plugin's data directory, refreshed when
@@ -181,47 +183,92 @@ exports.ip_geolocation = {
       }
     }
     return answer(host, probeCurrent, null);
-  },
-
-  // lookup asks both databases about each address. It reads the files and contacts nothing.
-  lookup: function (host, addresses) {
-    var city = database(host, "GeoLite2-City");
-    var asn = database(host, "GeoLite2-ASN");
-    if (city === null || asn === null) {
-      return { build: 0, answers: [], error: "maxmind: the dataset is not ready" };
-    }
-    var answers = [];
-    for (var i = 0; i < addresses.length; i++) {
-      var address = addresses[i];
-      var placed = { address: address };
-      var place = city.lookup(address) || {};
-      // The registered country is read for an address whose own country the database leaves empty.
-      var country = place.country || {};
-      if (!country.iso_code) {
-        country = place.registered_country || {};
-      }
-      if (country.iso_code) {
-        placed.country_code = country.iso_code;
-        if (country.names && country.names.en) {
-          placed.country_name = country.names.en;
-        }
-      }
-      var location = place.location || {};
-      if (typeof location.latitude === "number") {
-        placed.latitude = location.latitude;
-      }
-      if (typeof location.longitude === "number") {
-        placed.longitude = location.longitude;
-      }
-      var system = asn.lookup(address) || {};
-      if (system.autonomous_system_number) {
-        placed.asn = system.autonomous_system_number;
-      }
-      if (system.autonomous_system_organization) {
-        placed.operator = system.autonomous_system_organization;
-      }
-      answers.push(placed);
-    }
-    return { build: city.build_epoch, answers: answers };
   }
 };
+
+// lookupAddresses asks both databases about each address. It reads the files and contacts nothing.
+function lookupAddresses(host, addresses) {
+  var city = database(host, "GeoLite2-City");
+  var asn = database(host, "GeoLite2-ASN");
+  if (city === null || asn === null) {
+    return { build: 0, answers: [], error: "maxmind: the dataset is not ready" };
+  }
+  var answers = [];
+  for (var i = 0; i < addresses.length; i++) {
+    var address = addresses[i];
+    var placed = { address: address };
+    var place = city.lookup(address) || {};
+    // The registered country is read for an address whose own country the database leaves empty.
+    var country = place.country || {};
+    if (!country.iso_code) {
+      country = place.registered_country || {};
+    }
+    if (country.iso_code) {
+      placed.country_code = country.iso_code;
+      if (country.names && country.names.en) {
+        placed.country_name = country.names.en;
+      }
+    }
+    var location = place.location || {};
+    if (typeof location.latitude === "number") {
+      placed.latitude = location.latitude;
+    }
+    if (typeof location.longitude === "number") {
+      placed.longitude = location.longitude;
+    }
+    var system = asn.lookup(address) || {};
+    if (system.autonomous_system_number) {
+      placed.asn = system.autonomous_system_number;
+    }
+    if (system.autonomous_system_organization) {
+      placed.operator = system.autonomous_system_organization;
+    }
+    answers.push(placed);
+  }
+  return { build: city.build_epoch, answers: answers };
+}
+
+// maxLookupsPerRun bounds one placing run, so a first run over a large history does not hold the
+// derivation's loop for long; what is left waits for the next run.
+var maxLookupsPerRun = 20000;
+
+exports.derivations = {
+  // locate places the pending rows and the rows an older build placed, from the databases on disk,
+  // and writes each as resolved or as a miss under the build that answered. With no dataset nothing is
+  // placed and the rows wait.
+  locate: function (host, run) {
+    var held = dataset(host);
+    if (!held.ready) {
+      return { rows: { geo_asn: [] } };
+    }
+    var due = host.query("SELECT address, provider_id FROM plugin_maxmind.geo_asn " +
+      "WHERE lookup_state = 'pending' OR dataset_build_at IS NULL OR dataset_build_at < :build " +
+      "ORDER BY address LIMIT :bound", { build: held.build, bound: maxLookupsPerRun });
+    if (due.length === 0) {
+      return { rows: { geo_asn: [] } };
+    }
+    var looked = lookupAddresses(host, due.map(function (row) { return row.address; }));
+    if (looked.error) {
+      return { rows: { geo_asn: [] } };
+    }
+    var providerOf = {};
+    due.forEach(function (row) { providerOf[row.address] = row.provider_id; });
+    var rows = looked.answers.map(function (placed) {
+      return {
+        address: placed.address,
+        provider_id: providerOf[placed.address],
+        lookup_state: placed.country_code ? "resolved" : "miss",
+        country_code: placed.country_code === undefined ? null : placed.country_code,
+        country_name: placed.country_name === undefined ? null : placed.country_name,
+        latitude: placed.latitude === undefined ? null : placed.latitude,
+        longitude: placed.longitude === undefined ? null : placed.longitude,
+        asn: placed.asn === undefined ? null : placed.asn,
+        operator: placed.operator === undefined ? null : placed.operator,
+        dataset_build_at: looked.build,
+        looked_up_at: run.now
+      };
+    });
+    return { rows: { geo_asn: rows } };
+  }
+};
+

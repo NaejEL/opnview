@@ -2,7 +2,7 @@
 // what its lookups answer. MaxMind's two hosts are arranged answers: the download host, which
 // redirects, and the R2 host it redirects to, which serves the archive. Every database is written
 // by the test API (mmdb_archive) from the records below; nothing is read from MaxMind. Which
-// addresses the core hands a lookup, and the rows it stores, are tested in opnview's core.
+// addresses are placed, and the rows written, are the plugin's two derivations, tested below.
 
 var downloadHost = "https://download.maxmind.com";
 var r2Host = "https://mm-prod-geoip-databases.a2649acb697e2c09b632799562c076f2.r2.cloudflarestorage.com";
@@ -130,11 +130,9 @@ test("the licence key is a secret the listing never shows", function (t) {
   t.assert(listed.indexOf("example-licence") < 0, "the listing shows the licence key: " + listed);
 });
 
-test("with no dataset, nothing is held and no lookup answers", function (t) {
+test("with no dataset, nothing is held", function (t) {
   var status = t.call("ip_geolocation", "status");
   t.equal(status.ready, false, "the dataset");
-  var looked = t.call("ip_geolocation", "lookup", ["203.0.113.9"]);
-  t.assert(looked.error !== null, "a lookup with no dataset answered " + JSON.stringify(looked));
 });
 
 test("a download authenticates at MaxMind only and follows the redirect", function (t) {
@@ -210,31 +208,17 @@ test("a broken download leaves the database in use", function (t) {
     t.equal(refreshed.result.probe, "download_failed", broken[i][0] + ": the probe");
     t.equal(refreshed.result.state, "reachable", broken[i][0] + ": the state");
     t.equal(refreshed.build, firstBuild, broken[i][0] + ": the build in use");
-    var looked = t.call("ip_geolocation", "lookup", ["203.0.113.9"]);
-    t.equal(looked.answers[0].country_code, "FR", broken[i][0] + ": the dataset no longer answers");
+    t.sql("DELETE FROM plugin_maxmind.geo_asn");
+    flow(t, "f" + i, "10.1.0.42", "203.0.113.9");
+    t.derive("mark");
+    t.derive("locate");
+    t.equal(placedRows(t)[0].country_code, "FR", broken[i][0] + ": the dataset no longer answers");
   }
   var files = t.dataFiles();
   for (var j = 0; j < files.length; j++) {
     t.assert(files[j].charAt(0) !== "." && files[j].indexOf(".tar.gz") < 0,
       "a failed download left a file behind: " + files[j]);
   }
-});
-
-test("a lookup places what the databases hold and misses the rest", function (t) {
-  credentials(t);
-  publish(t, firstBuild);
-  t.call("ip_geolocation", "refresh");
-  var looked = t.call("ip_geolocation", "lookup", ["203.0.113.9", "198.51.100.7"]);
-  t.equal(looked.build, firstBuild, "the build the answers come from");
-  t.equal(looked.answers, [
-    { address: "203.0.113.9", country_code: "FR", country_name: "France", latitude: 48.85, longitude: 2.35,
-      asn: 64500, operator: "Example Operator" },
-    { address: "198.51.100.7" }
-  ], "the answers");
-  t.equal(t.webRequests().length > 0, true, "the refresh made requests");
-  var before = t.webRequests().length;
-  t.call("ip_geolocation", "lookup", ["203.0.113.10"]);
-  t.equal(t.webRequests().length, before, "a lookup contacted something");
 });
 
 test("a dataset on disk is in use at start, and a damaged one is downloaded again", function (t) {
@@ -253,3 +237,54 @@ test("a dataset on disk is in use at start, and a damaged one is downloaded agai
   t.equal(refreshed.ready, true, "the damaged database was not replaced");
   t.equal(downloads(t), before + 1, "downloads of the damaged edition alone");
 });
+
+// The derivations: mark lists the public addresses the flows name, locate places them.
+
+function flow(t, digest, src, dst) {
+  t.sql("INSERT INTO plugin_pf.flow (log_digest, observed_at, ingested_at, interface_device, interface_lookup_state, " +
+    "src_address, dst_address, dst_port, protocol, ip_version, action, direction, packet_bytes, rule_lookup_state, " +
+    "traffic_scope) VALUES (:digest, :at, :at, 'igb1', 'resolved', :src, :dst, 443, 'tcp', 4, 'pass', :direction, 60, " +
+    "'not_found', 'north_south')", { digest: digest, at: t.now(), src: src, dst: dst, direction: "in" });
+}
+
+function placedRows(t) {
+  return t.query("SELECT address, lookup_state, country_code, asn, operator, dataset_build_at FROM plugin_maxmind.geo_asn " +
+    "ORDER BY address");
+}
+
+test("mark lists the public addresses the flows name, and never a private, a loopback or a link-local one", function (t) {
+  t.clock(1790000400);
+  flow(t, "f1", "10.1.0.42", "203.0.113.9");
+  flow(t, "f2", "192.168.1.5", "198.51.100.7");
+  flow(t, "f3", "fe80::1", "2001:db8::1");
+  flow(t, "f4", "127.0.0.1", "169.254.1.1");
+  var run = t.derive("mark");
+  t.equal(run.error, null, "the run");
+  t.equal(placedRows(t).map(function (row) { return [row.address, row.lookup_state]; }),
+    [["198.51.100.7", "pending"], ["2001:db8::1", "pending"], ["203.0.113.9", "pending"]], "the pending rows");
+});
+
+test("locate places the pending rows from the databases, as resolved or as a miss under the build, and nothing without a dataset",
+  function (t) {
+    t.clock(1790000400);
+    flow(t, "f1", "10.1.0.42", "203.0.113.9");
+    flow(t, "f2", "10.1.0.42", "198.51.100.7");
+    t.derive("mark");
+    t.derive("locate");
+    t.equal(placedRows(t).map(function (row) { return row.lookup_state; }), ["pending", "pending"], "nothing placed without a dataset");
+    credentials(t);
+    publish(t, firstBuild);
+    t.call("ip_geolocation", "refresh");
+    var run = t.derive("locate");
+    t.equal(run.error, null, "the run");
+    t.equal(placedRows(t), [
+      { address: "198.51.100.7", lookup_state: "miss", country_code: null, asn: null, operator: null, dataset_build_at: firstBuild },
+      { address: "203.0.113.9", lookup_state: "resolved", country_code: "FR", asn: 64500, operator: "Example Operator",
+        dataset_build_at: firstBuild }
+    ], "the rows placed");
+    // A newer build places every row again.
+    publish(t, secondBuild);
+    t.call("ip_geolocation", "refresh");
+    t.derive("locate");
+    t.equal(placedRows(t).map(function (row) { return row.dataset_build_at; }), [secondBuild, secondBuild], "placed again under the new build");
+  });

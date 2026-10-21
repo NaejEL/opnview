@@ -2,14 +2,12 @@ package services
 
 import (
 	"context"
-	"net/netip"
 	"sort"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store/geo"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -25,7 +23,7 @@ import (
 //     other one not turned off; and it is active only while it holds its data.
 //   - The refreshes run at the intervals the settings surface has always set
 //     (refresh_interval_geoip_seconds, refresh_interval_public_suffix_list_seconds), each woken early
-//     by a save of its credentials; the placing pass runs at poll_interval_geo_lookup_seconds.
+//     by a save of its credentials; the placing is the provider plugin's own derivation (ADR 0020).
 //   - Which addresses need placing, never a non-public one, at most maxLookupsPerPass per pass, the
 //     answers stored in geo_asn against the provider and the build: every address is placed again
 //     when the active provider or its build changes.
@@ -38,13 +36,6 @@ const (
 	geolocationKind       = "ip_geolocation"
 	registrableDomainKind = "registrable_domain"
 )
-
-// maxLookupsPerPass bounds one placing pass, so a first pass over a large history does not hold the
-// database for minutes; the next pass carries on where it stopped.
-const maxLookupsPerPass = 20000
-
-// lookupBatch is how many addresses one call of a plugin's lookup is handed.
-const lookupBatch = 500
 
 // geoWakeChannel is the channel a save of the MaxMind credentials wakes the refresh with.
 func (c *ServiceCoordinator) geoWakeChannel() chan struct{} {
@@ -213,91 +204,6 @@ func (c *ServiceCoordinator) LoadServices(ctx context.Context) error {
 	return core.JoinErrors(failures)
 }
 
-// LocateAddresses places every public address the stored flows carry that has no answer from the
-// active provider's current build. With no dataset ready nothing is written: an unreachable
-// dataset produces neither answers nor misses. An address that is not public is never looked up
-// and never written, because no dataset places it and asking would record a miss that says nothing.
-func (c *ServiceCoordinator) LocateAddresses(ctx context.Context) error {
-	c.Services.Mutex.RLock()
-	key, dataset := c.Services.GeoKey, c.Services.Geo
-	c.Services.Mutex.RUnlock()
-	if key == "" || !provider.Flag(dataset, "ready", false) {
-		return nil
-	}
-	source, found := c.SourceSet.Lookup(geolocationKind, key)
-	if !found {
-		return nil
-	}
-	providerID, err := c.Store.ProviderID(ctx, geolocationKind, key)
-	if err != nil {
-		return err
-	}
-	addresses, err := c.Store.AddressesToGeolocate(ctx, providerID, provider.Integer(dataset, "build"))
-	if err != nil {
-		return err
-	}
-	var public []string
-	for _, text := range addresses {
-		if len(public) >= maxLookupsPerPass || ctx.Err() != nil {
-			break
-		}
-		address, err := netip.ParseAddr(text)
-		if err != nil || !isPublic(address) {
-			continue
-		}
-		public = append(public, text)
-	}
-	for start := 0; start < len(public); start += lookupBatch {
-		end := min(start+lookupBatch, len(public))
-		list := make([]any, 0, end-start)
-		for _, address := range public[start:end] {
-			list = append(list, address)
-		}
-		answer, _, err := source.Implementation.Call(ctx, c, "lookup", list)
-		if err != nil {
-			return err
-		}
-		build := provider.Integer(answer, "build")
-		asked := map[string]bool{}
-		for _, address := range public[start:end] {
-			asked[address] = true
-		}
-		now := c.Now()
-		for _, placed := range provider.Records(answer, "answers") {
-			address := provider.Text(placed, "address")
-			if !asked[address] {
-				continue
-			}
-			row := geo.GeoASN{
-				Address: address, ProviderID: providerID, LookupState: geo.GeoMiss,
-				CountryCode: provider.TextPointer(placed, "country_code"),
-				CountryName: provider.TextPointer(placed, "country_name"),
-				Latitude:    provider.NumberPointer(placed, "latitude"),
-				Longitude:   provider.NumberPointer(placed, "longitude"),
-				ASN:         provider.IntegerPointer(placed, "asn"), Operator: provider.TextPointer(placed, "operator"),
-				DatasetBuildAt: build, LookedUpAt: now,
-			}
-			if row.CountryCode != nil {
-				row.LookupState = geo.GeoResolved
-			}
-			if err := c.Store.UpsertGeoASN(ctx, row); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// isPublic is whether an address is worth asking a dataset about: a global unicast address that
-// is not in a private range. It is the standard library's classification, not a list kept here.
-func isPublic(address netip.Addr) bool {
-	address = address.Unmap()
-	return address.IsValid() && address.IsGlobalUnicast() && !address.IsPrivate()
-}
-
-// RefreshRegistrableDomains refreshes the active registrable_domain provider's list, records where
-// it stands, and records a failed refresh as a collection gap from the instant the list was last
-// confirmed current.
 func (c *ServiceCoordinator) RefreshRegistrableDomains(ctx context.Context) error {
 	if err := c.EnsureProviders(ctx); err != nil {
 		return err
@@ -395,12 +301,6 @@ func (c *ServiceCoordinator) ServiceTasks(settings *config.Live) []core.Task {
 			Run:        c.RefreshGeolocation,
 			RunAtStart: true,
 			Wake:       c.geoWakeChannel(),
-		},
-		{
-			Name:       "geolocation lookups",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.Interval(geolocationKind, provider.CadenceLookup) }),
-			Run:        c.LocateAddresses,
-			RunAtStart: true,
 		},
 		{
 			Name: "registrable domain list refresh",

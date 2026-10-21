@@ -19,7 +19,7 @@ function seed(t) {
     "first_seen_at, last_seen_at) VALUES " +
     "(10, 'mac', '00:11:22:33:44:55', 1, '00:11:22:33:44:55', '192.0.2.10', :at, :at), " +
     "(11, 'mac', '00:11:22:33:44:66', 1, '00:11:22:33:44:66', '192.0.2.11', :at, :at)", { at: at });
-  t.sql("INSERT INTO geo_asn (address, lookup_state, asn, operator, looked_up_at) " +
+  t.sql("INSERT INTO plugin_maxmind.geo_asn (address, lookup_state, asn, operator, looked_up_at) " +
     "VALUES ('203.0.113.7', 'miss', NULL, NULL, :at)", { at: at });
   var flow = function (id, client, address, destination, action, bytes) {
     t.sql("INSERT INTO plugin_pf.flow (id, log_digest, observed_at, ingested_at, interface_device, " +

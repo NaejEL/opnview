@@ -214,7 +214,6 @@ Places public addresses: each address's country, coordinates, autonomous system 
 |---|---|---|---|
 | `status` | `host` | `dataset_answer` | Called at start and after every refresh: whether a dataset is held, and its build. |
 | `refresh` | `host` | `dataset_answer` | Called at refresh_interval_geoip_seconds: acquire or update the dataset. |
-| `lookup` | `host, addresses` | `lookup_answer` | Called at poll_interval_geo_lookup_seconds with a batch of public addresses. |
 
 #### `dataset_answer`
 

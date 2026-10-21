@@ -1,6 +1,6 @@
 {
   "kind" : "ip_geolocation",
-  "description" : "Places public addresses: each address's country, coordinates, autonomous system and operator. One provider is active at a time. The core decides which addresses need placing -- never a non-public one -- stores the answers in geo_asn and places every address again when the active provider or its build changes.",
+  "description" : "Places public addresses: each address's country, coordinates, autonomous system and operator. One provider is active at a time. The core refreshes the provider's dataset on the refresh cadence; which addresses need placing, never a non-public one, and the rows placed are the provider plugin's own derivations and table (the maxmind plugin's plugin_maxmind.geo_asn, ADR 0020 wave 4).",
   "concurrent" : false,
   "push" : false,
   "bindable" : true,
@@ -10,12 +10,6 @@
       "setting" : "refresh_interval_geoip_seconds",
       "default_seconds" : 86400,
       "basis" : "Not a survey figure: MaxMind publishes no GeoLite2 release schedule on the pages read for step 4C, and a HEAD request, which is all a check costs when nothing changed, does not count against the 30 downloads a day a GeoLite account is allowed. Once a day keeps a new build well inside the 30 days the GeoLite EULA allows an old one to be used (specs/SPEC-maxmind-geolite2.md)."
-    },
-    {
-      "role" : "lookup",
-      "setting" : "poll_interval_geo_lookup_seconds",
-      "default_seconds" : 300,
-      "basis" : "opnview's own: a lookup reads a local file and contacts nothing, so the figure only bounds how long a new destination stays unplaced, and it matches the discovery cadence."
     }
   ],
   "service" : true,
@@ -31,12 +25,6 @@
       "name" : "refresh",
       "arguments" : "host",
       "returns" : "dataset_answer"
-    },
-    {
-      "description" : "Called at poll_interval_geo_lookup_seconds with a batch of public addresses.",
-      "name" : "lookup",
-      "arguments" : "host, addresses",
-      "returns" : "lookup_answer"
     }
   ],
   "records" : [
@@ -66,73 +54,6 @@
         {
           "description" : "Why the refresh failed, when it did.",
           "name" : "error",
-          "type" : "text"
-        }
-      ]
-    },
-    {
-      "description" : "What `lookup` returns.",
-      "name" : "lookup_answer",
-      "fields" : [
-        {
-          "description" : "The build the answers come from.",
-          "name" : "build",
-          "type" : "integer",
-          "required" : true,
-          "unit" : "UTC epoch seconds"
-        },
-        {
-          "description" : "One `geolocation` record per address asked about.",
-          "name" : "answers",
-          "type" : "records",
-          "required" : true,
-          "of" : "geolocation"
-        },
-        {
-          "description" : "Why the lookups failed, when they did.",
-          "name" : "error",
-          "type" : "text"
-        }
-      ]
-    },
-    {
-      "description" : "What the dataset says about one address.",
-      "name" : "geolocation",
-      "fields" : [
-        {
-          "description" : "The address asked about.",
-          "name" : "address",
-          "type" : "text",
-          "required" : true
-        },
-        {
-          "description" : "The ISO 3166-1 country code; absent is a miss.",
-          "name" : "country_code",
-          "type" : "text"
-        },
-        {
-          "description" : "The country's English name.",
-          "name" : "country_name",
-          "type" : "text"
-        },
-        {
-          "description" : "The latitude.",
-          "name" : "latitude",
-          "type" : "number"
-        },
-        {
-          "description" : "The longitude.",
-          "name" : "longitude",
-          "type" : "number"
-        },
-        {
-          "description" : "The autonomous system number.",
-          "name" : "asn",
-          "type" : "integer"
-        },
-        {
-          "description" : "The autonomous system's organisation.",
-          "name" : "operator",
           "type" : "text"
         }
       ]

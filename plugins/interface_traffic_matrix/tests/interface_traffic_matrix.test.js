@@ -27,7 +27,7 @@ function seed(t) {
     "VALUES (1, 'example-pass', 'Example pass rule', 'pass', :at)", { at: at });
   // The dataset that placed the addresses is the geolocation provider the installation registered.
   var provider = "(SELECT id FROM provider WHERE kind = 'ip_geolocation' ORDER BY id LIMIT 1)";
-  t.sql("INSERT INTO geo_asn (address, provider_id, lookup_state, country_code, country_name, latitude, " +
+  t.sql("INSERT INTO plugin_maxmind.geo_asn (address, provider_id, lookup_state, country_code, country_name, latitude, " +
     "longitude, asn, operator, dataset_build_at, looked_up_at) VALUES " +
     "('203.0.113.7', " + provider + ", 'resolved', 'FR', 'France', 48.85, 2.35, 64500, " +
     "'Example Operator', :build, :at), " +

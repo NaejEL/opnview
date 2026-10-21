@@ -109,7 +109,6 @@ func TestASettingRowOverridesEveryPollInterval(t *testing.T) {
 		KeyDiscoveryInterval:                   "900",
 		KeyPurgeInterval:                       "1800",
 		"refresh_interval_geoip_seconds":       "43200",
-		"poll_interval_geo_lookup_seconds":     "60",
 	}}
 	loaded, err := Load(context.Background(), table)
 	if err != nil {
@@ -130,7 +129,6 @@ func TestASettingRowOverridesEveryPollInterval(t *testing.T) {
 		"runtime discovery":   {loaded.DiscoveryInterval, 900 * time.Second},
 		"retention purge":     {loaded.PurgeInterval, 1800 * time.Second},
 		"MaxMind refresh":     {loaded.Interval("ip_geolocation", "refresh"), 43200 * time.Second},
-		"geolocation lookups": {loaded.Interval("ip_geolocation", "lookup"), 60 * time.Second},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("the %s interval is %v, want %v", name, pair[0], pair[1])

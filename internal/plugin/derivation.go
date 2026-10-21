@@ -140,10 +140,13 @@ func checkDerivations(plugin *Plugin, exports map[string]map[string]string, prov
 		}
 		for _, after := range declaration.AfterDerivations {
 			requiredPlugin, requiredDerivation, scoped := strings.Cut(after, "/")
+			// A derivation of a required plugin, or an earlier derivation of this plugin: its own name, which
+			// orders two of its derivations (ADR 0020 wave 4: maxmind places after it marked).
+			own := requiredPlugin == manifest.Name
 			if !scoped || !contract.NamePattern.MatchString(requiredPlugin) || !contract.NamePattern.MatchString(requiredDerivation) ||
-				!slices.Contains(manifest.Requires, requiredPlugin) {
+				!(own || slices.Contains(manifest.Requires, requiredPlugin)) {
 				return nil, refuse("the derivation %s runs after %q, which is not <plugin>/<derivation> of a plugin the "+
-					"manifest requires", declaration.Name, after)
+					"manifest requires, nor of this plugin", declaration.Name, after)
 			}
 		}
 		if declaration.CadenceSeconds < 0 {

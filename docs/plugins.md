@@ -524,7 +524,7 @@ measure's per-connection figures, a summary table, counters. It is a function th
 | `after_push` | The plugin's own push entries whose stored batches run it. |
 | `cadence_seconds` | Runs it on a cadence too; 0 runs it on its other triggers alone. At least one trigger is named. |
 | `datasets` | The datasets it reads, each also under the manifest's `datasets` (*Datasets a plugin reads*). |
-| `after_derivations` | Derivations of required plugins that run it, each `<plugin>/<derivation>`, after each successful run of theirs (*Requires*). |
+| `after_derivations` | Derivations that run it, each `<plugin>/<derivation>`, after each successful run of theirs: of a required plugin (*Requires*), or of this plugin, which orders two of its own. |
 | `statements` | Makes the derivation **SQL-only**: the plugin's statements it runs, in this order, each handed `:since` and `:now`, the core's values `:held_margin` (the discovery interval), `:leg_pairing_window` and `:retention` (the installation's retention in seconds, 0 for unlimited), and the plugin's own integer settings as `:setting_<key>`, inside its one transaction, with no script function at all (*Statements*). Exclusive with `function`. |
 | `outputs` | What it may write: tables of the plugin's own, each with a primary key (counter tables among them, *Tables*), measures the plugin declares (*Measures*), and `statements` a script run may return to run. |
 
