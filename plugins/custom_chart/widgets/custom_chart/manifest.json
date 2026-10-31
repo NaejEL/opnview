@@ -75,7 +75,8 @@
     "site"
   ],
   "queries": [
-    "custom_chart.statements.sql"
+    "custom_chart.statements.sql",
+    "installation.statements.sql"
   ],
   "script": "custom_chart.js",
   "renderer": {

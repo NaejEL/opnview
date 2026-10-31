@@ -112,7 +112,7 @@ function sampledCount(host, chips) {
 
 exports.widget = {
   serve: function (host) {
-    var owners = host.installation.owners();
+    var owners = host.lib.figures.installation.owners(host);
     if (owners.length === 0) {
       host.envelope.override(host.envelope.conditions.no_owner_exists);
     }
@@ -240,7 +240,7 @@ exports.widget = {
       }
       var members = [];
       host.query.rows("widget_owner_activity_clients_of_owner", { owner_id: owner.id }).forEach(function (row) {
-        var info = host.installation.client(row.client_id);
+        var info = host.lib.figures.installation.client(host, row.client_id);
         if (info !== null) {
           members.push(info);
         }
@@ -253,7 +253,7 @@ exports.widget = {
     if (includeUnassigned && selected === null) {
       var unassigned = [];
       volumes.forEach(function (volume) {
-        var info = host.installation.client(volume.client_id);
+        var info = host.lib.figures.installation.client(host, volume.client_id);
         if (info !== null && info.owner_id === null) {
           unassigned.push(info);
         }

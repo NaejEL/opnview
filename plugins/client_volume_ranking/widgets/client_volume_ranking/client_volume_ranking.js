@@ -32,7 +32,7 @@ exports.widget = {
     var excludedSum = host.figures.zero();
     var total = host.figures.zero();
     volumes.forEach(function (volume) {
-      var info = host.installation.client(volume.client_id);
+      var info = host.lib.figures.installation.client(host, volume.client_id);
       if (info === null) {
         return;
       }
@@ -45,7 +45,7 @@ exports.widget = {
         excludedSum = host.figures.add(excludedSum, volume.figures);
         return;
       }
-      var iface = info.interface_id === null ? null : host.installation.interface(info.interface_id);
+      var iface = info.interface_id === null ? null : host.lib.figures.installation.interface(host, info.interface_id);
       // The members in the order a bar has always been written in.
       var bar = {
         client: info,

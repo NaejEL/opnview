@@ -98,7 +98,8 @@
     "interface"
   ],
   "queries": [
-    "traffic_sankey.statements.sql"
+    "traffic_sankey.statements.sql",
+    "installation.statements.sql"
   ],
   "script": "traffic_sankey.js",
   "renderer": {

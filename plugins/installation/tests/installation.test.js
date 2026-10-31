@@ -46,3 +46,27 @@ test("a client's randomised MAC is generated, and a client is owned only with th
     } catch (error) { refused = true; }
     t.assert(refused, "an owner without its assignment instant is refused by the check");
   });
+
+test("the four views name an interface, a client, an owner and a rule as a response does", function (t) {
+  t.sql("INSERT INTO plugin_installation.interface (identifier, device, description, link_type, link_kind, " +
+    "user_label, vlan_tag, is_upstream, first_seen_at, last_seen_at) VALUES " +
+    "('lan', 'vlan01', 'LAN', 'vlan', 'vlan', '', 1, false, 1790000000, 1790000000), " +
+    "('wan', 'wg0', 'WAN', 'wireguard', 'tunnel', 'Fibre', NULL, true, 1790000000, 1790000000)");
+  var interfaces = t.query("SELECT * FROM plugin_installation.interface_label ORDER BY id");
+  t.equal(interfaces.length, 2, "two interfaces");
+  t.equal(interfaces[0].label, "LAN", "an empty user label falls back to the description");
+  t.equal(interfaces[0].labelled, false, "and is not labelled");
+  t.equal(interfaces[1].label, "Fibre", "the user's label where one is set");
+  t.equal(interfaces[1].labelled, true, "labelled");
+  t.equal(interfaces[1].upstream, true, "upstream is a boolean");  t.sql("INSERT INTO plugin_installation.owner (display_name, created_at, updated_at) VALUES ('Jean', 1790000000, 1790000000)");
+  t.sql("INSERT INTO plugin_installation.client (identity_kind, identity_key, interface_id, mac, hostname, last_address, owner_id, " +
+    "owner_assigned_at, first_seen_at, last_seen_at) VALUES ('mac', '02:00:00:00:00:01', 1, '02:00:00:00:00:01', 'laptop', " +
+    "'192.0.2.10', 1, 1790000100, 1790000000, 1790000200)");
+  var client = t.query("SELECT * FROM plugin_installation.client_name WHERE id = 1")[0];
+  t.equal(client.unstable_identity, true, "a locally-administered MAC is an unstable identity, as a boolean");
+  t.equal(client.owner_id, 1, "its owner");  t.equal(t.query("SELECT * FROM plugin_installation.owner_name")[0].display_name, "Jean", "the owner's name");
+  t.sql("INSERT INTO plugin_installation.rule (pf_label, description, action, is_automatic, discovered_at) " +
+    "VALUES ('allow lan', 'Allow LAN out', 'pass', false, 1790000000)");
+  var rule = t.query("SELECT * FROM plugin_installation.rule_label")[0];
+  t.equal(rule.automatic, false, "automatic is a boolean");
+});

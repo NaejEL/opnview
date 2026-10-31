@@ -133,7 +133,7 @@ function newSlice(fields) {
 
 // interfaceSlice is the slice of an inside interface: named when the interface is known.
 function interfaceSlice(host, id) {
-  var info = host.installation.interface(id);
+  var info = host.lib.figures.installation.interface(host, id);
   return newSlice({ "interface": info === null ? undefined : info });
 }
 
@@ -159,7 +159,7 @@ function partMember(host, groupBy, part) {
     if (part.client_id === null) {
       return null;
     }
-    var info = host.installation.client(part.client_id);
+    var info = host.lib.figures.installation.client(host, part.client_id);
     return { key: host.figures.clientKey(part.client_id), slice: newSlice({ client: info === null ? undefined : info }) };
   }
   if (part.interface_id === null) {
@@ -289,7 +289,7 @@ exports.widget = {
     if (groupBy === "client") {
       whole = "traffic_with_an_inside_client";
       host.clients.volumes().clients.forEach(function (volume) {
-        var info = host.installation.client(volume.client_id);
+        var info = host.lib.figures.installation.client(host, volume.client_id);
         if (info === null || (clients !== null && !clients[volume.client_id]) ||
           (interfaces !== null && (info.interface_id === null || !interfaces[info.interface_id]))) {
           return;

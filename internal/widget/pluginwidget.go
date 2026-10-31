@@ -36,13 +36,19 @@ import (
 // a session or a setting row (RefusalQueryReadsCredential, the HTTP API's data-leak guard). Whether
 // it reads a column carrying a domain name is recorded, and its host reports it.
 //
-// A BUILT-IN PLUGIN'S STATEMENTS KEEP THEIR NAMES. They are registered once per process under the
-// owner widget:<type>, so sql/schema-checks.sh plans the same texts and the statement checks of the suite see them. A third
-// party's are registered under names of their own each time a service loads them, as an operator
-// query is, so two services over two data directories never meet in the registry.
+// A BUILT-IN PLUGIN'S STATEMENTS ARE REGISTERED ONCE PER PROCESS, under the owner widget:<type>,
+// each under its declared name joined to its widget's type, so two built-in widgets may declare a
+// statement of the same name and neither meets the core's own. A third party's are registered
+// under names of their own each time a service loads them, as an operator query is, so two
+// services over two data directories never meet in the registry. A script calls a statement by the
+// name its file gives it either way.
 
-// pluginStatementSeparator joins a third party's statement name to its registration's sequence.
-const pluginStatementSeparator = "__p"
+// pluginStatementSeparator joins a third party's statement name to its registration's sequence;
+// builtinStatementSeparator joins a built-in's to its widget's type.
+const (
+	pluginStatementSeparator  = "__p"
+	builtinStatementSeparator = "__w_"
+)
 
 // checkedStatement is what the load-time check found of one text.
 type checkedStatement struct {
@@ -239,7 +245,15 @@ func pluginWidgetStatements(ctx context.Context, database *store.Store, source S
 	}
 
 	owner := "widget:" + name
-	if !source.Builtin {
+	if source.Builtin {
+		// Registered apart per widget: two widgets may declare a statement of the same name -- the
+		// installation reads the figures library runs are declared by every widget naming a member
+		// (ADR 0021) -- and the script keeps calling it by the name its file gives it.
+		for statement, held := range statements {
+			held.Registered = fmt.Sprintf("%s%s%s", statement, builtinStatementSeparator, name)
+			statements[statement] = held
+		}
+	} else {
 		sequence := pluginSequence.Add(1)
 		owner = fmt.Sprintf("plugin:%s/%s#%d", source.Plugin, name, sequence)
 		for statement, held := range statements {

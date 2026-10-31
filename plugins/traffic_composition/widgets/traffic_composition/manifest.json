@@ -120,7 +120,8 @@
     "interface"
   ],
   "queries": [
-    "traffic_composition.statements.sql"
+    "traffic_composition.statements.sql",
+    "installation.statements.sql"
   ],
   "script": "traffic_composition.js",
   "renderer": {

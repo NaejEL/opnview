@@ -211,13 +211,13 @@ exports.widget = {
     // names them by the data and never by an id.
     var named = { clients: [], interfaces: [] };
     sortedIds(clientIds).forEach(function (id) {
-      var info = host.installation.client(id);
+      var info = host.lib.figures.installation.client(host, id);
       if (info !== null) {
         named.clients.push(info);
       }
     });
     sortedIds(interfaceIds).forEach(function (id) {
-      var info = host.installation.interface(id);
+      var info = host.lib.figures.installation.interface(host, id);
       if (info !== null) {
         named.interfaces.push(info);
       }

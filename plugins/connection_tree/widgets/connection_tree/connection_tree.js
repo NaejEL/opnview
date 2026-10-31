@@ -127,17 +127,17 @@ function labelNode(host, node) {
   var numeric = /^[+-]?[0-9]+$/.test(value);
   var id = numeric ? Number(value) : 0;
   if (prefix === "interface" && numeric) {
-    var info = host.installation.interface(id);
+    var info = host.lib.figures.installation.interface(host, id);
     if (info !== null) {
       node.interface = info;
     }
   } else if (prefix === "client" && numeric) {
-    var client = host.installation.client(id);
+    var client = host.lib.figures.installation.client(host, id);
     if (client !== null) {
       node.client = client;
     }
   } else if (prefix === "owner" && numeric) {
-    host.installation.owners().forEach(function (owner) {
+    host.lib.figures.installation.owners(host).forEach(function (owner) {
       if (owner.id === id) {
         node.owner = owner;
       }

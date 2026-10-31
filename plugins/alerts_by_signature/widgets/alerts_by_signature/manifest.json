@@ -89,7 +89,8 @@
     "provider"
   ],
   "queries": [
-    "alerts_by_signature.statements.sql"
+    "alerts_by_signature.statements.sql",
+    "installation.statements.sql"
   ],
   "script": "alerts_by_signature.js"
 }

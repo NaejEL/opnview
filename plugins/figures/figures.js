@@ -348,3 +348,66 @@ exports.specialpurpose = {
   },
   registries: ["iana-ipv4-special-registry", "iana-ipv6-special-registry"]
 };
+
+// ---- installation: what a response names its members by -- this installation's interfaces,
+// clients, owners and rules -- read once per request through the widget's own statements over the
+// installation plugin's views (plugins/installation/installation.relations.sql), which the widget
+// declares under these names:
+//
+//   -- statement: widget_installation_interfaces   SELECT * FROM plugin_installation.interface_label ORDER BY id;
+//   -- statement: widget_installation_client       SELECT * FROM plugin_installation.client_name WHERE id = :client_id;
+//   -- statement: widget_installation_owners       SELECT * FROM plugin_installation.owner_name ORDER BY id;
+//   -- statement: widget_installation_rule         SELECT * FROM plugin_installation.rule_label WHERE id = :rule_id;
+//
+// Each function takes the host and reads through host.query; a library is evaluated once per
+// request, so what it read is kept for the request and read once.
+var INSTALLATION = { interfaces: null, byId: null, clients: {}, owners: null, rules: {} };
+
+function hostOf(host) {
+  if (host === null || typeof host !== "object" || !host.query) throw new TypeError("the host is " + describe(host) + ", not the widget's host");
+  return host;
+}
+
+function readInterfaces(host) {
+  if (INSTALLATION.interfaces === null) {
+    INSTALLATION.interfaces = hostOf(host).query.rows("widget_installation_interfaces", {});
+    INSTALLATION.byId = {};
+    INSTALLATION.interfaces.forEach(function (info) { INSTALLATION.byId[info.id] = info; });
+  }
+  return INSTALLATION.interfaces;
+}
+
+exports.installation = {
+  // interfaces are every interface: [{id, identifier, device, description, user_label, label,
+  // labelled, link_kind, vlan_tag, upstream}].
+  interfaces: function (host) { return readInterfaces(host); },
+  // interface is one interface by id, or null.
+  interface: function (host, id) {
+    readInterfaces(host);
+    whole(id, "the interface id");
+    var info = INSTALLATION.byId[id];
+    return info === undefined ? null : info;
+  },
+  // client is one client, {id, identity_kind, identity_key, interface_id, mac, hostname,
+  // last_address, owner_id, owner_assigned_at, unstable_identity, last_seen_at}, or null.
+  client: function (host, id) {
+    whole(id, "the client id");
+    if (!Object.prototype.hasOwnProperty.call(INSTALLATION.clients, id)) {
+      INSTALLATION.clients[id] = hostOf(host).query.row("widget_installation_client", { client_id: id });
+    }
+    return INSTALLATION.clients[id];
+  },
+  // owners are every owner: [{id, display_name}].
+  owners: function (host) {
+    if (INSTALLATION.owners === null) INSTALLATION.owners = hostOf(host).query.rows("widget_installation_owners", {});
+    return INSTALLATION.owners;
+  },
+  // rule is one rule, {id, pf_label, description, action, automatic}, or null.
+  rule: function (host, id) {
+    whole(id, "the rule id");
+    if (!Object.prototype.hasOwnProperty.call(INSTALLATION.rules, id)) {
+      INSTALLATION.rules[id] = hostOf(host).query.row("widget_installation_rule", { rule_id: id });
+    }
+    return INSTALLATION.rules[id];
+  }
+};

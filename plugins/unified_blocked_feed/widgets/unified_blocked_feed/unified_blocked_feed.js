@@ -107,7 +107,7 @@ exports.widget = {
           if (row.engine_reference !== null) {
             var found = host.query.row("widget_feed_rule_by_pf_label", { value: row.engine_reference });
             if (found !== null) {
-              var rule = host.installation.rule(found.id);
+              var rule = host.lib.figures.installation.rule(host, found.id);
               decidedBy.kind = "rule";
               if (rule !== null) {
                 decidedBy.rule = rule;
@@ -142,7 +142,7 @@ exports.widget = {
         engine_kind: row.engine_kind,
         decided_by: decidedBy,
         client_id: row.client_id,
-        interface: row.interface_id === null ? null : host.installation.interface(row.interface_id),
+        interface: row.interface_id === null ? null : host.lib.figures.installation.interface(host, row.interface_id),
         target: target,
         target_kind: row.target_kind,
         // An address target's port and protocol, null where the record logged none and for a

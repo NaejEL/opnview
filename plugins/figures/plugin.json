@@ -3,6 +3,6 @@
   "name": "figures",
   "version": "1.0.0",
   "display_name": "Figures",
-  "description": "The arithmetic every widget shares, as a library the widget plugins require (ADR 0021): the time buckets of a windowed series, the slots of the pre-computed periods, the allowed and the blocked half of summable figures, the keys of the interface matrix's outside ends, and the IANA special-purpose address registries. It reads nothing and draws nothing; a widget calls host.lib.figures.<area>.<function>.",
+  "description": "The arithmetic every widget shares, as a library the widget plugins require (ADR 0021): the time buckets of a windowed series, the slots of the pre-computed periods, the allowed and the blocked half of summable figures, the keys of the interface matrix's outside ends, the IANA special-purpose address registries, and the installation's members as a response names them, read once per request through the widget's own statements over the installation plugin's views. It draws nothing and reads only through the host it is handed; a widget calls host.lib.figures.<area>.<function>.",
   "libraries": ["figures.js"]
 }

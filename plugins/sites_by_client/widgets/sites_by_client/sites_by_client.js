@@ -124,7 +124,7 @@ exports.widget = {
     var measured = host.figures.measure !== host.figures.measures.logged;
     var answer = [];
     ids.forEach(function (id) {
-      var info = host.installation.client(id);
+      var info = host.lib.figures.installation.client(host, id);
       if (info === null || (clients !== null && clients.indexOf(id) < 0) ||
         (interfaces !== null && (info.interface_id === null || interfaces.indexOf(info.interface_id) < 0))) {
         return;

@@ -80,7 +80,8 @@
     "interface"
   ],
   "queries": [
-    "unified_blocked_feed.statements.sql"
+    "unified_blocked_feed.statements.sql",
+    "installation.statements.sql"
   ],
   "script": "unified_blocked_feed.js",
   "renderer": {

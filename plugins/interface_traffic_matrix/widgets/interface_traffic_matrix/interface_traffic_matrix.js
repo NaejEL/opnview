@@ -36,7 +36,7 @@ function placement(host, src, dst, direction) {
 exports.widget = {
   serve: function (host) {
     var volume = host.volume.window();
-    var interfaces = host.installation.interfaces();
+    var interfaces = host.lib.figures.installation.interfaces(host);
     var keys = host.lib.figures.matrixplacement.keys;
     var scope = host.params.text("scope");
     var measure = host.params.text("measure");

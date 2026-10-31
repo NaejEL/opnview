@@ -88,7 +88,8 @@
     "owner"
   ],
   "queries": [
-    "owner_activity.statements.sql"
+    "owner_activity.statements.sql",
+    "installation.statements.sql"
   ],
   "script": "owner_activity.js",
   "renderer": {

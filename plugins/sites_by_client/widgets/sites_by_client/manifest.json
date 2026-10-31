@@ -65,7 +65,9 @@
     "client",
     "interface"
   ],
-  "queries": [],
+  "queries": [
+    "installation.statements.sql"
+  ],
   "script": "sites_by_client.js",
   "renderer": {
     "entry": "renderer.js"

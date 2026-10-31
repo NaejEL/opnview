@@ -107,7 +107,8 @@
     "owner"
   ],
   "queries": [
-    "connection_tree.statements.sql"
+    "connection_tree.statements.sql",
+    "installation.statements.sql"
   ],
   "script": "connection_tree.js",
   "renderer": {

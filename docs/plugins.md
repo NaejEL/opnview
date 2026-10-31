@@ -652,9 +652,12 @@ it is handed nothing of the host, and what it needs it takes as arguments. Readi
 
 The built-in `figures` is the worked example: it ships `figures.js` and nothing else, and the
 widget plugins that cut a series into time buckets, name a period's slot, keep the allowed or the
-blocked half of summable figures, place the interface matrix's outside ends or classify an address
-against the IANA special-purpose registries `require` it and call
-`host.lib.figures.<area>.<function>`. Its tests, `plugins/figures/tests`, show how a library is
+blocked half of summable figures, place the interface matrix's outside ends, classify an address
+against the IANA special-purpose registries or name the installation's interfaces, clients, owners
+and rules `require` it and call `host.lib.figures.<area>.<function>`. The installation helpers read
+through the host they are handed: the widget declares the one-line statements they run, over the
+installation plugin's views `interface_label`, `client_name`, `owner_name` and `rule_label`, under
+the names `figures.js` documents. Its tests, `plugins/figures/tests`, show how a library is
 tested: `t.lib` is `host.lib` as the plugin's scripts see it.
 
 ## Testing a plugin

@@ -13,7 +13,7 @@ exports.widget = {
     var wanted = host.params.text("direction");
     var series = [];
     var hasRows = false;
-    host.installation.interfaces().forEach(function (info) {
+    host.lib.figures.installation.interfaces(host).forEach(function (info) {
       if (selected !== null && selected.indexOf(info.id) < 0) {
         return;
       }

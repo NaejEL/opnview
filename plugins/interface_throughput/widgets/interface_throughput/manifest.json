@@ -68,7 +68,9 @@
   "references": [
     "interface"
   ],
-  "queries": [],
+  "queries": [
+    "installation.statements.sql"
+  ],
   "script": "interface_throughput.js",
   "renderer": {
     "entry": "renderer.js"

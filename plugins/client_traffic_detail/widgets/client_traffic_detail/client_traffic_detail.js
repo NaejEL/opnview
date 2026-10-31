@@ -31,7 +31,7 @@ exports.widget = {
       return { data: null, has_rows: false };
     }
     var clientId = ids[0];
-    var info = host.installation.client(clientId);
+    var info = host.lib.figures.installation.client(host, clientId);
     if (info === null) {
       return { data: null, has_rows: false };
     }

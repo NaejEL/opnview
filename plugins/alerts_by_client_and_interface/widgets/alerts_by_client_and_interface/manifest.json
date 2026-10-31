@@ -79,7 +79,8 @@
     "interface"
   ],
   "queries": [
-    "alerts_by_client_and_interface.statements.sql"
+    "alerts_by_client_and_interface.statements.sql",
+    "installation.statements.sql"
   ],
   "script": "alerts_by_client_and_interface.js"
 }

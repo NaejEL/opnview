@@ -47,7 +47,7 @@ exports.widget = {
     var historyLimit = host.params.integer("history_limit");
     var upstreams = [];
     host.addresses.upstreams().forEach(function (upstream) {
-      var info = host.installation.interface(upstream.interface_id);
+      var info = host.lib.figures.installation.interface(host, upstream.interface_id);
       var entry = { interface: info === null ? unknownInterface() : info, current: [] };
       var held = [];
       var behind = null;

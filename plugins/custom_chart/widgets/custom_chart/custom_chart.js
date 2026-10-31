@@ -161,7 +161,7 @@ function fillThroughput(host, line, entry, index, width) {
   setCovered(host, line.window, clipped(host, host.envelope.earliest("widget_earliest_sample")));
   var scoped = host.refs.entry(index, "interface");
   var points = [];
-  host.installation.interfaces().forEach(function (info) {
+  host.lib.figures.installation.interfaces(host).forEach(function (info) {
     if (scoped !== null && scoped.id !== info.id) {
       return;
     }

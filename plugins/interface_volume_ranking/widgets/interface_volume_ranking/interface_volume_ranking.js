@@ -25,7 +25,7 @@ function newParts() {
 exports.widget = {
   serve: function (host) {
     var window = host.volume.window();
-    var interfaces = host.installation.interfaces();
+    var interfaces = host.lib.figures.installation.interfaces(host);
     var byId = {};
     var byDevice = {};
     interfaces.forEach(function (info) {

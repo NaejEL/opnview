@@ -133,7 +133,7 @@ exports.widget = {
         }
         if (right === "interface" && far !== null) {
           rightKey = host.figures.interfaceKey(far);
-          var known = host.installation.interface(far);
+          var known = host.lib.figures.installation.interface(host, far);
           if (known !== null) {
             nodes[rightKey] = node(rightKey, known, null, null, null, null);
           }
@@ -168,11 +168,11 @@ exports.widget = {
       if (!has(nodes, flow.left)) {
         var iface = null;
         if (flow.leftIface !== null && left === "interface") {
-          iface = host.installation.interface(flow.leftIface);
+          iface = host.lib.figures.installation.interface(host, flow.leftIface);
         }
         var client = null;
         if (flow.leftClient !== null) {
-          client = host.installation.client(flow.leftClient);
+          client = host.lib.figures.installation.client(host, flow.leftClient);
         }
         nodes[flow.left] = node(flow.left, iface, client, null, null, null);
       }
