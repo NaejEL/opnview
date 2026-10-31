@@ -4,6 +4,8 @@ import (
 	"context"
 	"io/fs"
 	"sync"
+
+	"github.com/NaejEL/opnview/internal/plugin/library"
 )
 
 // The widgets plugins carry.
@@ -34,6 +36,9 @@ type Source struct {
 	// Datasets are the data-catalogue names its plugin's manifest declares under `datasets`: what its script may
 	// read through host.datasets, beside its own plugin's tables (PA3 of the plugin-API amendment).
 	Datasets []string
+	// Libraries are the libraries its script may use, bound under host.lib: its plugin's own and those of
+	// the plugins it requires (ADR 0021).
+	Libraries []library.Library
 }
 
 var builtinSources = struct {

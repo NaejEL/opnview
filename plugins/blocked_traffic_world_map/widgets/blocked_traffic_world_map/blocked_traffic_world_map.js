@@ -56,7 +56,7 @@ exports.widget = {
           !host.peers.keepInterface(selected, row)) {
           return;
         }
-        var blocked = host.mapfilters.blockedOnly(row);
+        var blocked = host.lib.figures.mapfilters.blockedOnly(row);
         hasRows = true;
         if (row.peer_address === null) {
           bins.add(reasons.east_west, blocked, 0);

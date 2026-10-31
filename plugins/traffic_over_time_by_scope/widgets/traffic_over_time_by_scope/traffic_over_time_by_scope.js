@@ -6,7 +6,7 @@
 exports.widget = {
   serve: function (host) {
     var window = host.request.window;
-    var width = host.buckets.width();
+    var width = host.lib.figures.buckets.width(host.params.text("period"));
     var traffic = host.series.traffic({ interfaces: host.refs.ids("interfaces") }, width);
     host.envelope.cover(traffic.covered);
     host.envelope.hourFreshness(window.from, window.to);
@@ -16,7 +16,7 @@ exports.widget = {
     var report = host.series.window();
     var gaps = host.envelope.gaps();
     var condition = host.envelope.kindCondition("firewall_log");
-    var intervals = host.buckets.intervals(window, width);
+    var intervals = host.lib.figures.buckets.intervals(window, width);
     var series = [];
     var hasRows = false;
     (host.params.set("scopes") || []).forEach(function (scope) {
@@ -38,11 +38,11 @@ exports.widget = {
       };
       var total = host.figures.zero();
       intervals.forEach(function (bucket) {
-        var start = bucket.from - host.buckets.floorMod(bucket.from, width);
+        var start = bucket.from - host.lib.figures.buckets.floorMod(bucket.from, width);
         var directions = traffic.buckets[start];
         var present = directions !== undefined && directions[scope] !== undefined;
         var sums = present ? directions[scope] : host.figures.zero();
-        var gap = host.buckets.isGap(bucket, traffic.covered, gaps);
+        var gap = host.lib.figures.buckets.isGap(bucket, traffic.covered, gaps);
         var entry = { from: bucket.from, to: bucket.to, gap: gap, value: null };
         if (present || !gap) {
           entry.value = host.figures.value(measure, sums);

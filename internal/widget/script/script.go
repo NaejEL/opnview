@@ -11,6 +11,7 @@ import (
 
 	"github.com/dop251/goja"
 
+	"github.com/NaejEL/opnview/internal/plugin/library"
 	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
@@ -77,6 +78,8 @@ type ScriptWidget struct {
 	// Datasets are the dataset names the widget's plugin declares (DatasetsAdmitted): host.datasets refuses any
 	// other with dataset_not_declared.
 	Datasets map[string]bool
+	// Libraries are the libraries the script may use, bound under host.lib (ADR 0021).
+	Libraries []library.Library
 }
 
 // CompileWidgetScript compiles a widget's script and runs it once, in a runtime of its own, to see
@@ -147,6 +150,11 @@ func (w *ScriptWidget) Serve(r *request.Request) (data any, hasRows bool, err er
 		r.ScriptLog(plugin, message, func(plugin, message string) { ScriptLogger(plugin, message) })
 	})
 	call := newScriptCall(r, vm, w)
+	lib, err := library.Bind(vm, w.Libraries)
+	if err != nil {
+		return nil, false, &request.ScriptError{Plugin: w.Plugin, Type: r.Preset.Type, Detail: err.Error()}
+	}
+	call.lib = lib
 	finished := make(chan struct{})
 	defer close(finished)
 	go func() {

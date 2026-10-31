@@ -71,6 +71,8 @@ type ScriptCall struct {
 	// as Go writes a map's (internal/widget/hostareas/values/host_json.go, script_json.go).
 	MapMarker *goja.Symbol
 	parse     goja.Callable
+	// lib is host.lib: the libraries the widget's plugin may use (ADR 0021), bound before the script runs.
+	lib *goja.Object
 }
 
 // newScriptCall prepares one request's host.
@@ -96,6 +98,9 @@ func (c *ScriptCall) host() *goja.Object {
 		object := c.VM.NewObject()
 		area.install(c, object)
 		_ = host.Set(area.name, object)
+	}
+	if c.lib != nil {
+		_ = host.Set("lib", c.lib)
 	}
 	return host
 }

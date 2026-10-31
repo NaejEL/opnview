@@ -140,6 +140,11 @@ const (
 	// RefusalRequiresMissing is a plugin the manifest requires that is absent, refused, or requires this one
 	// back (ADR 0018).
 	RefusalRequiresMissing = "requires_missing"
+	// RefusalLibraryMissing is a library file the manifest lists that cannot be read (ADR 0021).
+	RefusalLibraryMissing = "library_missing"
+	// RefusalLibraryDoesNotCompile is a library file that is not valid JavaScript, or fails while defining
+	// its exports (ADR 0021).
+	RefusalLibraryDoesNotCompile = "library_does_not_compile"
 )
 
 // Refusal is one plugin the loader would not load, with its closed code.

@@ -27,13 +27,13 @@ var maxBuckets = 1000;
 // bucketCount is how many buckets of a width a window is cut into: the UTC-aligned buckets that
 // meet it.
 function bucketCount(host, window, width) {
-  var start = window.from - host.buckets.floorMod(window.from, width);
+  var start = window.from - host.lib.figures.buckets.floorMod(window.from, width);
   return Math.ceil((window.to - start) / width);
 }
 
 // chooseWidth is the width the series are cut at, and whether it is coarser than the one asked.
 function chooseWidth(host, window, asked) {
-  var width = asked === "auto" || widths[asked] === undefined ? host.buckets.width() : widths[asked];
+  var width = asked === "auto" || widths[asked] === undefined ? host.lib.figures.buckets.width(host.params.text("period")) : widths[asked];
   if (bucketCount(host, window, width) <= maxBuckets) {
     return { width: width, coarsened: false };
   }
@@ -121,7 +121,7 @@ exports.widget = {
     });
 
     var gaps = host.envelope.gaps();
-    var intervals = host.buckets.intervals(window, width);
+    var intervals = host.lib.figures.buckets.intervals(window, width);
     var out = [];
     severityOrder.forEach(function (severity) {
       var series = bySeverity[severity];
@@ -129,9 +129,9 @@ exports.widget = {
         return;
       }
       var buckets = intervals.map(function (interval) {
-        var start = interval.from - host.buckets.floorMod(interval.from, width);
+        var start = interval.from - host.lib.figures.buckets.floorMod(interval.from, width);
         var present = Object.prototype.hasOwnProperty.call(series.buckets, String(start));
-        var gap = host.buckets.isGap(interval, covered, gaps);
+        var gap = host.lib.figures.buckets.isGap(interval, covered, gaps);
         var value = null;
         if (present) {
           value = eventCount(series.buckets[start]);

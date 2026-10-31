@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"github.com/dop251/goja"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +25,7 @@ import (
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/plugin/fetch"
+	"github.com/NaejEL/opnview/internal/plugin/library"
 	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/store"
@@ -97,6 +100,11 @@ type Options struct {
 
 	// pushes is what the load's push entries share, set by Load.
 	pushes *pushHost
+	// Libraries are the libraries every plugin of one load ships, shared by the LoadOne calls of that
+	// load so a plugin finds the libraries of the plugins it requires: Load creates them, and the
+	// harness, which loads a plugin and what it requires one by one, hands one of its own. Nil is a
+	// load of one plugin with no library to use but its own.
+	Libraries *Libraries
 	// catalogue is the data catalogue the load's scripts read, set by Load.
 	catalogue *catalogueHolder
 	// parameters supplies the core's values to SQL-only derivations, set by Load.
@@ -146,6 +154,9 @@ type Plugin struct {
 	datasets []dataset.Declaration
 	// Widgets are the widgets it carries, as the widget service loads them.
 	Widgets []widget.Source
+	// libraries are the libraries its scripts may use: its own and those of the plugins it requires
+	// (ADR 0021), bound under host.lib.
+	libraries []library.Library
 	// lives are its providers' live passes, by provider key (live.go).
 	lives map[string]*liveBinding
 	// pushes are its push entries (push.go), and pushHost the hub they are routed by once one runs.
@@ -318,6 +329,7 @@ func load(ctx context.Context, options Options) (*Loaded, error) {
 	}
 	options.pushes = loaded.push
 	options.catalogue = &catalogueHolder{loaded: loaded}
+	options.Libraries = NewLibraries()
 	loaded.parameters = &parameterHolder{}
 	loaded.parameters.set(options.DerivationParameters)
 	options.parameters = loaded.parameters
@@ -446,6 +458,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 	}
 	plugin.OwnTables, plugin.Tables = tables, tables
 	if refusal := checkRequires(manifest, taken); refusal != nil {
+		return nil, refusal
+	}
+	if refusal := loadLibraries(plugin, directory, options.Libraries); refusal != nil {
 		return nil, refusal
 	}
 	if plugin.grantedTables, refusal = grantedTables(ctx, plugin.Name, manifest, options.Store); refusal != nil {
@@ -641,6 +656,67 @@ func declaredEndpoints(manifest contract.Manifest) (map[string]opnsense.Endpoint
 	return endpoints, routes, nil
 }
 
+// Libraries are the libraries the plugins of one load ship, by plugin name (ADR 0021).
+type Libraries struct {
+	mutex   sync.Mutex
+	shipped map[string][]library.Library
+}
+
+// NewLibraries holds the libraries of one load.
+func NewLibraries() *Libraries { return &Libraries{shipped: map[string][]library.Library{}} }
+
+func (l *Libraries) add(plugin string, libraries []library.Library) {
+	if l == nil {
+		return
+	}
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	l.shipped[plugin] = libraries
+}
+
+func (l *Libraries) of(plugin string) []library.Library {
+	if l == nil {
+		return nil
+	}
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	return l.shipped[plugin]
+}
+
+// loadLibraries compiles the library files a manifest lists and records them for the plugins that
+// require this one; the plugin's own scripts may use its own libraries and those of every plugin it
+// requires, in the manifest's order of requires.
+func loadLibraries(plugin *Plugin, directory fs.FS, shipped *Libraries) *contract.Refusal {
+	var own []library.Library
+	for _, file := range plugin.Manifest.Libraries {
+		source, err := fs.ReadFile(directory, file)
+		if err != nil {
+			return contract.Refuse(plugin.Name, contract.RefusalLibraryMissing, "%s cannot be read: %v", file, err)
+		}
+		compiled, err := library.Compile(plugin.Name, file, string(source))
+		if err != nil {
+			return contract.Refuse(plugin.Name, contract.RefusalLibraryDoesNotCompile, "%v", err)
+		}
+		own = append(own, compiled)
+	}
+	if len(own) > 0 {
+		// Run once, with nothing of the host, to see that the exports define: a library that throws
+		// while defining them refuses the plugin, not every script that would use it.
+		if _, err := library.Bind(goja.New(), own); err != nil {
+			return contract.Refuse(plugin.Name, contract.RefusalLibraryDoesNotCompile, "%v", err)
+		}
+	}
+	shipped.add(plugin.Name, own)
+	plugin.libraries = append(plugin.libraries, own...)
+	for _, name := range plugin.Manifest.Requires {
+		plugin.libraries = append(plugin.libraries, shipped.of(name)...)
+	}
+	return nil
+}
+
+// Libraries are the libraries the plugin's scripts may use: its own and its required plugins'.
+func (p *Plugin) Libraries() []library.Library { return append([]library.Library(nil), p.libraries...) }
+
 // loadScript reads and compiles the script a manifest names, and runs it once to see what it
 // exports.
 func loadScript(plugin *Plugin, directory fs.FS, timeout time.Duration) *contract.Refusal {
@@ -660,6 +736,7 @@ func loadScript(plugin *Plugin, directory fs.FS, timeout time.Duration) *contrac
 			plugin.Manifest.Script, err)
 	}
 	compiled.Version = plugin.Manifest.Version
+	compiled.Libraries = plugin.libraries
 	compiled.Cadences = map[string]time.Duration{}
 	for _, declaration := range plugin.Manifest.Providers {
 		if declaration.CadenceSeconds > 0 {
@@ -973,7 +1050,8 @@ func loadWidgets(plugin *Plugin, directory fs.FS, location, onDisk, origin strin
 		}
 		plugin.WidgetDirectories = append(plugin.WidgetDirectories, where)
 		plugin.Widgets = append(plugin.Widgets, widget.Source{Plugin: plugin.Name, Type: name,
-			Builtin: origin == OriginBuiltin, Location: where, Files: files, Datasets: plugin.Manifest.Datasets})
+			Builtin: origin == OriginBuiltin, Location: where, Files: files, Datasets: plugin.Manifest.Datasets,
+			Libraries: plugin.libraries})
 	}
 	return nil
 }

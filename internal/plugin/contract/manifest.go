@@ -61,6 +61,9 @@ type Manifest struct {
 	Tables []TableDeclaration `json:"tables,omitempty"`
 	// Widgets are the widget directories the plugin carries, relative to its widgets/ directory.
 	Widgets []string `json:"widgets,omitempty"`
+	// Libraries are the JavaScript files the plugin ships for its own scripts and for every plugin that
+	// requires it, each a plain file name in the plugin's directory, bound under host.lib.<name> (ADR 0021).
+	Libraries []string `json:"libraries,omitempty"`
 	// Settings are the settings the plugin declares.
 	Settings []SettingDeclaration `json:"settings,omitempty"`
 	// Pages are the sections of its settings, each with its settings in display order (PageDeclaration).
@@ -410,8 +413,15 @@ func ValidateShape(manifest Manifest, directory string) *Refusal {
 		return Refuse(directory, RefusalManifestInvalid,
 			"script %q must be a plain file name ending in .js, in the plugin's own directory", manifest.Script)
 	}
-	if len(manifest.Providers) == 0 && len(manifest.Widgets) == 0 && len(manifest.Tables) == 0 && len(manifest.Relations) == 0 {
-		return Refuse(directory, RefusalManifestInvalid, "the plugin declares no provider, no widget, no table and no relation")
+	if len(manifest.Providers) == 0 && len(manifest.Widgets) == 0 && len(manifest.Tables) == 0 && len(manifest.Relations) == 0 &&
+		len(manifest.Libraries) == 0 {
+		return Refuse(directory, RefusalManifestInvalid, "the plugin declares no provider, no widget, no table, no relation and no library")
+	}
+	for _, file := range manifest.Libraries {
+		if !scriptPattern.MatchString(file) {
+			return Refuse(directory, RefusalManifestInvalid,
+				"library %q must be a plain file name ending in .js, in the plugin's own directory", file)
+		}
 	}
 	for _, widget := range manifest.Widgets {
 		if !NamePattern.MatchString(widget) {

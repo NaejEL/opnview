@@ -65,6 +65,7 @@ double underscore. A plugin directory holds no Go file; a test of the repository
 | `destinations` | no | The hosts beyond the firewall the plugin contacts, each a scheme and a host. |
 | `tables` | no | Tables the plugin owns. |
 | `widgets` | no | The widgets the plugin carries, each a directory `widgets/<type>/` (see *Widgets*). |
+| `libraries` | no | JavaScript files the plugin ships for its own scripts and for every plugin that requires it, each a plain `.js` file name in the plugin's directory, bound under `host.lib.<plugin>` (*Libraries*). A plugin may ship libraries and nothing else. |
 | `push` | no | The push sources the plugin receives: syslog lines and NetFlow records the firewall sends, and datagrams and lines its script decodes (see *Push sources*). |
 | `datasets` | no | The data-catalogue names its scripts read through `host.datasets` -- core datasets and other plugins' `<plugin>.<table>` (*Datasets a plugin reads*). Its own tables need no entry. |
 | `derivations` | no | Functions of the script the core runs after collection passes, push batches and on a cadence, writing tables, counters and measures (*Derivations*). |
@@ -638,6 +639,24 @@ Its keys are confined to its own namespace: `plugin.<name>.*`, `provider.<kind>.
 provider it declares, and `collection.kind.<kind>` of a kind of its own. Any other key is refused
 (`string_outside_namespace`): a plugin never redefines a word of the core's.
 
+## Libraries
+
+A plugin may ship **JavaScript libraries** (ADR 0021): files its manifest lists under `libraries`,
+each a plain `.js` name in the plugin's directory. A library is evaluated once per runtime, in a
+function handed `exports` and `module`, and what it exports is bound under
+`host.lib.<plugin>` -- for the plugin's own scripts, widgets included, and for every plugin that
+`requires` it. Several files of one plugin export into one object. A library is pure JavaScript:
+it is handed nothing of the host, and what it needs it takes as arguments. Reading
+`host.lib.<name>` for a plugin the manifest does not require, or that ships no library, throws a
+`TypeError` naming `library_not_required`, which a script may catch; nothing is bound silently.
+
+The built-in `figures` is the worked example: it ships `figures.js` and nothing else, and the
+widget plugins that cut a series into time buckets, name a period's slot, keep the allowed or the
+blocked half of summable figures, place the interface matrix's outside ends or classify an address
+against the IANA special-purpose registries `require` it and call
+`host.lib.figures.<area>.<function>`. Its tests, `plugins/figures/tests`, show how a library is
+tested: `t.lib` is `host.lib` as the plugin's scripts see it.
+
 ## Testing a plugin
 
 A plugin's tests are JavaScript, in `tests/*.test.js`, run by the interpreter that runs the plugin:
@@ -667,6 +686,7 @@ through, contract check included.
 | `t.registered(kind)` | Whether the plugin provides a kind. |
 | `t.dataFile(name, text)`, `t.dataFiles()` | Writes into and lists the plugin's data directory. |
 | `t.assert(condition, message)`, `t.equal(got, want, message)`, `t.fatal(message)` | Assertions. |
+| `t.lib` | `host.lib` as the plugin's scripts see it: its own libraries and its required plugins' (*Libraries*). |
 
 A reply is `{status, json | body | fixture | file | events | mmdb_archive, headers}`: `fixture` names
 a recorded answer in `testdata/`, `{"__provenance__": {...}, "body": ...}`; `file` serves a file of
@@ -698,6 +718,8 @@ a recorded answer in `testdata/`, `{"__provenance__": {...}, "body": ...}`; `fil
 | `endpoint_not_relative`, `endpoint_outside_api`, `endpoint_parent_reference`, `endpoint_mutating`, `endpoint_method_not_allowed`, `endpoint_conflict` | An endpoint the client will not call. |
 | `script_missing` | The script cannot be read, or a provider needs one and none is named. |
 | `script_does_not_compile` | The script is not valid JavaScript, or fails while defining its exports. |
+| `library_missing` | A library file the manifest lists cannot be read. |
+| `library_does_not_compile` | A library file is not valid JavaScript, or throws while defining its exports. |
 | `script_missing_function` | The script does not export a function its kind's contract lists. |
 | `mapping_invalid`, `mapping_field_unknown`, `mapping_field_missing` | A declarative probe or read is wrong. |
 | `table_invalid` | A table declaration is refused. |
@@ -867,8 +889,8 @@ bytes whichever side of the seam built it:
 The host is one object per area of the core, `host.<area>.<function>`: the widget's own statements
 (`host.query`), the parsed request (`host.request`, `host.params`, `host.refs`), the envelope's states,
 coverage and conditions (`host.envelope`), and the figures every widget shares -- volumes, flows,
-sites, peers, rates, samples, series, the data catalogue (`host.datasets`) and the rest. It grants no
-firewall call, no fetch and no write. A function called wrongly throws a `TypeError`. Every area is
+sites, peers, rates, samples, series, the data catalogue (`host.datasets`) and the rest, and the
+libraries the plugin may use (`host.lib`, *Libraries*). It grants no firewall call, no fetch and no write. A function called wrongly throws a `TypeError`. Every area is
 documented, function by function, in `docs/widget-host.md`, which a test holds to the areas the host
 has. A row or figures a host function hands is read from the core's own value: its members are read,
 set, added and deleted as any object's, but it takes no symbol, cannot be frozen, and a member cannot

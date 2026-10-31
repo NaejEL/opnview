@@ -258,7 +258,7 @@ function recentPart(host, groupBy, measure, scope, interfaces, clients, shownKey
       return {
         key: key,
         buckets: recent.buckets.map(function (bucket) {
-          var start = bucket.from - host.buckets.floorMod(bucket.from, width);
+          var start = bucket.from - host.lib.figures.buckets.floorMod(bucket.from, width);
           var figures = sums[key][start];
           var value = figures === undefined ? (bucket.gap ? null : 0) : host.figures.value(measure, figures);
           return { from: bucket.from, to: bucket.to, gap: bucket.gap, value: value };

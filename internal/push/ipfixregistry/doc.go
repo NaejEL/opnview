@@ -2,7 +2,7 @@
 // IPFIX decoder can name and type every field it decodes by the standard's own words
 // (sourceIPv4Address, octetDeltaCount, ...) rather than by numbers or by names opnview invented.
 //
-// THIS IS A STANDARD, NOT INSTALLATION DATA, like internal/specialpurpose. elements.csv is the
+// THIS IS A STANDARD, NOT INSTALLATION DATA, like the figures plugin's special-purpose registry. elements.csv is the
 // registry's element id, name, abstract data type and data type semantics, transcribed from
 //
 //	https://www.iana.org/assignments/ipfix/ipfix-information-elements.csv

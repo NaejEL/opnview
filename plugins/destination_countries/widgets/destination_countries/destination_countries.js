@@ -77,10 +77,10 @@ exports.widget = {
       }
       row.bytes = host.figures.byteCount(entry.figures);
       if (allowed) {
-        row.allowed = host.figures.volume(host.mapfilters.allowedOnly(entry.figures));
+        row.allowed = host.figures.volume(host.lib.figures.mapfilters.allowedOnly(entry.figures));
       }
       if (blocked) {
-        row.blocked = host.figures.volume(host.mapfilters.blockedOnly(entry.figures));
+        row.blocked = host.figures.volume(host.lib.figures.mapfilters.blockedOnly(entry.figures));
       }
       row.peers = entry.peers;
       row.interfaces = entry.interfaces.sort(numeric);

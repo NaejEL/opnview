@@ -19,7 +19,7 @@ exports.widget = {
     grouped.others.forEach(function (row) {
       var ownTraffic = row.traffic_scope === host.volume.scopes.this_firewall;
       var reason = ownTraffic ? reasons.this_firewall : reasons.east_west;
-      bins.add(reason, host.mapfilters.allowedOnly(row), 0);
+      bins.add(reason, host.lib.figures.mapfilters.allowedOnly(row), 0);
     });
 
     var sizeBy = host.params.text("size_by");
@@ -30,7 +30,7 @@ exports.widget = {
     var belowList = [];
     var hasRows = false;
     grouped.peers.forEach(function (peer) {
-      var allowed = host.mapfilters.allowedOnly(peer.figures);
+      var allowed = host.lib.figures.mapfilters.allowedOnly(peer.figures);
       if (allowed.allowed_connections === 0 && allowed.bytes === 0) {
         return;
       }

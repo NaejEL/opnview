@@ -34,6 +34,7 @@ import (
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/plugin/fetch"
+	"github.com/NaejEL/opnview/internal/plugin/library"
 	"github.com/NaejEL/opnview/internal/plugin/mmdbwrite"
 	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/secret"
@@ -240,7 +241,7 @@ func newTestWorld(ctx context.Context, directory string) (*testWorld, error) {
 	world.set = provider.NewSet()
 	name := filepath.Base(directory)
 	options := plugin.Options{DataDir: dataDir, Store: world.database, Settings: world.settings, Sealer: world.box,
-		CallTimeout: 30 * time.Second, FetchTransport: world, HostAnswers: world.heard,
+		CallTimeout: 30 * time.Second, FetchTransport: world, HostAnswers: world.heard, Libraries: plugin.NewLibraries(),
 		// The core's values a SQL-only derivation reads, at their defaults: what a fresh installation runs with.
 		DerivationParameters: func(context.Context) (map[string]any, error) {
 			return map[string]any{"held_margin": int64(flows.DefaultDiscoveryIntervalSeconds),
@@ -579,6 +580,15 @@ func (w *testWorld) api(vm *goja.Runtime, result *TestResult) *goja.Object {
 	fail := func(message string) { result.Failures = append(result.Failures, message) }
 	set := func(name string, function func(goja.FunctionCall) goja.Value) { _ = t.Set(name, function) }
 	w.pushAPI(vm, set)
+	if libraries := w.plugin.Libraries(); len(libraries) > 0 {
+		// t.lib is host.lib as the plugin's scripts see it: its own libraries and its required plugins'.
+		lib, err := library.Bind(vm, libraries)
+		if err != nil {
+			fail("the libraries: " + err.Error())
+		} else {
+			_ = t.Set("lib", lib)
+		}
+	}
 
 	set("answer", func(call goja.FunctionCall) goja.Value {
 		name := call.Argument(0).String()

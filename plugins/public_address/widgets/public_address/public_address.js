@@ -9,7 +9,7 @@
 
 // describe classifies one held address against the registries.
 function describe(host, held) {
-  var classified = host.specialpurpose.classify(held.address);
+  var classified = host.lib.figures.specialpurpose.classify(held.address);
   return {
     address: held.address,
     family: held.address_family === 6 ? "ipv6" : "ipv4",
@@ -100,7 +100,7 @@ exports.widget = {
       upstreams.push(entry);
     });
     return {
-      data: { upstreams: upstreams, registries: host.specialpurpose.registries },
+      data: { upstreams: upstreams, registries: host.lib.figures.specialpurpose.registries },
       has_rows: upstreams.length > 0
     };
   }

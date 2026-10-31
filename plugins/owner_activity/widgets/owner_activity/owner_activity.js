@@ -297,7 +297,7 @@ function sortCards(host, cards, order) {
 
 // ownerTimelines fills each card's inline timeline from the flows, per owner.
 function ownerTimelines(host, data, covered, scope, measure) {
-  var width = host.buckets.width();
+  var width = host.lib.figures.buckets.width(host.params.text("period"));
   var window = host.request.window;
   var sums = {};
   host.query.rows("widget_owner_activity_buckets", { from: window.from, to: window.to, width: width })
@@ -313,15 +313,15 @@ function ownerTimelines(host, data, covered, scope, measure) {
       sums[key][row.bucket_start] = host.figures.add(sum === undefined ? host.figures.zero() : sum, row);
     });
   var gaps = host.envelope.gaps();
-  var intervals = host.buckets.intervals(window, width);
+  var intervals = host.lib.figures.buckets.intervals(window, width);
   function timeline(key) {
     return intervals.map(function (bucket) {
-      var start = bucket.from - host.buckets.floorMod(bucket.from, width);
+      var start = bucket.from - host.lib.figures.buckets.floorMod(bucket.from, width);
       var sum = sums[key] === undefined ? undefined : sums[key][start];
       var entry = {
         from: bucket.from,
         to: bucket.to,
-        gap: host.buckets.isGap(bucket, covered, gaps),
+        gap: host.lib.figures.buckets.isGap(bucket, covered, gaps),
         value: null,
         volume: undefined
       };

@@ -29,9 +29,6 @@ import (
 // scannedRoots are the directories that hold the program.
 var scannedRoots = []string{"../../cmd", "../../internal"}
 
-// specialPurposeRegistry is the one file the address-literal scan exempts.
-const specialPurposeRegistry = "../../internal/specialpurpose/registry.go"
-
 // TestOnlyTheTwoOutboundPackagesBuildAnHTTPRequest is the chokepoint rule: the firewall client,
 // and the fetch facility through which a plugin reaches the destinations its manifest declares,
 // and no third.
@@ -175,12 +172,8 @@ func TestNoInterfaceIdentifierAddressOrCIDRIsALiteral(t *testing.T) {
 		"a compressed IPv6 address": ipv6Compressed,
 	}
 	for _, file := range goSourceFiles(t) {
-		// The IANA special-purpose registries are standards, not installation data, and
-		// this one file holds them with their citations (specs/SPEC-step-5b-widget-api.md,
-		// AC39). It is exempt by its exact path and nothing else is.
-		if filepath.ToSlash(file) == specialPurposeRegistry {
-			continue
-		}
+		// No file is exempt: the IANA special-purpose registries, the one exemption there was,
+		// are the figures plugin's JavaScript since ADR 0021.
 		body := readFile(t, file)
 		for number, line := range strings.Split(body, "\n") {
 			for what, pattern := range patterns {

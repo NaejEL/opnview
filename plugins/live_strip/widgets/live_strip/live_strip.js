@@ -67,7 +67,7 @@ function throughput(host, window, buckets, width) {
   var series = host.rates.series(window);
   var byBucket = {};
   series.instants.forEach(function (instant) {
-    var start = instant.at - host.buckets.floorMod(instant.at, width);
+    var start = instant.at - host.lib.figures.buckets.floorMod(instant.at, width);
     (byBucket[start] = byBucket[start] || []).push(instant);
   });
   return THROUGHPUT_KEYS.map(function (key) {
@@ -167,7 +167,7 @@ function decisions(host, window, buckets, width, now, gaps) {
       var cell = { from: bucket.from, to: bucket.to, gap: false, value: null };
       // Records in a bucket the collection did not cover whole are shown, and the bucket still says it
       // is incomplete; with none, the bucket is a gap with no value, never a zero.
-      if (host.buckets.isGap(bucket, covered, kindGaps)) {
+      if (host.lib.figures.buckets.isGap(bucket, covered, kindGaps)) {
         cell.gap = true;
         if (counted) {
           cell.value = held[bucket.from];
@@ -197,11 +197,11 @@ exports.widget = {
     var width = host.live.cadence();
     var seconds = windowOf(host, width);
     var liveInterestUntil = host.live.renew();
-    var to = now - host.buckets.floorMod(now, width) + width;
+    var to = now - host.lib.figures.buckets.floorMod(now, width) + width;
     var from = now - seconds;
-    from -= host.buckets.floorMod(from, width);
+    from -= host.lib.figures.buckets.floorMod(from, width);
     var window = { from: from, to: to };
-    var buckets = host.buckets.intervals(window, width);
+    var buckets = host.lib.figures.buckets.intervals(window, width);
     var gaps = host.envelope.readGaps(["firewall_log", "dns_lookup"], window);
     var data = {
       cadence_seconds: width,

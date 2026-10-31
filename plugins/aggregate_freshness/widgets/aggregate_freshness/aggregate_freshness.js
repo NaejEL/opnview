@@ -16,11 +16,11 @@ exports.widget = {
     var now = host.request.now;
     var periods = [];
     var hasRows = false;
-    host.periods.names().forEach(function (period) {
+    host.lib.figures.periods.names().forEach(function (period) {
       if (!host.params.has("periods", period)) {
         return;
       }
-      var from = host.periods.slotStart(period, now - LOOKBACK_SECONDS);
+      var from = host.lib.figures.periods.slotStart(period, now - LOOKBACK_SECONDS);
       var bounds = { from: from, to: now + 1 };
       var coverage = host.query.row("widget_period_coverage", bounds, period);
       var stale = host.query.row("widget_period_stale_slots", bounds, period);

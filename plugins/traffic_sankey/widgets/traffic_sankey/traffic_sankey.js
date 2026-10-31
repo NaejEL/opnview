@@ -107,7 +107,7 @@ exports.widget = {
     var right = host.params.text("right");
     var measure = host.params.text("measure");
     var directions = host.volume.directions;
-    var thisFirewall = host.matrixplacement.keys.this_firewall;
+    var thisFirewall = host.lib.figures.matrixplacement.keys.this_firewall;
     var reasons = host.peers.reasons;
     var flows = leftFlows(host, left, host.params.text("scope"), host.refs.ids("interfaces"));
 

@@ -122,7 +122,7 @@ func loadPluginWidget(ctx context.Context, database *store.Store, source Source,
 	}
 	preset := presetFromManifest(manifest, origin)
 	script := &script.ScriptWidget{Plugin: source.Plugin, File: manifest.Script, Program: program, Statements: statements,
-		Builtin: source.Builtin, Datasets: script.DatasetsAdmitted(source.Plugin, source.Datasets)}
+		Builtin: source.Builtin, Datasets: script.DatasetsAdmitted(source.Plugin, source.Datasets), Libraries: source.Libraries}
 	preset.Serve = script.Serve
 	return withRenderer(source.Files, source.Location, manifest, preset)
 }

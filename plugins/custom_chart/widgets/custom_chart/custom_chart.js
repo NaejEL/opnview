@@ -48,7 +48,7 @@ function setCovered(host, report, covered) {
 
 // bucketStart is the start of the bucket an interval of the window belongs to.
 function bucketStart(host, interval, width) {
-  return interval.from - host.buckets.floorMod(interval.from, width);
+  return interval.from - host.lib.figures.buckets.floorMod(interval.from, width);
 }
 
 // measuredFigure reads a traffic measure naming a declared measure's figure -- <measure>_bytes or
@@ -76,7 +76,7 @@ function fillTraffic(host, line, entry, index, width) {
     line.measure = measured.measure;
     line.unit = entry.measure;
     line.lower_bound = true;
-    host.buckets.intervals(host.request.window, width).forEach(function (interval) {
+    host.lib.figures.buckets.intervals(host.request.window, width).forEach(function (interval) {
       line.buckets.push({ from: interval.from, to: interval.to, gap: true, value: null });
     });
     return false;
@@ -113,7 +113,7 @@ function fillTraffic(host, line, entry, index, width) {
   }
   var total = host.figures.zero();
   var rows = false;
-  host.buckets.intervals(host.request.window, width).forEach(function (interval) {
+  host.lib.figures.buckets.intervals(host.request.window, width).forEach(function (interval) {
     var directions = traffic.buckets[bucketStart(host, interval, width)];
     var sum = host.figures.zero();
     var present = false;
@@ -123,7 +123,7 @@ function fillTraffic(host, line, entry, index, width) {
         present = true;
       });
     }
-    var bucket = { from: interval.from, to: interval.to, gap: host.buckets.isGap(interval, traffic.covered, line.gaps),
+    var bucket = { from: interval.from, to: interval.to, gap: host.lib.figures.buckets.isGap(interval, traffic.covered, line.gaps),
       value: null };
     if (present || !bucket.gap) {
       bucket.value = host.figures.value(figure, sum);
@@ -215,10 +215,10 @@ function fillCounts(host, line, entry, index, width) {
   line.lower_bound = true;
   var found = false;
   var total = 0;
-  host.buckets.intervals(window, width).forEach(function (interval) {
+  host.lib.figures.buckets.intervals(window, width).forEach(function (interval) {
     var count = counts[bucketStart(host, interval, width)];
     var present = count !== undefined;
-    var bucket = { from: interval.from, to: interval.to, gap: host.buckets.isGap(interval, covered, line.gaps),
+    var bucket = { from: interval.from, to: interval.to, gap: host.lib.figures.buckets.isGap(interval, covered, line.gaps),
       value: null };
     if (present || !bucket.gap) {
       var value = 0;
@@ -304,7 +304,7 @@ exports.widget = {
   serve: function (host) {
     var conditions = host.envelope.conditions;
     var providers = host.series.providers();
-    var width = host.buckets.width();
+    var width = host.lib.figures.buckets.width(host.params.text("period"));
     var window = host.request.window;
     var report = host.series.window();
     var unresolved = host.series.unresolved();

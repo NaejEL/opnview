@@ -12,7 +12,7 @@ function has(object, key) {
 // placement is the row and the column of a source interface, a destination interface and a
 // direction.
 function placement(host, src, dst, direction) {
-  var keys = host.matrixplacement.keys;
+  var keys = host.lib.figures.matrixplacement.keys;
   var directions = host.volume.directions;
   var row = src === null ? keys.outside : host.figures.interfaceKey(src);
   var column = dst === null ? keys.north_south : host.figures.interfaceKey(dst);
@@ -37,7 +37,7 @@ exports.widget = {
   serve: function (host) {
     var volume = host.volume.window();
     var interfaces = host.installation.interfaces();
-    var keys = host.matrixplacement.keys;
+    var keys = host.lib.figures.matrixplacement.keys;
     var scope = host.params.text("scope");
     var measure = host.params.text("measure");
     var showRules = host.params.flag("show_rules");

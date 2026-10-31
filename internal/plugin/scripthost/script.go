@@ -25,6 +25,7 @@ import (
 	"github.com/NaejEL/opnview/internal/ianaprotocol"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/library"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -106,6 +107,8 @@ type Script struct {
 	Routes   map[string][]Route
 	Versions *contract.VersionRange
 	Variants []ScriptVariant
+	// Libraries are the libraries the script may use, bound under host.lib (ADR 0021).
+	Libraries []library.Library
 }
 
 // Compile compiles a plugin's script.
@@ -650,6 +653,13 @@ func (h *hostCalls) hostObject(vm *goja.Runtime, s *Script) *goja.Object {
 		Logger(s.plugin, call.Argument(0).String())
 		return goja.Undefined()
 	})
+	if len(s.Libraries) > 0 {
+		lib, err := library.Bind(vm, s.Libraries)
+		if err != nil {
+			Throw(vm, "%v", err)
+		}
+		_ = host.Set("lib", lib)
+	}
 	return host
 }
 

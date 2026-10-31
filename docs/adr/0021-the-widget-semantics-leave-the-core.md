@@ -122,6 +122,12 @@ an hour is written from the flows the purge is about to remove.
 | 5 | The measure choice in the library; `measure.go`, `speculation.go` deleted; the example reporter's third-party test kept green | the `netflow` and `logged` answers of `traffic_composition`, `owner_activity` and `traffic_sankey` byte for byte |
 | 6 | The bridge removed; `purge.sql` empty; ADR 0020 wave 5 closed; ADR 0017's remaining deletions that waited on this (`shapes`, `widget/loader.go`, the script flat machinery) | `checks` green; the modularity allow-list shrinks |
 
+## Progress
+
+| Date | Step | Done |
+|---|---|---|
+| 31 October 2026 | 1, the library and the arithmetic areas | The primitive: a manifest key `libraries`, each file compiled at load and bound under `host.lib.<plugin>` in the widget runtime, the plugin script host and the harness (`t.lib`); a plugin may ship libraries and nothing else; refusals `library_missing`, `library_does_not_compile`, and `library_not_required` as the TypeError a script meets. The built-in `figures` ships `figures.js`: `buckets`, `periods`, `mapfilters`, `matrixplacement` and `specialpurpose` (the two IANA registries as data in the file, an address parser of its own), with its own tests; fifteen widget plugins require it and call it where they called the five host areas, whose Go is deleted with `internal/specialpurpose` and the two shape helpers. **Two departures from the step as written, both deferred rather than decided**: `host.figures` itself stays in Go until step 5, because its Volume, Count and `cover` record on the request what the measure engine judges (decision 5), and moving the arithmetic without the judgement would split one thing in two; and the IANA protocol numbers stay the script host's `opnview.protocolNumber`, used by the netflow derivation, until that plugin requires a library. **Proof**: every widget plugin's golden tests answer the same bytes as before, unchanged; the live comparison is the maintainer's review on screen, since the widget API answers only a signed-in session. |
+
 ## Consequences
 
 - About 8 500 lines of Go and 1 400 of core SQL leave; the widget plugins

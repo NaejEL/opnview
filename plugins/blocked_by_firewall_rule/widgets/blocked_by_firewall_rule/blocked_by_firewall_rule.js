@@ -160,7 +160,7 @@ exports.widget = {
 
     // Each shown rule's inline timeline: its blocked records per bucket of the window. A bucket
     // with none reads 0 where the window is covered and no gap meets it, and is a gap otherwise.
-    var width = host.buckets.width();
+    var width = host.lib.figures.buckets.width(host.params.text("period"));
     var counts = {};
     host.query.rows("widget_blocked_rule_buckets", {
       from: parameters.from,
@@ -176,13 +176,13 @@ exports.widget = {
       counts[key][row.bucket_start] = (counts[key][row.bucket_start] || 0) + row.records;
     });
     var gaps = host.envelope.gaps();
-    var intervals = host.buckets.intervals(window, width);
+    var intervals = host.lib.figures.buckets.intervals(window, width);
     shown.forEach(function (row) {
       var byStart = counts[row.key] || {};
       row.row.timeline = intervals.map(function (interval) {
-        var start = interval.from - host.buckets.floorMod(interval.from, width);
+        var start = interval.from - host.lib.figures.buckets.floorMod(interval.from, width);
         var present = Object.prototype.hasOwnProperty.call(byStart, String(start));
-        var gap = host.buckets.isGap(interval, covered, gaps);
+        var gap = host.lib.figures.buckets.isGap(interval, covered, gaps);
         return { from: interval.from, to: interval.to, gap: gap, value: present || !gap ? (present ? byStart[start] : 0) : null };
       });
     });
