@@ -41,12 +41,12 @@ function unknownInterface() {
 
 exports.widget = {
   serve: function (host) {
-    var fields = host.addresses.sourceFields;
+    var fields = host.lib.figures.addresses.sourceFields;
     var gateways = host.params.set("gateways") || [];
     var showHistory = host.params.flag("show_history");
     var historyLimit = host.params.integer("history_limit");
     var upstreams = [];
-    host.addresses.upstreams().forEach(function (upstream) {
+    host.lib.figures.addresses.upstreams(host).forEach(function (upstream) {
       var info = host.lib.figures.installation.interface(host, upstream.interface_id);
       var entry = { interface: info === null ? unknownInterface() : info, current: [] };
       var held = [];

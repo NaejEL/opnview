@@ -69,7 +69,8 @@
     "interface"
   ],
   "queries": [
-    "installation.statements.sql"
+    "installation.statements.sql",
+    "samples.statements.sql"
   ],
   "script": "interface_throughput.js",
   "renderer": {

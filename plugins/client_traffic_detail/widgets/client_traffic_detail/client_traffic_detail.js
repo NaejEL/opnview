@@ -49,11 +49,11 @@ exports.widget = {
     var data = {
       client: info,
       // The client's latest sampled rate, or its named absence.
-      current_rate: host.rates.client(clientId),
+      current_rate: host.lib.figures.rates.client(host, clientId),
       // The client's latest sampled rate with each peer it was read with (row 24 of the mockup's
       // coverage): what the share per destination is drawn against now, keyed by the address a
       // record's destination carries. A peer with no current reading is absent, never a rate of 0.
-      current_rate_by_peer: peerRates(host, host.rates.clientPeers(clientId)),
+      current_rate_by_peer: peerRates(host, host.lib.figures.rates.clientPeers(host, clientId)),
       leases: host.query.rows("widget_client_traffic_detail_leases", { client_id: clientId }).map(function (row) {
         return {
           provider_kind: row.provider_kind,

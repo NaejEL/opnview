@@ -357,7 +357,7 @@ exports.widget = {
       other: composed.other,
       whole: whole,
       total: composed.total,
-      current_rates: host.rates.current(groupBy)
+      current_rates: host.lib.figures.rates.current(host, groupBy)
     };
     if (groupBy === "protocol" || groupBy === "service_port") {
       var stateRates = pfStateRates(host, groupBy);

@@ -21,7 +21,7 @@ exports.widget = {
         if (wanted !== "both" && wanted !== direction) {
           return;
         }
-        var read = host.samples.throughput(info.device, measure, direction);
+        var read = host.lib.figures.samples.throughput(host, info.device, measure, direction);
         // One interface's one direction, at the resolution its samples have; lower_bound is true,
         // since intra-interface traffic never reaches the counters either, and every counter reset
         // in the window is counted, each a hole and never a rate.

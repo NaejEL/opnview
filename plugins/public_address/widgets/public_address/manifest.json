@@ -43,7 +43,8 @@
   ],
   "references": [],
   "queries": [
-    "installation.statements.sql"
+    "installation.statements.sql",
+    "addresses.statements.sql"
   ],
   "script": "public_address.js",
   "renderer": {

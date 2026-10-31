@@ -38,7 +38,7 @@ exports.widget = {
     // Every peer's figures, summed in one call: host.figures.sum is add folded over a list.
     var total = host.figures.sum(peers.map(function (peer) { return peer.figures; }));
     peers.forEach(function (peer) {
-      var geo = host.services.geolocation(peer.address);
+      var geo = host.lib.figures.services.geolocation(host, peer.address);
       if (geo.lookup_state !== "resolved") {
         bins.add(host.lib.figures.peers.placementState(geo), peer.figures, 1);
         return;

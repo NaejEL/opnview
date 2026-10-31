@@ -52,7 +52,7 @@ var STALE = "stale_sample";
 // client's local addresses; the newest reading's instant and the coarsest cadence are kept, and the
 // sum is stale when any rate summed is. With no rate to sum it is the named absence, never 0.
 function sumRates(host, rates) {
-  var none = host.rates.none();
+  var none = host.lib.figures.rates.none(host);
   var present = rates.filter(function (rate) { return rate.state !== none.state; });
   if (present.length === 0) {
     return none;
@@ -106,7 +106,7 @@ function interfaceIds(chips) {
 
 // sampledCount is how many chips hold a current rate: the machines a summed rate covers.
 function sampledCount(host, chips) {
-  var none = host.rates.none();
+  var none = host.lib.figures.rates.none(host);
   return chips.filter(function (chip) { return chip.current_rate.state !== none.state; }).length;
 }
 
@@ -137,8 +137,8 @@ exports.widget = {
       perClient[volume.client_id] = figures;
     });
     var limit = host.params.integer("clients_per_card");
-    var rates = host.rates.byClient();
-    var noRate = host.rates.none();
+    var rates = host.lib.figures.rates.byClient(host);
+    var noRate = host.lib.figures.rates.none(host);
 
     // chipOf is one machine's chip: measured with its volume, or no_data_in_period -- which is not
     // a zero the reader might take for its absence.

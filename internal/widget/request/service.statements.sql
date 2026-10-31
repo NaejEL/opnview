@@ -32,6 +32,12 @@ SELECT min(looked_up_at) FROM dns_resolution;
 SELECT min(occurred_at) FROM security_event;
 
 
+-- The instant of the oldest sample kept, which a measurement_sample reading is covered from; read by
+-- name for every widget bound to the kind, and by a script with host.envelope.earliest.
+-- statement: widget_earliest_sample
+SELECT min(sampled_at) FROM measurement_sample;
+
+
 -- Every registered provider with its availability, or NULLs when the provider carries no
 -- availability row: a screen reports that as "state unknown", never as healthy.
 -- statement: widget_availability

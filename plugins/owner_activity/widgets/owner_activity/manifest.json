@@ -90,7 +90,8 @@
   "queries": [
     "owner_activity.statements.sql",
     "installation.statements.sql",
-    "clients.statements.sql"
+    "clients.statements.sql",
+    "rates.statements.sql"
   ],
   "script": "owner_activity.js",
   "renderer": {

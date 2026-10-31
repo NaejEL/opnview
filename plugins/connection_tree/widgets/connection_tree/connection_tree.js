@@ -150,7 +150,7 @@ function labelNode(host, node) {
   } else if (prefix === "site") {
     node.site_name = value;
   } else if (prefix === "address") {
-    var geo = host.services.geolocation(value);
+    var geo = host.lib.figures.services.geolocation(host, value);
     node.address = value;
     node.lookup_state = geo.lookup_state;
     node.country_code = geo.country_code;

@@ -143,7 +143,7 @@ exports.widget = {
       } else if (right === "interface") {
         rightKey = "outside";
       } else {
-        var geo = host.services.geolocation(flow.peer);
+        var geo = host.lib.figures.services.geolocation(host, flow.peer);
         if (geo.lookup_state !== "resolved") {
           unnamed.addAddress(host.lib.figures.peers.placementState(geo), flow.peer, flow.figures);
           otherList.push(flow.figures);

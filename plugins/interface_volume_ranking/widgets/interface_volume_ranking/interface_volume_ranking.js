@@ -76,10 +76,10 @@ exports.widget = {
     });
     var request = host.request.window;
     var clientCounts = {};
-    host.interfaces.clients(request.from, request.to).forEach(function (counts) {
+    host.lib.figures.interfaces.clients(host, request.from, request.to).forEach(function (counts) {
       clientCounts[counts.interface_id] = counts;
     });
-    var logging = host.interfaces.ruleLogging();
+    var logging = host.lib.figures.interfaces.ruleLogging(host);
 
     var measure = host.params.text("measure");
     var includeUnlabelled = host.params.flag("include_unlabelled");

@@ -35,7 +35,7 @@ exports.widget = {
         return;
       }
       hasRows = true;
-      var geo = host.services.geolocation(peer.address);
+      var geo = host.lib.figures.services.geolocation(host, peer.address);
       var reason = host.lib.figures.peers.placement(geo);
       if (reason !== "") {
         bins.add(reason, allowed, 1);

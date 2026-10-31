@@ -130,11 +130,6 @@ type Request struct {
 	// none declares a live pass. Nil reads as none.
 	LiveCadence func(ctx context.Context) int64
 
-	installation *installation
-	// placed are the outside peers placed and whose geolocation is not read yet (installation.go,
-	// Place).
-	placed map[string]bool
-
 	// Measure is the measure the request is being answered under, and what the run built (measure.go).
 	Measure measureRun
 	// measureWindows are what the window says of each declared measure, once read (measure.go).

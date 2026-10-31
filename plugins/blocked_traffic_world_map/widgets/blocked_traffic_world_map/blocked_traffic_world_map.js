@@ -79,7 +79,7 @@ exports.widget = {
         }
       });
       host.lib.figures.peers.sorted(host, order).forEach(function (peer) {
-        var geo = host.services.geolocation(peer.address);
+        var geo = host.lib.figures.services.geolocation(host, peer.address);
         var reason = host.lib.figures.peers.placement(geo);
         if (reason !== "") {
           bins.add(reason, peer.figures, 1);
@@ -143,7 +143,7 @@ exports.widget = {
         hasRows = true;
         var count = events[address];
         securityEvents.value += count;
-        var geo = host.services.geolocation(address);
+        var geo = host.lib.figures.services.geolocation(host, address);
         var reason = host.lib.figures.peers.placement(geo);
         if (reason !== "") {
           securityBins[reason].addresses += 1;

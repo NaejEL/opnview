@@ -22,7 +22,8 @@
   ],
   "references": [],
   "queries": [
-    "live_strip.statements.sql"
+    "live_strip.statements.sql",
+    "rates.statements.sql"
   ],
   "script": "live_strip.js",
   "renderer": {

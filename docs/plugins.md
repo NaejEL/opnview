@@ -891,9 +891,16 @@ bytes whichever side of the seam built it:
 
 The host is one object per area of the core, `host.<area>.<function>`: the widget's own statements
 (`host.query`), the parsed request (`host.request`, `host.params`, `host.refs`), the envelope's states,
-coverage and conditions (`host.envelope`), and the figures every widget shares -- volumes, flows,
-sites, peers, rates, samples, series, the data catalogue (`host.datasets`) and the rest, and the
-libraries the plugin may use (`host.lib`, *Libraries*). It grants no firewall call, no fetch and no write. A function called wrongly throws a `TypeError`. Every area is
+coverage and conditions (`host.envelope`), the figures and their measure (`host.figures`), the data
+catalogue (`host.datasets`), the settings a widget may read (`host.settings`), the live lease and
+cadence (`host.live`), what the providers' plugins declare of the samples (`host.samples.metrics`),
+the registrable-domain grouping (`host.services`), the envelope of a series (`host.series`), and the
+libraries the plugin may use (`host.lib`, *Libraries*). The reads every widget shares -- the volume
+window, the client volumes, the outside peers, the site names, the attribution, the flows by their
+columns, the traffic series, the samples, the rates, the interfaces, the addresses, the geolocation
+and the installation's members -- are the figures library's areas since ADR 0021 (`plugins/figures`),
+over statements the widget declares and reads through `host.query`. It grants no firewall call, no
+fetch and no write. A function called wrongly throws a `TypeError`. Every area is
 documented, function by function, in `docs/widget-host.md`, which a test holds to the areas the host
 has. A row or figures a host function hands is read from the core's own value: its members are read,
 set, added and deleted as any object's, but it takes no symbol, cannot be frozen, and a member cannot

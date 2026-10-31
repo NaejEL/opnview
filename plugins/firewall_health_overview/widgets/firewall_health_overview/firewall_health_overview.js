@@ -36,7 +36,7 @@ exports.widget = {
     var tiles = [];
     var hasRows = false;
     (host.params.set("metrics") || []).forEach(function (metric) {
-      var subjects = host.samples.subjects(metric);
+      var subjects = host.lib.figures.samples.subjects(host, metric);
       if (subjects.length === 0) {
         tiles.push({
           metric: metric,
@@ -63,7 +63,7 @@ exports.widget = {
           state: "absent",
           value: null,
           last_sampled_at: undefined,
-          series: host.samples.points(item),
+          series: host.lib.figures.samples.points(host, item),
           threshold_state: undefined
         };
         var latest = host.query.row("widget_measurement_latest", {

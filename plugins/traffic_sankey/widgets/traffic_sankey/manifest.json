@@ -100,7 +100,8 @@
   "queries": [
     "traffic_sankey.statements.sql",
     "installation.statements.sql",
-    "volume.statements.sql"
+    "volume.statements.sql",
+    "geolocation.statements.sql"
   ],
   "script": "traffic_sankey.js",
   "renderer": {

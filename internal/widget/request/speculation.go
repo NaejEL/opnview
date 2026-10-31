@@ -87,8 +87,6 @@ func (r *Request) fork() *Request {
 	fork.Response = &response
 	fork.Override = snapshot.override
 	fork.Measure = measureRun{}
-	fork.installation = nil
-	fork.placed = copyMap(r.placed)
 	fork.measureWindows = copyMap(r.measureWindows)
 	fork.held = &[]heldLine{}
 	return &fork
@@ -126,7 +124,6 @@ func (run *speculativeRun) adopt(r *Request) (any, bool, error) {
 	*r.Response = *fork.Response
 	r.Override = fork.Override
 	r.Measure = fork.Measure
-	r.placed = fork.placed
 	for _, line := range *fork.held {
 		line.write(line.plugin, line.message)
 	}

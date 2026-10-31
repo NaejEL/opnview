@@ -77,7 +77,8 @@
   "queries": [
     "custom_chart.statements.sql",
     "installation.statements.sql",
-    "series.statements.sql"
+    "series.statements.sql",
+    "samples.statements.sql"
   ],
   "script": "custom_chart.js",
   "renderer": {

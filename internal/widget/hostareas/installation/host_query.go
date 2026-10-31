@@ -34,10 +34,6 @@ import (
 // comparison as 0 or 1 (internal/store/sqldb/driver.go). A column name a result repeats is refused,
 // since an object holds a name once: give the column a name of its own with AS.
 //
-// A column named peer_address names an outside peer, as it does in the core's own reads: every text
-// it holds is placed (internal/widget/request/installation.go, Place), so the geolocations of the
-// peers a statement returned are read together, in one statement, at the first
-// host.services.geolocation call rather than one statement a peer.
 
 func init() {
 	script.RegisterHostArea("query", func(call *script.ScriptCall, area *goja.Object) {
@@ -120,18 +116,11 @@ func runStatement(c *script.ScriptCall, arguments goja.FunctionCall) ([]string, 
 		return nil, nil, true
 	}
 	seen := map[string]bool{}
-	for index, column := range columns {
+	for _, column := range columns {
 		if seen[column] {
 			c.Throw("the statement %s returns two columns named %q; name each with AS", name, column)
 		}
 		seen[column] = true
-		if column == request.PeerAddressColumn {
-			for _, row := range rows {
-				if address, isText := row[index].(string); isText {
-					r.Place(address)
-				}
-			}
-		}
 	}
 	return columns, rows, false
 }

@@ -143,15 +143,15 @@ function fillMetric(host, line, entry, width) {
   setCovered(host, line.window, clipped(host, host.envelope.earliest("widget_earliest_sample")));
   var measure = host.samples.metrics[entry.metric].measures[0];
   var points = [];
-  host.samples.subjects(entry.metric).forEach(function (item) {
+  host.lib.figures.samples.subjects(host, entry.metric).forEach(function (item) {
     if (item.measure !== measure) {
       return;
     }
     line.unit = item.unit;
-    points = points.concat(host.samples.points(item));
+    points = points.concat(host.lib.figures.samples.points(host, item));
   });
   line.measure = "sampled_gauge";
-  line.buckets = host.samples.aggregate(host.request.window, width, points, entry.aggregation);
+  line.buckets = host.lib.figures.samples.aggregate(host.request.window, width, points, entry.aggregation);
   return points.length > 0;
 }
 
@@ -166,13 +166,13 @@ function fillThroughput(host, line, entry, index, width) {
       return;
     }
     ["in", "out"].forEach(function (direction) {
-      points = points.concat(host.samples.throughput(info.device, entry.measure, direction).points);
+      points = points.concat(host.lib.figures.samples.throughput(host, info.device, entry.measure, direction).points);
     });
   });
   line.measure = host.figures.measures.interface_counter;
   line.unit = entry.measure;
   line.lower_bound = true;
-  line.buckets = host.samples.aggregate(host.request.window, width, points, entry.aggregation);
+  line.buckets = host.lib.figures.samples.aggregate(host.request.window, width, points, entry.aggregation);
   return points.length > 0;
 }
 

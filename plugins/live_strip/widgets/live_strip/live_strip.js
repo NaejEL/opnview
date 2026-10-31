@@ -64,7 +64,7 @@ function windowOf(host, cadence) {
 
 // throughput averages each direction's rate over the samples of each bucket, fine and baseline.
 function throughput(host, window, buckets, width) {
-  var series = host.rates.series(window);
+  var series = host.lib.figures.rates.series(host, window);
   var byBucket = {};
   series.instants.forEach(function (instant) {
     var start = instant.at - host.lib.figures.buckets.floorMod(instant.at, width);

@@ -67,7 +67,8 @@
     "interface"
   ],
   "queries": [
-    "volume.statements.sql"
+    "volume.statements.sql",
+    "geolocation.statements.sql"
   ],
   "script": "destination_countries.js",
   "renderer": {

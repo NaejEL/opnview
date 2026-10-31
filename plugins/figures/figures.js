@@ -538,6 +538,8 @@ exports.volume = {
     }
     host.envelope.cover(covered);
     host.envelope.hourFreshness(window.from, window.to);
+    // The outside peers of the rows are placed: their geolocations are read together at the first one asked for.
+    exports.services.place(rows.map(function (entry) { return entry.row.peer_address; }));
     return { requested: { from: window.from, to: window.to }, covered: covered, rows: rows.map(function (entry) { return entry.row; }) };
   },
   // total is the summable figures of every row that counts a connection: every row but the second
@@ -1158,5 +1160,509 @@ exports.series = {
     Object.keys(buckets).forEach(function (start) { buckets[start] = host.json.map(buckets[start]); });
     var until = Math.min(window.to, host.request.now);
     return { buckets: host.json.map(buckets), covered: coveredFrom >= until ? null : { from: coveredFrom, to: until } };
+  }
+};
+
+// ---- samples: the firewall's sampled readings -- its own gauges and its interface counters, as the
+// insight plugin's measurement_sample holds them. A sample is a value at an instant: a bucket of a
+// longer period wants an aggregation, never a count, and a bucket with no sample is a gap, never a 0.
+// Which subject kind and which measures serve a health metric is what the providers' plugins declare
+// (host.samples.metrics). The widget declares, in a samples.statements.sql:
+//
+//   -- statement: widget_measurement_subjects   DISTINCT kind, key, measure, unit of [:from, :to] for :subject_kinds
+//   -- statement: widget_measurement_series     at, value of one subject over [:from, :to)
+//   -- statement: widget_interface_counter      at, value of one interface counter over [:from, :to)
+var THROUGHPUT_MEASURES = {
+  bits_per_second: { in: "bytes_in", out: "bytes_out", per_second: true, factor: 8 },
+  bytes: { in: "bytes_in", out: "bytes_out", per_second: false, factor: 1 },
+  packets: { in: "packets_in", out: "packets_out", per_second: false, factor: 1 },
+  errors: { in: "errors_in", out: "errors_out", per_second: false, factor: 1 }
+};
+
+function aggregatePoints(points, aggregation) {
+  points.sort(function (a, b) { return a.at - b.at; });
+  var result = points[0].value;
+  var sum = 0;
+  points.forEach(function (point) {
+    sum += point.value;
+    if (aggregation === "min") result = Math.min(result, point.value);
+    else if (aggregation === "max") result = Math.max(result, point.value);
+  });
+  if (aggregation === "sum") return sum;
+  if (aggregation === "last") return points[points.length - 1].value;
+  if (aggregation === "mean") return sum / points.length;
+  return result;
+}
+
+exports.samples = {
+  // subjects are the subjects that reported one of a metric's measures in the window: [{kind, key,
+  // measure, unit}], by measure then key.
+  subjects: function (host, metric) {
+    var window = windowOf(host, "samples.subjects");
+    text(metric, "the metric");
+    var mapping = host.samples.metrics[metric];
+    if (mapping === undefined) throw new TypeError("\"" + metric + "\" is not a health metric");
+    var result = [];
+    host.query.rows("widget_measurement_subjects", { from: window.from, to: window.to, subject_kinds: [mapping.kind] }).forEach(function (row) {
+      if (mapping.measures.indexOf(row.measure) >= 0) result.push({ kind: row.kind, key: row.key, measure: row.measure, unit: row.unit });
+    });
+    result.sort(function (a, b) { return a.measure !== b.measure ? compareText(a.measure, b.measure) : compareText(a.key, b.key); });
+    return result;
+  },
+  // points are one subject's samples over the window, oldest first: [{at, value}].
+  points: function (host, subject) {
+    var window = windowOf(host, "samples.points");
+    if (subject === null || typeof subject !== "object") throw new TypeError("the subject is " + describe(subject) + ", not a subject");
+    return host.query.rows("widget_measurement_series", { subject_kind: subject.kind, subject_key: subject.key, measure: subject.measure,
+      from: window.from, to: window.to }).map(function (row) { return { at: row.at, value: row.value }; });
+  },
+  // throughput is one interface counter as points: {points, resets}. A point is the per-second rate
+  // (times 8 for bits) or the increase between two samples, stamped at the later one; a counter that
+  // went down is a reset, counted and never a point.
+  throughput: function (host, device, measure, direction) {
+    var window = windowOf(host, "samples.throughput");
+    text(device, "the device");
+    text(measure, "the throughput measure");
+    text(direction, "the direction");
+    var mapping = THROUGHPUT_MEASURES[measure];
+    if (mapping === undefined) throw new TypeError("\"" + measure + "\" is not a throughput measure");
+    if (direction !== "in" && direction !== "out") throw new TypeError("the direction is \"" + direction + "\", not in or out");
+    var counter = direction === "in" ? mapping.in : mapping.out;
+    var points = [], resets = 0, previous = 0, previousAt = 0, have = false;
+    host.query.rows("widget_interface_counter", { device: device, measure: counter, from: window.from, to: window.to }).forEach(function (row) {
+      if (have && row.at > previousAt) {
+        if (row.value < previous) resets++;
+        else {
+          var perSecond = (row.value - previous) / (row.at - previousAt);
+          points.push({ at: row.at, value: mapping.per_second ? perSecond * mapping.factor : perSecond * (row.at - previousAt) * mapping.factor });
+        }
+      }
+      previous = row.value; previousAt = row.at; have = true;
+    });
+    return { points: points, resets: resets };
+  },
+  // aggregate cuts points into the window's buckets, each combined by mean, min, max, sum or last:
+  // [{from, to, gap, value}], a bucket no point falls in being a gap with no value.
+  aggregate: function (window, width, points, aggregation) {
+    var held = interval(window, "the window");
+    positive(width, "the bucket width");
+    text(aggregation, "the aggregation");
+    var grouped = {};
+    (points || []).forEach(function (point) {
+      var start = point.at - floorMod(point.at, width);
+      if (grouped[start] === undefined) grouped[start] = [];
+      grouped[start].push({ at: point.at, value: point.value });
+    });
+    var buckets = exports.buckets.intervals(held, width).map(function (slot) {
+      var start = slot.from - floorMod(slot.from, width);
+      var bucket = { from: slot.from, to: slot.to, gap: true, value: null };
+      if (grouped[start] !== undefined && grouped[start].length > 0) { bucket.gap = false; bucket.value = aggregatePoints(grouped[start], aggregation); }
+      return bucket;
+    });
+    return buckets.length === 0 ? null : buckets;
+  }
+};
+
+// ---- rates: the current rates, from the latest samples of the insight plugin: a second measure,
+// sampled, never summed with the logged one. A subject with no current sample reads its named absence,
+// no_current_sample, and one older than twice its cadence stale_sample; never a rate of 0. Reading a
+// current rate renews the live-interest lease (host.live.renew). The widget declares, in a
+// rates.statements.sql:
+//
+//   -- statement: widget_rate_rows                  the readings of both sampled subjects in [:since, :now]
+//   -- statement: widget_rate_inside                whether an address is inside, by the clients plugin's membership
+//   -- statement: widget_rate_client_at_address     the strongest identity at an address
+//   -- statement: widget_rate_address_level_client  the most recent address-level client at an address
+//
+// and widget_installation_interfaces (the installation area) for a rate per interface.
+var SAMPLE_SECONDS = 2;
+var RATES = { current: null, inside: {}, clients: {} };
+
+function measurementInterval(host) {
+  var value = host.settings.get("poll_interval_measurement_seconds");
+  if (value === null) return 300;
+  var parsed = parseInt(String(value).trim(), 10);
+  if (isNaN(parsed) || parsed <= 0 || String(parsed) !== String(value).trim()) {
+    throw new TypeError("the setting poll_interval_measurement_seconds is \"" + value + "\", not a positive whole number of seconds");
+  }
+  return parsed;
+}
+
+function newRate() { return { in: 0, out: 0, outMeasured: false, oldestSampledAt: 0, sampledAt: 0, cadence: 0, outSeen: 0, outMissing: 0 }; }
+
+function stampRate(rate, sampledAt, cadence) {
+  if (rate.sampledAt === 0 || sampledAt > rate.sampledAt) rate.sampledAt = sampledAt;
+  if (rate.oldestSampledAt === 0 || sampledAt < rate.oldestSampledAt) rate.oldestSampledAt = sampledAt;
+  if (cadence > rate.cadence) rate.cadence = cadence;
+}
+
+function addIn(rate, value, sampledAt, cadence) { stampRate(rate, sampledAt, cadence); rate.in += value; }
+
+function addOut(rate, value, sampledAt, cadence) {
+  stampRate(rate, sampledAt, cadence);
+  if (value === null) rate.outMissing++;
+  else { rate.out += value; rate.outSeen++; }
+  rate.outMeasured = rate.outSeen > 0 && rate.outMissing === 0;
+}
+
+function addRate(rates, key, value, out, sampledAt, cadence) {
+  if (rates[key] === undefined) rates[key] = newRate();
+  addIn(rates[key], value, sampledAt, cadence);
+  addOut(rates[key], out, sampledAt, cadence);
+}
+
+// addPairRate adds one per-pair reading under a peer: its inbound figure, and its outbound one or
+// the record that it carried none. A pair with neither figure adds nothing.
+function addPairRate(rates, peer, pair) {
+  if (pair.in === null && pair.out === null) return;
+  addRate(rates, peer, pair.in === null ? 0 : pair.in, pair.out, pair.sampledAt, pair.cadence);
+}
+
+// latestReadings keeps each subject's latest reading among the rows: the totals of each local address
+// on a device, and the per-pair figures.
+function latestReadings(rows) {
+  var endpoints = {}, pairs = {};
+  rows.forEach(function (row) {
+    if (row.subject_kind === "interface_endpoint") {
+      var key = row.interface_device + "\u001f" + row.local_address;
+      var reading = endpoints[key];
+      if (reading === undefined || row.sampled_at > reading.sampledAt) {
+        reading = { device: row.interface_device, local: row.local_address, in: null, out: null, sampledAt: row.sampled_at, cadence: row.cadence };
+        endpoints[key] = reading;
+      } else if (row.sampled_at < reading.sampledAt) return;
+      if (row.measure === "rate_bits_in") reading.in = row.value;
+      else if (row.measure === "rate_bits_out") reading.out = row.value;
+    } else if (row.subject_kind === "interface_endpoint_pair") {
+      var pairKey = row.interface_device + "\u001f" + row.local_address + "\u001f" + row.peer;
+      var pair = pairs[pairKey];
+      if (pair === undefined || row.sampled_at > pair.sampledAt) {
+        pair = { device: row.interface_device, local: row.local_address, peer: row.peer, in: null, out: null, sampledAt: row.sampled_at, cadence: row.cadence };
+        pairs[pairKey] = pair;
+      } else if (row.sampled_at < pair.sampledAt) return;
+      if (row.measure === "rate_bits_in") pair.in = row.value;
+      else if (row.measure === "rate_bits_out") pair.out = row.value;
+    }
+  });
+  return { endpoints: endpoints, pairs: pairs };
+}
+
+function isInside(host, address) {
+  if (!Object.prototype.hasOwnProperty.call(RATES.inside, address)) {
+    var row = host.query.row("widget_rate_inside", { address: address });
+    RATES.inside[address] = row !== null && row.inside === true;
+  }
+  return RATES.inside[address];
+}
+
+function clientAt(host, address) {
+  if (!Object.prototype.hasOwnProperty.call(RATES.clients, address)) {
+    var row = host.query.row("widget_rate_client_at_address", { address: address });
+    if (row === null) row = host.query.row("widget_rate_address_level_client", { address: address });
+    RATES.clients[address] = row === null ? null : row.id;
+  }
+  return RATES.clients[address];
+}
+
+// split turns one set of readings into rates per device and per direction, and, with clients, per
+// client and per peer. The totals of each local address are what a device and a client sum; a
+// client and a direction count only the local addresses that are inside. Per direction, the inbound
+// figures are per peer and placed by the peer; the outbound total of a local address goes to outbound
+// when every peer it was read with is outside, to inter_interface when every one is inside, and to
+// outbound_unsplit otherwise.
+function splitReadings(host, readings, withClients) {
+  var result = { byClient: {}, byDevice: {}, byDirection: {}, byPeer: {}, byClientPeer: {}, outboundUnsplit: newRate() };
+  var peersOf = {};
+  Object.keys(readings.pairs).forEach(function (key) {
+    var pair = readings.pairs[key];
+    var endpointKey = pair.device + "\u001f" + pair.local;
+    var endpoint = readings.endpoints[endpointKey];
+    if (endpoint !== undefined && endpoint.sampledAt === pair.sampledAt) {
+      if (peersOf[endpointKey] === undefined) peersOf[endpointKey] = [];
+      peersOf[endpointKey].push(pair);
+    }
+  });
+  var keys = Object.keys(readings.endpoints);
+  keys.sort(function (a, b) {
+    var ea = readings.endpoints[a], eb = readings.endpoints[b];
+    return ea.device !== eb.device ? compareText(ea.device, eb.device) : compareText(ea.local, eb.local);
+  });
+  keys.forEach(function (key) {
+    var endpoint = readings.endpoints[key];
+    var inbound = endpoint.in === null ? 0 : endpoint.in;
+    addRate(result.byDevice, endpoint.device, inbound, endpoint.out, endpoint.sampledAt, endpoint.cadence);
+    if (!isInside(host, endpoint.local)) return;
+    var peers = (peersOf[key] || []).slice();
+    peers.sort(function (a, b) { return compareText(a.peer, b.peer); });
+    var outside = 0, between = 0;
+    peers.forEach(function (pair) {
+      var direction = "inbound";
+      if (isInside(host, pair.peer)) { direction = "inter_interface"; between++; } else outside++;
+      if (pair.in !== null) {
+        if (result.byDirection[direction] === undefined) result.byDirection[direction] = newRate();
+        addIn(result.byDirection[direction], pair.in, pair.sampledAt, pair.cadence);
+      }
+    });
+    var outDirection = "";
+    if (outside > 0 && between === 0) outDirection = "outbound";
+    else if (between > 0 && outside === 0) outDirection = "inter_interface";
+    if (outDirection === "") addOut(result.outboundUnsplit, endpoint.out, endpoint.sampledAt, endpoint.cadence);
+    else {
+      if (result.byDirection[outDirection] === undefined) result.byDirection[outDirection] = newRate();
+      addOut(result.byDirection[outDirection], endpoint.out, endpoint.sampledAt, endpoint.cadence);
+    }
+    if (!withClients) return;
+    peers.forEach(function (pair) { addPairRate(result.byPeer, pair.peer, pair); });
+    var clientId = clientAt(host, endpoint.local);
+    if (clientId === null) return;
+    addRate(result.byClient, clientId, inbound, endpoint.out, endpoint.sampledAt, endpoint.cadence);
+    if (peers.length > 0 && result.byClientPeer[clientId] === undefined) result.byClientPeer[clientId] = {};
+    peers.forEach(function (pair) { addPairRate(result.byClientPeer[clientId], pair.peer, pair); });
+  });
+  return result;
+}
+
+function rateRows(host, since, until) {
+  var interval = measurementInterval(host);
+  return { interval: interval, rows: host.query.rows("widget_rate_rows", { since: since, now: until }).map(function (row) {
+    return { subject_kind: row.subject_kind, interface_device: row.interface_device, local_address: row.local_address, peer: row.peer,
+      measure: row.measure, value: row.value, sampled_at: row.sampled_at,
+      cadence: row.live_cadence_seconds === null || row.live_cadence_seconds === undefined ? interval : row.live_cadence_seconds };
+  }) };
+}
+
+// currentRates reads the rates sampled within twice the measurement interval of now and keeps each
+// subject's latest reading, fine or baseline, renewing the live-interest lease.
+function currentRates(host) {
+  host.live.renew();
+  if (RATES.current === null) {
+    var now = host.request.now;
+    var read = rateRows(host, now - 2 * measurementInterval(host), now);
+    RATES.current = splitReadings(host, latestReadings(read.rows), true);
+  }
+  return RATES.current;
+}
+
+// sampledRate renders one current rate at an instant, or its named absence.
+function sampledRate(rate, present, now) {
+  if (!present) {
+    return { state: "no_current_sample", measure: "sampled", in_bits_per_second: null, out_bits_per_second: null, out_measured: false,
+      sampled_at: null, span_seconds: null, cadence_seconds: null, lower_bound: true };
+  }
+  var stale = rate.cadence > 0 && now - rate.oldestSampledAt > 2 * rate.cadence;
+  return { state: stale ? "stale_sample" : "current", measure: "sampled", in_bits_per_second: rate.in,
+    out_bits_per_second: rate.outMeasured ? rate.out : null, out_measured: rate.outMeasured, sampled_at: rate.sampledAt,
+    span_seconds: SAMPLE_SECONDS, cadence_seconds: rate.cadence > 0 ? rate.cadence : null, lower_bound: true };
+}
+
+function peerRates(host, rates) {
+  var result = {};
+  Object.keys(rates).forEach(function (peer) { result[peer] = sampledRate(rates[peer], true, host.request.now); });
+  return host.json.map(result);
+}
+
+exports.rates = {
+  // current is the rates a "now" figure shows: {by_direction, outbound_unsplit, by_member}, by_direction
+  // one {key, rate} per traffic direction, by_member one per client ("client") or interface
+  // ("interface") holding a current sample, sorted by key, and empty for any other grouping.
+  current: function (host, groupBy) {
+    text(groupBy, "the grouping");
+    var rates = currentRates(host);
+    var now = host.request.now;
+    var result = { by_direction: [], outbound_unsplit: sampledRate(rates.outboundUnsplit, rates.outboundUnsplit.sampledAt !== 0, now), by_member: [] };
+    ["outbound", "inbound", "inter_interface"].forEach(function (direction) {
+      var present = rates.byDirection[direction] !== undefined;
+      result.by_direction.push({ key: direction, rate: sampledRate(present ? rates.byDirection[direction] : newRate(), present, now) });
+    });
+    if (groupBy === "client") {
+      Object.keys(rates.byClient).forEach(function (id) { result.by_member.push({ key: "client:" + id, rate: sampledRate(rates.byClient[id], true, now) }); });
+    } else if (groupBy === "interface") {
+      var byDevice = {};
+      exports.installation.interfaces(host).forEach(function (info) { byDevice[info.device] = info; });
+      Object.keys(rates.byDevice).forEach(function (device) {
+        var key = byDevice[device] !== undefined ? "interface:" + byDevice[device].id : "device:" + device;
+        result.by_member.push({ key: key, rate: sampledRate(rates.byDevice[device], true, now) });
+      });
+    }
+    result.by_member.sort(function (a, b) { return compareText(a.key, b.key); });
+    return result;
+  },
+  // byClient is every client holding a current sample: a map from its id, as text, to its rate.
+  byClient: function (host) {
+    var rates = currentRates(host);
+    var result = {};
+    Object.keys(rates.byClient).forEach(function (id) { result[id] = sampledRate(rates.byClient[id], true, host.request.now); });
+    return host.json.map(result);
+  },
+  // client is one client's current rate, or its named absence.
+  client: function (host, id) {
+    whole(id, "the client id");
+    var rates = currentRates(host);
+    var present = rates.byClient[id] !== undefined;
+    return sampledRate(present ? rates.byClient[id] : newRate(), present, host.request.now);
+  },
+  // byPeer is every peer address an inside local address was read with in a current sample: a map
+  // from the address to its rate.
+  byPeer: function (host) { return peerRates(host, currentRates(host).byPeer); },
+  // clientPeers is the same for one client: a map from each peer address it was read with to its
+  // rate, empty when it has none.
+  clientPeers: function (host, id) {
+    whole(id, "the client id");
+    var rates = currentRates(host);
+    return peerRates(host, rates.byClientPeer[id] === undefined ? {} : rates.byClientPeer[id]);
+  },
+  // series is every sampling instant of [from, to), fine and baseline, oldest first, each split per
+  // direction as the current rates are: {span_seconds, instants: [{at, by_direction, outbound_unsplit}]}.
+  // It renews no lease: it reads history.
+  series: function (host, window) {
+    var held = interval(window, "the window");
+    if (held.to <= held.from) return { span_seconds: SAMPLE_SECONDS, instants: [] };
+    var read = rateRows(host, held.from, held.to - 1);
+    var byInstant = {};
+    read.rows.forEach(function (row) { if (byInstant[row.sampled_at] === undefined) byInstant[row.sampled_at] = []; byInstant[row.sampled_at].push(row); });
+    var instants = Object.keys(byInstant).map(Number);
+    instants.sort(function (a, b) { return a - b; });
+    var figures = function (rate) { return { in_bits_per_second: rate.in, out_bits_per_second: rate.out }; };
+    return { span_seconds: SAMPLE_SECONDS, instants: instants.map(function (at) {
+      var rates = splitReadings(host, latestReadings(byInstant[at]), false);
+      var byDirection = {};
+      Object.keys(rates.byDirection).forEach(function (direction) { byDirection[direction] = figures(rates.byDirection[direction]); });
+      return { at: at, by_direction: host.json.map(byDirection), outbound_unsplit: figures(rates.outboundUnsplit) };
+    }) };
+  },
+  // none is the named absence of a rate: what a subject with no current sample reads.
+  none: function (host) { return sampledRate(newRate(), false, hostOf(host).request.now); }
+};
+
+// ---- interfaces: what the store counts per interface beyond its volume -- the clients a window
+// showed on each interface out of those it is known to have, and the rules that do not log, per
+// interface. The widget declares, in an interfaces.statements.sql:
+//
+//   -- statement: widget_interface_seen_clients   interface_id, seen over [:from, :to)
+//   -- statement: widget_interface_known_clients  known of :interface_id seen at or after :from
+//   -- statement: widget_rules_logging            id, interface, legacy, logs_matches of every rule
+//
+// and widget_installation_interfaces (the installation area).
+exports.interfaces = {
+  // clients are, per interface, [{interface_id, seen, known}]: seen is the distinct inside clients of
+  // the flows of [from, to) on it, known the client rows of the interface seen at or after from.
+  clients: function (host, from, to) {
+    whole(from, "from");
+    whole(to, "to");
+    var seen = {};
+    host.query.rows("widget_interface_seen_clients", { from: from, to: to }).forEach(function (row) {
+      if (row.interface_id !== null && row.interface_id !== undefined) seen[row.interface_id] = row.seen;
+    });
+    return exports.installation.interfaces(host).map(function (info) {
+      var known = host.query.row("widget_interface_known_clients", { interface_id: info.id, from: from });
+      return { interface_id: info.id, seen: seen[info.id] === undefined ? 0 : seen[info.id], known: known === null ? 0 : known.known };
+    });
+  },
+  // ruleLogging is {not_logging_by_interface, floating_not_logging, unresolved_not_logging,
+  // not_reported}: the first maps an interface id, as a string, to the rules naming it whose logging
+  // is off; the others count the rules naming no interface, the rules whose interfaces did not
+  // resolve, and the rules whose logging flag was not reported at all.
+  ruleLogging: function (host) {
+    var byKey = {};
+    exports.installation.interfaces(host).forEach(function (info) { byKey[info.identifier] = info.id; });
+    var result = { not_logging_by_interface: {}, floating_not_logging: 0, unresolved_not_logging: 0, not_reported: 0 };
+    host.query.rows("widget_rules_logging", {}).forEach(function (rule) {
+      if (rule.logs_matches === null || rule.logs_matches === undefined) { result.not_reported++; return; }
+      if (rule.logs_matches === true) return;
+      var list = rule.interface === null || rule.interface === undefined ? null : rule.interface;
+      var keys = list === null ? [] : list.split(",").map(function (part) { return part.trim(); }).filter(function (part) { return part !== ""; });
+      if (list === null) { result.unresolved_not_logging++; return; }
+      if (keys.length === 0) { result.floating_not_logging++; return; }
+      if (rule.legacy === true) { result.unresolved_not_logging++; return; }
+      var resolved = {}, unresolved = false;
+      keys.forEach(function (key) { if (byKey[key] === undefined) unresolved = true; else resolved[byKey[key]] = true; });
+      Object.keys(resolved).forEach(function (id) { result.not_logging_by_interface[id] = (result.not_logging_by_interface[id] || 0) + 1; });
+      if (unresolved && Object.keys(resolved).length === 0) result.unresolved_not_logging++;
+    });
+    result.not_logging_by_interface = host.json.map(result.not_logging_by_interface);
+    return result;
+  }
+};
+
+// ---- addresses: the addresses this installation's upstream interfaces -- those carrying a gateway,
+// never one called something -- have held, as opnview saw them. The address an interface holds is
+// what the firewall sees, and only that: behind an upstream NAT the public address belongs to a
+// device opnview does not read. The widget declares, in an addresses.statements.sql:
+//
+//   -- statement: widget_interface_addresses   the addresses and gateways of :interface_id, newest first
+//
+// and widget_installation_interfaces (the installation area).
+exports.addresses = {
+  sourceFields: { addr4: "addr4", addr6: "addr6", ipv4: "ipv4", ipv6: "ipv6", gateways: "gateways" },
+  // upstreams are every upstream interface: [{interface_id, history}], history being every address and
+  // gateway it held, newest first: [{source_field, address, prefix_length, address_family,
+  // first_seen_at, last_seen_at}].
+  upstreams: function (host) {
+    var result = [];
+    exports.installation.interfaces(host).forEach(function (info) {
+      if (!info.upstream) return;
+      var history = host.query.rows("widget_interface_addresses", { interface_id: info.id }).map(function (row) {
+        return { source_field: row.source_field, address: row.address, prefix_length: orNull(row.prefix_length), address_family: row.address_family,
+          first_seen_at: row.first_seen_at, last_seen_at: row.last_seen_at };
+      });
+      result.push({ interface_id: info.id, history: history });
+    });
+    return result;
+  }
+};
+
+// ---- services: the stored geolocation of an address, as the maxmind plugin holds it. A widget never
+// downloads, looks up or refreshes anything: it reads what the core holds. The widget declares, in a
+// geolocation.statements.sql:
+//
+//   -- statement: widget_geolocation   the rows of plugin_maxmind.geo_asn for :addresses, a JSON list
+//
+// The outside peers the volume area handed are read together at the first address asked for, in one
+// statement rather than one statement a peer; geolocations(host, addresses) reads a list of its own.
+var GEOLOCATION = { read: {}, placed: {} };
+var GEOLOCATION_BATCH = 20000;
+
+function readGeolocations(host, addresses) {
+  addresses.sort(compareText);
+  for (var start = 0; start < addresses.length; start += GEOLOCATION_BATCH) {
+    var batch = addresses.slice(start, start + GEOLOCATION_BATCH);
+    host.query.rows("widget_geolocation", { addresses: batch }).forEach(function (row) {
+      GEOLOCATION.read[row.address] = { lookup_state: row.lookup_state, country_code: orNull(row.country_code), country_name: orNull(row.country_name),
+        latitude: orNull(row.latitude), longitude: orNull(row.longitude), asn: orNull(row.asn), operator: orNull(row.operator),
+        dataset_build_at: orNull(row.dataset_build_at) };
+    });
+    batch.forEach(function (address) {
+      if (GEOLOCATION.read[address] === undefined) {
+        GEOLOCATION.read[address] = { lookup_state: "no_row", country_code: null, country_name: null, latitude: null, longitude: null,
+          asn: null, operator: null, dataset_build_at: null };
+      }
+    });
+  }
+}
+
+exports.services = {
+  // place records outside peers the request is placing, so their geolocations are read together.
+  place: function (addresses) {
+    (addresses || []).forEach(function (address) { if (typeof address === "string" && address !== "") GEOLOCATION.placed[address] = true; });
+  },
+  // geolocations reads a list of addresses at once; each is then answered from memory.
+  geolocations: function (host, addresses) {
+    hostOf(host);
+    var pending = [];
+    (addresses || []).forEach(function (address) { if (typeof address === "string" && GEOLOCATION.read[address] === undefined && pending.indexOf(address) < 0) pending.push(address); });
+    if (pending.length > 0) readGeolocations(host, pending);
+  },
+  // geolocation is the stored geolocation of one address: {lookup_state, country_code, country_name,
+  // latitude, longitude, asn, operator, dataset_build_at}; lookup_state is resolved, miss, pending, or
+  // no_row for an address never looked up.
+  geolocation: function (host, address) {
+    hostOf(host);
+    text(address, "the address");
+    if (GEOLOCATION.read[address] === undefined) {
+      var pending = [address];
+      Object.keys(GEOLOCATION.placed).forEach(function (placed) { if (GEOLOCATION.read[placed] === undefined && placed !== address) pending.push(placed); });
+      GEOLOCATION.placed = {};
+      readGeolocations(host, pending);
+    }
+    return GEOLOCATION.read[address];
   }
 };

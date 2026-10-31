@@ -7,17 +7,14 @@ import (
 	"github.com/NaejEL/opnview/internal/widget/script"
 )
 
-// host.services: what the two service kinds answered, as stored -- the registrable-domain grouping
-// of the Public Suffix List in use, and the IP geolocation of the dataset in use. A widget never
-// downloads, looks up or refreshes anything: it reads what the core holds.
+// host.services: what the Public Suffix List in use answers, the registrable-domain grouping. A widget
+// never downloads, looks up or refreshes anything: it reads what the core holds. The IP geolocation of
+// the dataset in use is the figures library's services area since ADR 0021 (plugins/figures), over
+// the widget's own statement.
 //
 //	host.services.registrable(names)   {available, groups}: groups maps each name to its registrable
 //	                                   domain (a name that is itself a public suffix stands for itself);
 //	                                   available is false, and groups null, while no list is held
-//	host.services.geolocation(address) the stored geolocation of one address: {lookup_state,
-//	                                   country_code, country_name, latitude, longitude, asn, operator,
-//	                                   dataset_build_at}; lookup_state is resolved, miss, pending, or
-//	                                   no_row for an address never looked up
 
 func init() {
 	script.RegisterHostArea("services", func(call *script.ScriptCall, area *goja.Object) {
@@ -37,13 +34,6 @@ func init() {
 				}
 			}
 			return value
-		})
-		call.Function(area, "geolocation", func(arguments goja.FunctionCall) goja.Value {
-			info, err := r.Geolocation(call.TextOf(arguments.Argument(0), "the address"))
-			if err != nil {
-				return call.Fail(err)
-			}
-			return call.Value(info)
 		})
 	})
 }
