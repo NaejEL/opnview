@@ -65,7 +65,7 @@ func cloneStrategy() (string, error) {
 
 // testTemplateRevision is raised when what Open writes into a fresh database changes for a reason
 // the schema's digest does not see.
-const testTemplateRevision = "5"
+const testTemplateRevision = "6"
 
 var (
 	templateOnce sync.Once

@@ -1415,17 +1415,27 @@ var LEG_COLUMNS = ["flow_id", "observed_at", "device", "direction", "action", "p
   "ip_version", "dst_is_this_firewall", "ingested_at"];
 
 // legsByKeys reads the legs of some (device, address, address) keys logged at or before an instant, in chunks:
-// each read is one statement whatever the number of keys.
+// each read is one statement whatever the number of keys. A chunk whose legs are more than one read holds is
+// read again as two halves, down to one key, so a backlog of keys -- a run after the plugin's state was
+// reset -- is read whole rather than refused run after run; one key with more legs than a read holds is the
+// one case refused.
 function legsByKeys(host, keys, latest) {
   var legs = [];
-  chunks(keys, READ_CHUNK).forEach(function (chunk) {
-    var read = host.datasets.rows("leg", { keys: { columns: ["device", "canonical_src_address", "canonical_dst_address"],
+  function read(chunk) {
+    var held = host.datasets.rows("leg", { keys: { columns: ["device", "canonical_src_address", "canonical_dst_address"],
       values: chunk }, to: latest + 1, columns: LEG_COLUMNS });
-    if (read.truncated) {
-      throw new Error("the legs of " + chunk.length + " keys are more than one read holds");
+    if (!held.truncated) {
+      legs = legs.concat(held.rows);
+      return;
     }
-    legs = legs.concat(read.rows);
-  });
+    if (chunk.length === 1) {
+      throw new Error("the legs of one key are more than one read holds");
+    }
+    var half = Math.ceil(chunk.length / 2);
+    read(chunk.slice(0, half));
+    read(chunk.slice(half));
+  }
+  chunks(keys, READ_CHUNK).forEach(read);
   return legs;
 }
 
@@ -2335,6 +2345,8 @@ exports.derivations = {
 };
 
 exports.helpers = {
+  // legs_by_keys reads legs through a host handed in, as the join reads them: the read halves on a truncation.
+  legs_by_keys: function (host, keys, latest) { return legsByKeys(host, keys, latest); },
   capture_from: function (config, enabled, interfacesInfo) {
     return captureFrom(config, enabled, interfacesInfo === undefined ? null : interfacesFrom(interfacesInfo));
   },

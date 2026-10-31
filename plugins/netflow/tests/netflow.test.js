@@ -318,3 +318,21 @@ test("a record starting while the filter log has not been read past it plus the 
     timeouts: timeouts });
   t.equal(decisions.length, 0, "a record decided before the filter log was read past it");
 });
+
+test("a chunk of keys whose legs are more than one read holds is read again in halves, down to one key", function (t) {
+  // A dataset host that holds at most two keys' legs in one read, and records what it was asked.
+  var asked = [];
+  var host = { datasets: { rows: function (name, options) {
+    asked.push(options.keys.values.length);
+    if (options.keys.values.length > 2) return { rows: [], truncated: true };
+    return { rows: options.keys.values.map(function (key) { return { flow_id: key[2] }; }), truncated: false };
+  } } };
+  var keys = [1, 2, 3, 4, 5, 6, 7].map(function (n) { return ["vlan0.10", "192.0.2." + n, "203.0.113." + n]; });
+  var legs = t.helper("legs_by_keys", host, keys, 1000);
+  t.equal(legs.map(function (leg) { return leg.flow_id; }), keys.map(function (key) { return key[2]; }), "every key's legs, in order");
+  t.equal(asked, [7, 4, 2, 2, 3, 2, 1], "the chunk halved until a read holds it");
+  var one = { datasets: { rows: function () { return { rows: [], truncated: true }; } } };
+  var thrown = "";
+  try { t.helper("legs_by_keys", one, [keys[0]], 1000); } catch (e) { thrown = String(e.message || e); }
+  t.assert(thrown.indexOf("one key") >= 0, "one key with more legs than a read holds is refused: " + thrown);
+});
