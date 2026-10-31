@@ -50,7 +50,7 @@ function leftFlows(host, left, scope, selected) {
   if (left === "interface") {
     host.lib.figures.volume.window(host).rows.forEach(function (row) {
       if (row.exit_leg_device !== null || !host.lib.figures.volume.scopeMatches(scope, row) ||
-        !host.peers.keepInterface(selected, row)) {
+        !host.lib.figures.peers.keepInterface(selected, row)) {
         return;
       }
       var local = host.lib.figures.volume.localInterface(row);
@@ -78,7 +78,7 @@ function leftFlows(host, left, scope, selected) {
       traffic_direction: row.traffic_direction,
       exit_leg_device: null
     };
-    if (!host.lib.figures.volume.scopeMatches(scope, key) || !host.peers.keepInterface(selected, key)) {
+    if (!host.lib.figures.volume.scopeMatches(scope, key) || !host.lib.figures.peers.keepInterface(selected, key)) {
       return;
     }
     flows.push({
@@ -108,12 +108,12 @@ exports.widget = {
     var measure = host.params.text("measure");
     var directions = host.lib.figures.volume.directions;
     var thisFirewall = host.lib.figures.matrixplacement.keys.this_firewall;
-    var reasons = host.peers.reasons;
+    var reasons = host.lib.figures.peers.reasons;
     var flows = leftFlows(host, left, host.params.text("scope"), host.refs.ids("interfaces"));
 
     // Each unnamed bin lists its addresses with their figures, which sum to the bin: a destination the
     // right-hand side cannot name is still shown by its address (C2).
-    var unnamed = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row], true);
+    var unnamed = host.lib.figures.peers.bins(host, [reasons.miss, reasons.pending, reasons.no_row], true);
     var pairs = {};
     var pairList = [];
     var nodes = {};
@@ -145,7 +145,7 @@ exports.widget = {
       } else {
         var geo = host.services.geolocation(flow.peer);
         if (geo.lookup_state !== "resolved") {
-          unnamed.addAddress(host.peers.placementState(geo), flow.peer, flow.figures);
+          unnamed.addAddress(host.lib.figures.peers.placementState(geo), flow.peer, flow.figures);
           otherList.push(flow.figures);
           return;
         }

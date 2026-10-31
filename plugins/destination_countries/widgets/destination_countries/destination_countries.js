@@ -30,9 +30,9 @@ function sortValue(order, row) {
 exports.widget = {
   serve: function (host) {
     var volume = host.lib.figures.volume.window(host);
-    var reasons = host.peers.reasons;
-    var peers = host.peers.outside(volume.rows, host.lib.figures.volume.scopes.all, host.refs.ids("interfaces")).peers;
-    var bins = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row]);
+    var reasons = host.lib.figures.peers.reasons;
+    var peers = host.lib.figures.peers.outside(host, volume.rows, host.lib.figures.volume.scopes.all, host.refs.ids("interfaces")).peers;
+    var bins = host.lib.figures.peers.bins(host, [reasons.miss, reasons.pending, reasons.no_row]);
     var groups = {};
     var groupList = [];
     // Every peer's figures, summed in one call: host.figures.sum is add folded over a list.
@@ -40,7 +40,7 @@ exports.widget = {
     peers.forEach(function (peer) {
       var geo = host.services.geolocation(peer.address);
       if (geo.lookup_state !== "resolved") {
-        bins.add(host.peers.placementState(geo), peer.figures, 1);
+        bins.add(host.lib.figures.peers.placementState(geo), peer.figures, 1);
         return;
       }
       var key = "country:" + (geo.country_code === null ? "none" : geo.country_code);

@@ -28,12 +28,12 @@ exports.widget = {
     var sizeBy = host.params.text("size_by");
     var minimum = host.params.integer("min_count");
     var selected = host.refs.ids("interfaces");
-    var reasons = host.peers.reasons;
+    var reasons = host.lib.figures.peers.reasons;
     var directions = host.lib.figures.volume.directions;
     var firewall = host.params.has("engines", "firewall_rule");
     var points = [];
     var belowMembers = 0;
-    var bins = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row, reasons.no_coordinates,
+    var bins = host.lib.figures.peers.bins(host, [reasons.miss, reasons.pending, reasons.no_row, reasons.no_coordinates,
       reasons.east_west, reasons.other_endpoint]);
     var total = host.figures.zero();
     var below = host.figures.zero();
@@ -53,7 +53,7 @@ exports.widget = {
       var order = [];
       volume.rows.forEach(function (row) {
         if (row.exit_leg_device !== null || row.blocked_connections === 0 ||
-          !host.peers.keepInterface(selected, row)) {
+          !host.lib.figures.peers.keepInterface(selected, row)) {
           return;
         }
         var blocked = host.lib.figures.mapfilters.blockedOnly(row);
@@ -78,9 +78,9 @@ exports.widget = {
           peer.interfaces.push(local);
         }
       });
-      host.peers.sorted(order).forEach(function (peer) {
+      host.lib.figures.peers.sorted(host, order).forEach(function (peer) {
         var geo = host.services.geolocation(peer.address);
-        var reason = host.peers.placement(geo);
+        var reason = host.lib.figures.peers.placement(geo);
         if (reason !== "") {
           bins.add(reason, peer.figures, 1);
           return;
@@ -144,7 +144,7 @@ exports.widget = {
         var count = events[address];
         securityEvents.value += count;
         var geo = host.services.geolocation(address);
-        var reason = host.peers.placement(geo);
+        var reason = host.lib.figures.peers.placement(geo);
         if (reason !== "") {
           securityBins[reason].addresses += 1;
           securityBins[reason].events.value += count;

@@ -7,13 +7,13 @@ exports.widget = {
   serve: function (host) {
     var volume = host.lib.figures.volume.window(host);
     var scope = host.params.text("scope");
-    var reasons = host.peers.reasons;
-    var bins = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row, reasons.no_coordinates]);
+    var reasons = host.lib.figures.peers.reasons;
+    var bins = host.lib.figures.peers.bins(host, [reasons.miss, reasons.pending, reasons.no_row, reasons.no_coordinates]);
     if (scope === host.lib.figures.volume.scopes.all) {
       bins.add(reasons.east_west, host.figures.zero(), 0);
       bins.add(reasons.this_firewall, host.figures.zero(), 0);
     }
-    var grouped = host.peers.outside(volume.rows, scope, host.refs.ids("interfaces"));
+    var grouped = host.lib.figures.peers.outside(host, volume.rows, scope, host.refs.ids("interfaces"));
     // A row of the scope with no outside peer has no point: it is unplaced, as inter-interface
     // traffic or as this firewall's own.
     grouped.others.forEach(function (row) {
@@ -36,7 +36,7 @@ exports.widget = {
       }
       hasRows = true;
       var geo = host.services.geolocation(peer.address);
-      var reason = host.peers.placement(geo);
+      var reason = host.lib.figures.peers.placement(geo);
       if (reason !== "") {
         bins.add(reason, allowed, 1);
         return;

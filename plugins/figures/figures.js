@@ -603,3 +603,139 @@ exports.clients = {
     return { requested: { from: window.from, to: window.to }, covered: covered, clients: clients };
   }
 };
+
+// ---- peers: the outside peers of the rolling window and where the geolocation placed them, for the
+// map, country, operator and Sankey widgets. A peer the geolocation could not place is never dropped:
+// it lands in a named unplaced bin, so placed plus unplaced is the total. The rows are the volume
+// area's; a geolocation is what host.services.geolocation answers; figures are summable figures.
+var UNPLACED = { miss: "miss", pending: "pending", no_row: "no_row", no_coordinates: "no_coordinates",
+  east_west: "east_west", this_firewall: "this_firewall_without_outside_end", other_endpoint: "other_endpoint" };
+
+function interfaceFilterOf(value) {
+  if (value === null || value === undefined) return null;
+  if (!Array.isArray(value)) throw new TypeError("the interface filter is " + describe(value) + ", not an array of whole numbers");
+  var selected = {};
+  value.forEach(function (id) { selected[whole(id, "the interface filter's member")] = true; });
+  return selected;
+}
+
+function keepInterface(selected, row) {
+  if (selected === null) return true;
+  var local = exports.volume.localInterface(row);
+  return local !== null && selected[local] === true;
+}
+
+function sortedPeers(peers) {
+  var list = Object.keys(peers).map(function (address) { return peers[address]; });
+  list.sort(function (a, b) { return a.figures.bytes !== b.figures.bytes ? (a.figures.bytes > b.figures.bytes ? -1 : 1) : compareText(a.address, b.address); });
+  return list.map(function (peer) {
+    var ids = Object.keys(peer.interfaces).map(Number);
+    ids.sort(function (a, b) { return a - b; });
+    return { address: peer.address, figures: peer.figures, interfaces: ids };
+  });
+}
+
+function geoOf(geo) {
+  if (geo === null || typeof geo !== "object") throw new TypeError("the geolocation is " + describe(geo) + ", not what host.services.geolocation answers");
+  return geo;
+}
+
+exports.peers = {
+  reasons: UNPLACED,
+  // outside groups the window's rows by outside peer, in a scope and for an interface filter (an id
+  // list, or null for none): {peers, others}. peers is [{address, figures, interfaces}], by bytes then
+  // address; others is every row of the scope and filter that has no outside peer, in order. A second
+  // leg is in neither.
+  outside: function (host, rows, scope, interfaces) {
+    hostOf(host);
+    text(scope, "the scope");
+    var selected = interfaceFilterOf(interfaces);
+    var peers = {};
+    var others = [];
+    rows.forEach(function (row) {
+      if ((row.exit_leg_device !== null && row.exit_leg_device !== undefined) || !exports.volume.scopeMatches(scope, row) ||
+          !keepInterface(selected, row)) return;
+      if (row.peer_address === null || row.peer_address === undefined) { others.push(row); return; }
+      var peer = peers[row.peer_address];
+      if (peer === undefined) { peer = { address: row.peer_address, figures: host.figures.zero(), interfaces: {} }; peers[row.peer_address] = peer; }
+      peer.figures = host.figures.add(peer.figures, figuresOf(row));
+      var local = exports.volume.localInterface(row);
+      if (local !== null) peer.interfaces[local] = true;
+    });
+    return { peers: sortedPeers(peers), others: others };
+  },
+  // sorted is peers [{address, figures, interfaces}] in the same order, each interface list sorted.
+  sorted: function (host, listed) {
+    hostOf(host);
+    var peers = {};
+    listed.forEach(function (peer) {
+      if (peers[peer.address] !== undefined) throw new TypeError("peers.sorted is handed the address " + peer.address + " twice");
+      var interfaces = {};
+      (peer.interfaces || []).forEach(function (id) { interfaces[id] = true; });
+      peers[peer.address] = { address: peer.address, figures: host.figures.add(host.figures.zero(), figuresOf(peer.figures)), interfaces: interfaces };
+    });
+    return sortedPeers(peers);
+  },
+  // keepInterface says whether a row's inside interface passes an interface filter.
+  keepInterface: function (interfaces, row) { return keepInterface(interfaceFilterOf(interfaces), row); },
+  // placement is "" for an address placed with coordinates, otherwise its unplaced bin.
+  placement: function (geo) {
+    geoOf(geo);
+    switch (geo.lookup_state) {
+      case "resolved": return (geo.latitude === null || geo.latitude === undefined || geo.longitude === null || geo.longitude === undefined) ? UNPLACED.no_coordinates : "";
+      case "miss": return UNPLACED.miss;
+      case "pending": return UNPLACED.pending;
+      default: return UNPLACED.no_row;
+    }
+  },
+  // placementState is the bin of an address the geolocation did not resolve.
+  placementState: function (geo) {
+    geoOf(geo);
+    switch (geo.lookup_state) {
+      case "miss": return UNPLACED.miss;
+      case "pending": return UNPLACED.pending;
+      default: return UNPLACED.no_row;
+    }
+  },
+  // bins are the unplaced bins, each reason present even at zero: {add(reason, figures, addresses),
+  // addAddress(reason, address, figures), list(), total()}; list() is [{reason, addresses, volume}] in
+  // the order the reasons were first named, with members [{address, volume}] when listed.
+  bins: function (host, reasons, listed) {
+    hostOf(host);
+    var order = reasons.slice();
+    var figures = {};
+    var members = {};
+    var addresses = {};
+    order.forEach(function (reason) { figures[reason] = host.figures.zero(); members[reason] = 0; });
+    function add(reason, added, count) {
+      text(reason, "the reason");
+      if (figures[reason] === undefined) { figures[reason] = host.figures.zero(); members[reason] = 0; order.push(reason); }
+      figures[reason] = host.figures.add(figures[reason], added);
+      members[reason] += count;
+    }
+    return {
+      add: function (reason, added, count) { add(reason, figuresOf(added), whole(count, "the addresses")); },
+      addAddress: function (reason, address, added) {
+        text(address, "the address");
+        if (addresses[reason] === undefined) addresses[reason] = {};
+        var known = addresses[reason][address];
+        if (known === undefined) { addresses[reason][address] = host.figures.zero(); add(reason, host.figures.zero(), 1); }
+        addresses[reason][address] = host.figures.add(addresses[reason][address], figuresOf(added));
+        figures[reason] = host.figures.add(figures[reason], figuresOf(added));
+      },
+      list: function () {
+        return order.map(function (reason) {
+          var bin = { reason: reason, addresses: members[reason], volume: host.figures.volume(figures[reason]) };
+          if (listed === true) {
+            var held = addresses[reason] || {};
+            var list = Object.keys(held).map(function (address) { return { address: address, volume: host.figures.volume(held[address]) }; });
+            list.sort(function (a, b) { return a.volume.bytes !== b.volume.bytes ? (a.volume.bytes > b.volume.bytes ? -1 : 1) : compareText(a.address, b.address); });
+            bin.members = list;
+          }
+          return bin;
+        });
+      },
+      total: function () { return host.figures.sum(order.map(function (reason) { return figures[reason]; })); }
+    };
+  }
+};
