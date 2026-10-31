@@ -122,7 +122,7 @@ services:
   db-serve:
     extends:
       file: docker-compose.yml
-      service: db-predeployment
+      service: db-durable
     environment:
       # The test services trust every connection; this one asks for the password.
       POSTGRES_HOST_AUTH_METHOD: "scram-sha-256"
@@ -188,7 +188,6 @@ volumes:
   go-mod-cache:
   go-build-cache:
   data:
-  predeployment-database:
   test-database-socket:
   serve-database:
   serve-database-secret:

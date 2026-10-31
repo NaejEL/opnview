@@ -122,6 +122,18 @@ services:
       - "-c"
       - "max_wal_senders=0"
 
+  # The durable database base: the pinned image and its health check, byte-order
+  # locale, telemetry off, nothing else. Nothing in this file starts it: it exists
+  # so that docker-compose.serve.yml can extend it as db-serve, with its data on a
+  # disk and the password it generates, while the pin above stays written once.
+  # It replaced db-predeployment, which the reset of 18 October 2026 removed with
+  # the pre-deployment suite while the serve file still extended it.
+  db-durable:
+    <<: *database-base
+    environment:
+      TIMESCALEDB_TELEMETRY: "off"
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+
   # Arbitrary commands inside the Debian toolchain.
   dev:
     <<: *dev-base
