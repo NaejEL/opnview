@@ -93,7 +93,7 @@ function fillTraffic(host, line, entry, index, width) {
     return resolved === null ? null : resolved.text;
   };
   var scopedInterface = idOf("interface");
-  var traffic = host.series.traffic({
+  var traffic = host.lib.figures.series.traffic(host, {
     interfaces: scopedInterface === null ? null : [scopedInterface],
     client_id: idOf("client"),
     rule_id: idOf("rule"),
@@ -278,7 +278,7 @@ function annotation(host, kind, width) {
     });
     return overlay;
   }
-  var traffic = host.series.traffic({}, width);
+  var traffic = host.lib.figures.series.traffic(host, {}, width);
   Object.keys(traffic.buckets).map(Number).sort(function (a, b) {
     return a - b;
   }).forEach(function (start) {

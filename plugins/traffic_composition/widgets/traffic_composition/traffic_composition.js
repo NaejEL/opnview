@@ -62,7 +62,7 @@ function pfStateRates(host, groupBy) {
   var keys = [];
   latest.rows.forEach(function (row) {
     var key = groupBy === "protocol" ? "protocol:" + (row.protocol === null ? "" : row.protocol) :
-      host.flows.serviceKey(row.protocol === "" ? null : row.protocol, row.port);
+      host.lib.figures.flows.serviceKey(row.protocol === "" ? null : row.protocol, row.port);
     if (sums[key] === undefined) {
       sums[key] = { "in": 0, out: 0, span: row.span_seconds };
       keys.push(key);
@@ -140,7 +140,7 @@ function interfaceSlice(host, id) {
 // partMember is the slice key and slice of a part of the flows (host.flows) in a grouping.
 function partMember(host, groupBy, part) {
   if (groupBy === "service_port") {
-    var key = host.flows.serviceKey(part.protocol, part.port);
+    var key = host.lib.figures.flows.serviceKey(part.protocol, part.port);
     if (part.port === null) {
       return { key: key, slice: newSlice({}) };
     }
@@ -229,7 +229,7 @@ function ring(host, members, measure, limit) {
 // into "other". A bucket that is a gap with no record has no value; one complete with no record
 // reads 0.
 function recentPart(host, groupBy, measure, scope, interfaces, clients, shownKeys, seconds) {
-  var recent = host.flows.recent(seconds, { scope: scope, interfaces: interfaces, clients: clients });
+  var recent = host.lib.figures.flows.recent(host, seconds, { scope: scope, interfaces: interfaces, clients: clients });
   var shown = {};
   shownKeys.forEach(function (key) { shown[key] = true; });
   var keys = shownKeys.concat(["other"]);
@@ -342,7 +342,7 @@ exports.widget = {
       });
     } else {
       host.envelope.coverFlows("composition_beyond_flow_horizon");
-      host.flows.parts({ scope: scope, interfaces: interfaceIds, clients: clientIds }).forEach(function (part) {
+      host.lib.figures.flows.parts(host, { scope: scope, interfaces: interfaceIds, clients: clientIds }).forEach(function (part) {
         hasRows = true;
         var member = partMember(host, groupBy, part);
         add(member.key, member.slice, part, part.traffic_direction);

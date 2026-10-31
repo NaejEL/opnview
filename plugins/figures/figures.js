@@ -1018,3 +1018,145 @@ exports.attribution = {
       rate: rate.rate, rate_state: rate.state, mean_delay_seconds: count.mean, max_delay_seconds: count.max };
   }
 };
+
+// ---- flows: the window's flows by their columns -- whichever source wrote them -- for the
+// compositions by protocol, service port and blocking reason, and their recent part. A filter is
+// {scope, interfaces, clients}: a traffic scope ("all", or absent, for every one) and id lists, null
+// for no restriction. The widget declares, in a flows.statements.sql:
+//
+//   -- statement: widget_flow_parts / _measured          the window's flows per direction, protocol,
+//                                                        port and decision, with their summable figures
+//   -- statement: widget_flow_recent_parts / _measured   the same per bucket of :width seconds, inside
+//                                                        interface and client as well
+var DECISIONS = { allowed: "allowed", firewall_rule: "firewall_rule", firewall_no_rule: "firewall_no_rule",
+  firewall_reason_not_recorded: "firewall_reason_not_recorded", unknown: "unknown" };
+
+function flowFilterOf(filter) {
+  if (filter === null || filter === undefined) return { scope: "all", interface_ids: null, client_ids: null };
+  if (typeof filter !== "object") throw new TypeError("the flow filter is " + describe(filter) + ", not an object");
+  var scope = filter.scope === undefined || filter.scope === null || filter.scope === "" ? "all" : text(filter.scope, "the filter's scope");
+  return { scope: scope, interface_ids: filter.interfaces === undefined ? null : filter.interfaces,
+    client_ids: filter.clients === undefined ? null : filter.clients };
+}
+
+// completeUntil is the instant up to which a provider kind's records are complete: when the last pass
+// of its active provider ended healthy, never later than now; null when none did.
+function completeUntil(host, kind) {
+  var until = null;
+  host.envelope.availability().forEach(function (provider) {
+    if (provider.kind !== kind || !provider.active || provider.outcome === null || provider.outcome === undefined ||
+        provider.checked_at === null || provider.checked_at === undefined) return;
+    if (provider.outcome !== "healthy" && provider.outcome !== "healthy_empty") return;
+    var at = Math.min(provider.checked_at, host.request.now);
+    if (until === null || at > until) until = at;
+  });
+  return until;
+}
+
+exports.flows = {
+  decisions: DECISIONS,
+  // parts are the window's flows per direction, protocol, destination port and decision, each
+  // connection once: [{traffic_direction, protocol, port, decision} and their summable figures].
+  parts: function (host, filter) {
+    var window = windowOf(host, "flows.parts");
+    var bound = flowFilterOf(filter);
+    return host.query.rows("widget_flow_parts", { from: window.from, to: window.to, scope: bound.scope,
+      interface_ids: bound.interface_ids, client_ids: bound.client_ids });
+  },
+  // recent is the logged flows of the trailing seconds before now, in buckets: {from, to,
+  // bucket_seconds, complete_until, buckets, parts}; a bucket after complete_until, before the
+  // earliest flow kept or meeting a collection gap is a gap.
+  recent: function (host, seconds, filter) {
+    hostOf(host);
+    whole(seconds, "the seconds");
+    if (seconds < 1) seconds = 1;
+    var width = Math.floor((seconds + 59) / 60);
+    var now = host.request.now;
+    var window = { from: now - seconds, to: now };
+    var bound = flowFilterOf(filter);
+    var parts = host.query.rows("widget_flow_recent_parts", { from: window.from, to: window.to, scope: bound.scope,
+      interface_ids: bound.interface_ids, client_ids: bound.client_ids, width: width });
+    var until = completeUntil(host, "firewall_log");
+    var earliest = host.envelope.earliest("widget_earliest_flow");
+    var covered = null;
+    if (earliest !== null && until !== null) {
+      var interval = { from: Math.max(window.from, earliest), to: Math.min(window.to, until) };
+      if (interval.to > interval.from) covered = interval;
+    }
+    var gaps = host.envelope.readGaps(["firewall_log"], window);
+    var buckets = exports.buckets.intervals(window, width).map(function (bucket) {
+      return { from: bucket.from, to: bucket.to, gap: exports.buckets.isGap(bucket, covered, gaps) };
+    });
+    return { from: window.from, to: window.to, bucket_seconds: width, complete_until: until, buckets: buckets, parts: parts };
+  },
+  // serviceKey is the key of a service, its port and protocol together: "port:53/udp", or
+  // "port:not_recorded" when no port was logged.
+  serviceKey: function (protocol, port) {
+    if (port === null || port === undefined) return "port:not_recorded";
+    var name = protocol === null || protocol === undefined || protocol === "" ? "not_recorded" : text(protocol, "the protocol");
+    return "port:" + whole(port, "the port") + "/" + name;
+  }
+};
+
+// ---- series: the traffic of the window per bucket, for a chart of series. The widget declares, in
+// a series.statements.sql:
+//
+//   -- statement: widget_traffic_buckets / _measured      the flows per bucket start and direction
+//   -- statement: widget_traffic_hour_slots / _measured   the interface family's 1 h slots of [:from, :to)
+exports.series = {
+  // traffic answers {buckets, covered}: buckets maps a bucket start to {direction: summable figures};
+  // covered is the interval read, null for none. filter is {interfaces, client_id, rule_id, asn,
+  // country, site}, each null or left out for no restriction, and measure: the name of a declared
+  // measure to read whatever the request is answered under. Whole-hour buckets the flows no longer
+  // hold are read from the 1 h slots where only interfaces restrict the series, and say so by a
+  // named state.
+  traffic: function (host, filter, width) {
+    var window = windowOf(host, "series.traffic");
+    positive(width, "the bucket width");
+    var scope = filter === null || filter === undefined ? {} : filter;
+    var measure = scope.measure === null || scope.measure === undefined || scope.measure === "" ? "" : text(scope.measure, "the filter's measure");
+    if (measure !== "" && host.figures.declared.indexOf(measure) < 0) throw new TypeError("no plugin declares the measure \"" + measure + "\"");
+    var optional = function (value) { return value === undefined ? null : value; };
+    var interfaces = optional(scope.interfaces);
+    var buckets = {};
+    function add(start, direction, figures) {
+      if (buckets[start] === undefined) buckets[start] = {};
+      buckets[start][direction] = host.figures.add(buckets[start][direction] === undefined ? {} : buckets[start][direction], figures);
+    }
+    var parameters = { from: window.from, to: window.to, width: width, interface_ids: interfaces, client_id: optional(scope.client_id),
+      rule_id: optional(scope.rule_id), asn: optional(scope.asn), country: optional(scope.country), site: optional(scope.site) };
+    var bucketsStatement = "widget_traffic_buckets", slotsStatement = "widget_traffic_hour_slots";
+    if (measure !== "") { bucketsStatement += "_measured"; slotsStatement += "_measured"; parameters.measure = measure; }
+    host.query.rows(bucketsStatement, parameters).forEach(function (row) { add(row.bucket_start, row.traffic_direction, figuresOf(row)); });
+    var earliest = host.envelope.earliest("widget_earliest_flow");
+    var coveredFrom = window.to;
+    if (earliest !== null) coveredFrom = Math.max(window.from, earliest);
+    var unscoped = optional(scope.client_id) === null && optional(scope.rule_id) === null && optional(scope.country) === null &&
+      optional(scope.asn) === null && optional(scope.site) === null;
+    if (width % 3600 === 0 && unscoped && (earliest === null || earliest > window.from)) {
+      var boundary = earliest === null ? window.to : earliest - floorMod(earliest, 3600);
+      var firstHour = hourEdges(window).first;
+      if (firstHour < boundary) {
+        var selected = null;
+        if (interfaces !== null && interfaces.length > 0) { selected = {}; interfaces.forEach(function (id) { selected[id] = true; }); }
+        var slotsFrom = -1;
+        var slotParameters = { from: firstHour, to: boundary };
+        if (measure !== "") slotParameters.measure = measure;
+        host.query.rows(slotsStatement, slotParameters).forEach(function (row) {
+          var local = exports.volume.localInterface({ traffic_direction: row.traffic_direction, src_interface_id: row.src_interface_id,
+            dst_interface_id: row.dst_interface_id });
+          if (selected !== null && (local === null || selected[local] !== true)) return;
+          if (slotsFrom < 0 || row.hour < slotsFrom) slotsFrom = row.hour;
+          add(row.hour - floorMod(row.hour, width), row.traffic_direction, figuresOf(row));
+        });
+        if (slotsFrom >= 0) {
+          coveredFrom = Math.min(coveredFrom, slotsFrom);
+          host.envelope.state("series_read_from_hour_slots_beyond_flow_horizon");
+        }
+      }
+    }
+    Object.keys(buckets).forEach(function (start) { buckets[start] = host.json.map(buckets[start]); });
+    var until = Math.min(window.to, host.request.now);
+    return { buckets: host.json.map(buckets), covered: coveredFrom >= until ? null : { from: coveredFrom, to: until } };
+  }
+};

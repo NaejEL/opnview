@@ -13,23 +13,11 @@ import (
 )
 
 // host.series: what a chart of series reads beside its buckets (internal/widget/params/series.go,
-// internal/widget/traffic/trafficseries.go, internal/widget/datasets/datasetseries.go): the traffic
-// of the window per bucket, a data-catalogue dataset read as a series, and the envelope of a series
-// of its own -- its providers, its condition, its unresolved references -- for a chart whose series
-// each degrade on their own.
+// internal/widget/trafficseries.go, internal/widget/datasets/datasetseries.go): a data-catalogue
+// dataset read as a series, and the envelope of a series of its own -- its providers, its condition,
+// its unresolved references -- for a chart whose series each degrade on their own. The traffic of the
+// window per bucket is the figures library's series area since ADR 0021 (plugins/figures).
 //
-//	host.series.traffic(filter, width)       the traffic of the window per bucket start and traffic
-//	                                         direction, in the measure the request is answered under:
-//	                                         {buckets, covered}. buckets maps a bucket start to
-//	                                         {direction: summable figures}; covered is the interval read,
-//	                                         null for none. filter is {interfaces, client_id, rule_id, asn,
-//	                                         country, site}, each null or left out for no restriction, and
-//	                                         measure: the name of a declared measure to read whatever the
-//	                                         request is answered under (a series whose measure is
-//	                                         <measure>_bytes or <measure>_packets).
-//	                                         Whole-hour buckets the flows no longer hold are read from the
-//	                                         1 h slots where only interfaces restrict the series, and say so
-//	                                         by a named state
 //	host.series.measureState(measure)        null when a declared measure can answer the window (its
 //	                                         window states recorded as covered throughout it,
 //	                                         internal/widget/request/measure.go); otherwise the named state,
@@ -54,23 +42,6 @@ import (
 //	                                         null unless the aggregation adds up; null when the entry names
 //	                                         no dataset
 
-// trafficRead is a traffic series' figures as a script reads them.
-type trafficRead struct {
-	Buckets map[int64]map[string]traffic.SummableFigures `json:"buckets"`
-	Covered *envelope.Interval                           `json:"covered"`
-}
-
-// trafficFilter is a traffic series' scope as a script writes it.
-type trafficFilter struct {
-	Interfaces []int64 `json:"interfaces"`
-	ClientID   *int64  `json:"client_id"`
-	RuleID     *int64  `json:"rule_id"`
-	Asn        *int64  `json:"asn"`
-	Country    *string `json:"country"`
-	Site       *string `json:"site"`
-	Measure    string  `json:"measure"`
-}
-
 // seriesDatasetRef names the dataset a series reads.
 type seriesDatasetRef struct {
 	Name          string `json:"name"`
@@ -90,36 +61,6 @@ type datasetSeriesRead struct {
 func init() {
 	script.RegisterHostArea("series", func(call *script.ScriptCall, area *goja.Object) {
 		r := call.Request
-		call.Function(area, "traffic", func(arguments goja.FunctionCall) goja.Value {
-			var filter trafficFilter
-			if !script.Absent(arguments.Argument(0)) {
-				call.DecodeFlat(arguments.Argument(0), "the filter", &filter)
-			}
-			width := call.IntegerOf(arguments.Argument(1), "the width")
-			if width <= 0 {
-				call.Throw("the bucket width is %d, not a positive number of seconds", width)
-			}
-			if !r.Preset.Windowed {
-				call.Throw("series.traffic reads a rolling window, and the widget %s is not windowed", r.Preset.Type)
-			}
-			if _, declared := vocab.MeasureNamed(filter.Measure); filter.Measure != "" && !declared {
-				call.Throw("no plugin declares the measure %q", filter.Measure)
-			}
-			buckets, covered, err := traffic.TrafficBuckets(r, traffic.TrafficFilter{Interfaces: filter.Interfaces,
-				ClientID: filter.ClientID, RuleID: filter.RuleID, Asn: filter.Asn, Country: filter.Country,
-				Site: filter.Site, Measure: filter.Measure}, width)
-			if err != nil {
-				return call.Fail(err)
-			}
-			read := trafficRead{Buckets: map[int64]map[string]traffic.SummableFigures{}, Covered: covered}
-			for start, directions := range buckets {
-				read.Buckets[start] = map[string]traffic.SummableFigures{}
-				for direction, figures := range directions {
-					read.Buckets[start][direction] = traffic.Summable(figures)
-				}
-			}
-			return call.Value(read)
-		})
 		call.Function(area, "measureState", func(arguments goja.FunctionCall) goja.Value {
 			name := call.TextOf(arguments.Argument(0), "the measure")
 			measure, declared := vocab.MeasureNamed(name)

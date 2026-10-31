@@ -7,7 +7,7 @@ exports.widget = {
   serve: function (host) {
     var window = host.request.window;
     var width = host.lib.figures.buckets.width(host.params.text("period"));
-    var traffic = host.series.traffic({ interfaces: host.refs.ids("interfaces") }, width);
+    var traffic = host.lib.figures.series.traffic(host, { interfaces: host.refs.ids("interfaces") }, width);
     host.envelope.cover(traffic.covered);
     host.envelope.hourFreshness(window.from, window.to);
     var measure = host.params.text("measure");

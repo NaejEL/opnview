@@ -65,7 +65,9 @@
   "references": [
     "interface"
   ],
-  "queries": [],
+  "queries": [
+    "series.statements.sql"
+  ],
   "script": "traffic_over_time_by_scope.js",
   "renderer": {
     "entry": "renderer.js"
