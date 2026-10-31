@@ -99,7 +99,7 @@ type PluginColumn struct {
 	ReferencesColumn string
 	// OnDelete is OnDeleteCascade for a foreign key that deletes the referencing rows with the referenced
 	// one (ADR 0020), empty for one that refuses the deletion.
-	OnDelete string
+	OnDelete string `json:"OnDelete,omitempty"`
 	// Default is the SQL literal a row written without the column takes, empty for none (ADR 0020).
 	Default string
 }
