@@ -24,7 +24,7 @@ function newParts() {
 
 exports.widget = {
   serve: function (host) {
-    var window = host.volume.window();
+    var window = host.lib.figures.volume.window(host);
     var interfaces = host.lib.figures.installation.interfaces(host);
     var byId = {};
     var byDevice = {};
@@ -32,7 +32,7 @@ exports.widget = {
       byId[info.id] = info;
       byDevice[info.device] = info;
     });
-    var scopes = host.volume.scopes;
+    var scopes = host.lib.figures.volume.scopes;
     var scope = host.params.text("scope");
     var figures = {};
     var member = function (id) {
@@ -44,7 +44,7 @@ exports.widget = {
     var unattributed = zero();
     var hasRows = false;
     window.rows.forEach(function (row) {
-      if (!host.volume.scopeMatches(scope, row)) {
+      if (!host.lib.figures.volume.scopeMatches(scope, row)) {
         return;
       }
       hasRows = true;
@@ -59,7 +59,7 @@ exports.widget = {
         add(host, leg.own, row);
         return;
       }
-      var local = host.volume.localInterface(row);
+      var local = host.lib.figures.volume.localInterface(row);
       if (local === null) {
         add(host, unattributed, row);
         return;

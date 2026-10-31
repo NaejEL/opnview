@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/NaejEL/opnview/internal/store/plugindecl"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
@@ -175,4 +176,40 @@ func (s *PluginTableStore) ApplyRelations(ctx context.Context, plugin string, fi
 // CheckPluginStatement plans one of a plugin's statements under its role; what the plugin loads checks.
 func (s *PluginTableStore) CheckPluginStatement(ctx context.Context, plugin, text string) error {
 	return s.PlanAsPlugin(ctx, plugin, text)
+}
+
+// plannedStatements remembers, per process, what planning a plugin's statement text found: the check
+// depends on the schema alone, which every database of one process shares -- the installation's, or the
+// test template's clones -- so a text is planned once per process and not once per load.
+var plannedStatements sync.Map
+
+// CheckPluginStatements plans a plugin's statements under its role, by name, in one transaction, and
+// answers the ones PostgreSQL would not plan with why; an empty answer is every statement planning. A
+// text planned before in this process is answered from memory.
+func (s *PluginTableStore) CheckPluginStatements(ctx context.Context, plugin string, statements map[string]string) (
+	map[string]error, error) {
+	failed := map[string]error{}
+	pending := map[string]string{}
+	for name, text := range statements {
+		if found, known := plannedStatements.Load(plugin + "\x00" + text); known {
+			if err, _ := found.(error); err != nil {
+				failed[name] = err
+			}
+			continue
+		}
+		pending[name] = text
+	}
+	planned, err := s.PlanAllAsPlugin(ctx, plugin, pending)
+	if err != nil {
+		return nil, err
+	}
+	for name, text := range pending {
+		var outcome error = nil
+		if problem, refused := planned[name]; refused {
+			outcome = problem
+			failed[name] = problem
+		}
+		plannedStatements.Store(plugin+"\x00"+text, outcome)
+	}
+	return failed, nil
 }

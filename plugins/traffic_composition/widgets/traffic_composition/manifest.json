@@ -121,7 +121,9 @@
   ],
   "queries": [
     "traffic_composition.statements.sql",
-    "installation.statements.sql"
+    "installation.statements.sql",
+    "volume.statements.sql",
+    "clients.statements.sql"
   ],
   "script": "traffic_composition.js",
   "renderer": {

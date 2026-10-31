@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -133,6 +134,54 @@ func (s *Handle) PlanAsPlugin(ctx context.Context, plugin, text string) error {
 		return err
 	}
 	return rows.Close()
+}
+
+// PlanAllAsPlugin is PlanAsPlugin over a plugin's statements at once, by name, in one transaction: the
+// role is taken once and every statement planned under it, nothing written. The answer holds the
+// statements PostgreSQL would not plan, by name, with why; an empty answer is every statement planning.
+// A text that does not translate is answered as a planning failure of its own.
+func (s *Handle) PlanAllAsPlugin(ctx context.Context, plugin string, statements map[string]string) (map[string]error, error) {
+	failed := map[string]error{}
+	if len(statements) == 0 {
+		return failed, nil
+	}
+	tx, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := TakePluginRole(ctx, tx, plugin); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(statements))
+	for name := range statements {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		planned, arguments, err := NullArguments(statements[name])
+		if err != nil {
+			failed[name] = err
+			continue
+		}
+		// Each plan runs in a savepoint: a statement that fails leaves the transaction usable for the next.
+		if _, err := tx.ExecContext(ctx, "SAVEPOINT plan"); err != nil {
+			return nil, err
+		}
+		rows, err := tx.QueryContext(ctx, "EXPLAIN "+planned, arguments...)
+		if err != nil {
+			failed[name] = err
+			if _, err := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT plan"); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		_ = rows.Close()
+		if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT plan"); err != nil {
+			return nil, err
+		}
+	}
+	return failed, nil
 }
 
 // execUnderRoleLocks runs statements that write the role catalogue in one transaction, under the

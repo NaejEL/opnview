@@ -6,13 +6,11 @@ import (
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
-	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
-// What the volume presets share: the rolling window from store.ReadVolumeWindow, which
-// assembles whole hours from the 1 h slots and the partial hours at either edge from the
-// flows -- equal to a computation over the flows inside the flow horizon, and the slots'
-// answer beyond it -- and the rules that say which interface a row belongs to.
+// What the volume figures share: the directions and scopes of a row, the rules that say which
+// interface a row belongs to, and the figures as a script reads them. The rolling window itself is
+// the figures library's, over each widget's own statements (ADR 0021, step 4).
 
 // The traffic directions of classified_flow (docs/data-model.md, "Classification").
 const (
@@ -30,28 +28,6 @@ const (
 	ScopeNorthSouth   = "north_south"
 	ScopeThisFirewall = "this_firewall"
 )
-
-// VolumeWindow reads the rolling window, in the measure the request is answered under
-// (internal/widget/request/measure.go), and records its coverage and the freshness of the slots it
-// read. The outside peers of its rows are placed (request.Place), so their geolocations are read
-// together at the first a script asks for.
-func VolumeWindow(r *request.Request) (reads.VolumeWindow, error) {
-	window, err := r.Db.ReadVolumeWindowOf(r.Ctx, r.Window.From, r.Window.To, r.Now, r.MeasureRead())
-	if err != nil {
-		return window, err
-	}
-	for _, row := range window.Rows {
-		if row.PeerAddress != nil {
-			r.Place(*row.PeerAddress)
-		}
-	}
-	if window.Covered != nil {
-		r.Cover(&envelope.Interval{From: window.Covered.From, To: window.Covered.To})
-	} else {
-		r.Cover(nil)
-	}
-	return window, r.HourFreshness(r.Window.From, r.Window.To)
-}
 
 // LocalInterface is the interface a row belongs to: the inside end that generated it --
 // the source of an outbound, inter-interface or to-this-firewall row, the destination of an

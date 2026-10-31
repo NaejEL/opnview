@@ -5,11 +5,11 @@
 
 exports.widget = {
   serve: function (host) {
-    var volume = host.volume.window();
+    var volume = host.lib.figures.volume.window(host);
     var scope = host.params.text("scope");
     var reasons = host.peers.reasons;
     var bins = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row, reasons.no_coordinates]);
-    if (scope === host.volume.scopes.all) {
+    if (scope === host.lib.figures.volume.scopes.all) {
       bins.add(reasons.east_west, host.figures.zero(), 0);
       bins.add(reasons.this_firewall, host.figures.zero(), 0);
     }
@@ -17,7 +17,7 @@ exports.widget = {
     // A row of the scope with no outside peer has no point: it is unplaced, as inter-interface
     // traffic or as this firewall's own.
     grouped.others.forEach(function (row) {
-      var ownTraffic = row.traffic_scope === host.volume.scopes.this_firewall;
+      var ownTraffic = row.traffic_scope === host.lib.figures.volume.scopes.this_firewall;
       var reason = ownTraffic ? reasons.this_firewall : reasons.east_west;
       bins.add(reason, host.lib.figures.mapfilters.allowedOnly(row), 0);
     });

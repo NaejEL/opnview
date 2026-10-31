@@ -13,7 +13,7 @@ function has(object, key) {
 // direction.
 function placement(host, src, dst, direction) {
   var keys = host.lib.figures.matrixplacement.keys;
-  var directions = host.volume.directions;
+  var directions = host.lib.figures.volume.directions;
   var row = src === null ? keys.outside : host.figures.interfaceKey(src);
   var column = dst === null ? keys.north_south : host.figures.interfaceKey(dst);
   switch (direction) {
@@ -35,7 +35,7 @@ function placement(host, src, dst, direction) {
 
 exports.widget = {
   serve: function (host) {
-    var volume = host.volume.window();
+    var volume = host.lib.figures.volume.window(host);
     var interfaces = host.lib.figures.installation.interfaces(host);
     var keys = host.lib.figures.matrixplacement.keys;
     var scope = host.params.text("scope");
@@ -54,7 +54,7 @@ exports.widget = {
     var cellList = [];
     var total = host.figures.zero();
     volume.rows.forEach(function (row) {
-      if (row.exit_leg_device !== null || !host.volume.scopeMatches(scope, row)) {
+      if (row.exit_leg_device !== null || !host.lib.figures.volume.scopeMatches(scope, row)) {
         return;
       }
       var placed = placement(host, row.src_interface_id, row.dst_interface_id, row.traffic_direction);

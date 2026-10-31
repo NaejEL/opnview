@@ -172,7 +172,7 @@ func (s *PluginTableStore) EnsurePluginTable(ctx context.Context, table pluginde
 		// The table is the one declared, recorded as declared: a restart, or a test database cloned
 		// with the plugins already loaded. Nothing is created and nothing recorded again; the read role
 		// is still granted, since a role recreated since would hold nothing.
-		return s.keepPluginTable(ctx, table)
+		return s.keepPluginTable(ctx, table, false)
 	}
 	transaction, err := s.SQL.BeginTx(ctx, nil)
 	if err != nil {
@@ -204,19 +204,32 @@ func (s *PluginTableStore) EnsurePluginTable(ctx context.Context, table pluginde
 	if err := transaction.Commit(); err != nil {
 		return nil, fmt.Errorf("store: creating %s: %w", table.SQLName(), err)
 	}
-	if _, err := s.keepPluginTable(ctx, table); err != nil {
+	if _, err := s.keepPluginTable(ctx, table, true); err != nil {
 		return nil, err
 	}
 	return event, nil
 }
 
 // keepPluginTable grants the read role a plugin table's schema and records the table as this store's.
-func (s *PluginTableStore) keepPluginTable(ctx context.Context, table plugindecl.PluginTable) (*PluginTableEvent, error) {
-	if err := s.GrantReadOnSchema(ctx, plugindecl.PluginSchema(table.Plugin)); err != nil {
-		return nil, err
-	}
-	if err := s.EnsurePluginRole(ctx, table.Plugin, plugindecl.PluginSchema(table.Plugin)); err != nil {
-		return nil, err
+func (s *PluginTableStore) keepPluginTable(ctx context.Context, table plugindecl.PluginTable, created bool) (*PluginTableEvent, error) {
+	s.Plugins.RLock()
+	ensured := s.Plugins.RolesEnsured[table.Plugin]
+	s.Plugins.RUnlock()
+	if created || !ensured {
+		// The grants name the schema, so a table found as declared needs them once per plugin per start;
+		// a table just created is granted again, since ON ALL TABLES named the tables of that moment.
+		if err := s.GrantReadOnSchema(ctx, plugindecl.PluginSchema(table.Plugin)); err != nil {
+			return nil, err
+		}
+		if err := s.EnsurePluginRole(ctx, table.Plugin, plugindecl.PluginSchema(table.Plugin)); err != nil {
+			return nil, err
+		}
+		s.Plugins.Lock()
+		if s.Plugins.RolesEnsured == nil {
+			s.Plugins.RolesEnsured = map[string]bool{}
+		}
+		s.Plugins.RolesEnsured[table.Plugin] = true
+		s.Plugins.Unlock()
 	}
 	grants := make([]sqldb.TableWriteGrant, 0, len(table.WritableBy))
 	for _, grant := range table.WritableBy {

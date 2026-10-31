@@ -238,6 +238,10 @@ func (t PluginTable) column(name string) (PluginColumn, bool) {
 type PluginTableSet struct {
 	sync.RWMutex
 	ByName map[string]PluginTable
+	// RolesEnsured are the plugins whose role and read grant this store has ensured since it opened: a
+	// plugin's tables are kept one by one, and the role is given its schema once per start, not once per
+	// table.
+	RolesEnsured map[string]bool
 }
 
 // ValidatePluginTable checks a declaration without touching the database.

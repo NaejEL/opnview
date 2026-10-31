@@ -73,7 +73,9 @@
   "references": [
     "interface"
   ],
-  "queries": [],
+  "queries": [
+    "volume.statements.sql"
+  ],
   "script": "passed_traffic_world_map.js",
   "renderer": {
     "entry": "renderer.js"

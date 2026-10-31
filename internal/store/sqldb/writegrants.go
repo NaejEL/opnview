@@ -77,6 +77,10 @@ func (s *Handle) ApplyWriteGrants(ctx context.Context, schema, table string, gra
 		}
 		statements = append(statements, "GRANT UPDATE ("+strings.Join(columns, ", ")+") ON "+qualified+" TO "+quotedRole)
 	}
+	if len(statements) == 0 {
+		// Nothing granted and nothing to revoke: the role catalogue is not touched, nor locked.
+		return nil
+	}
 	locked := []string{owner}
 	for _, grant := range grants {
 		locked = append(locked, PluginRoleName(grant.Plugin))

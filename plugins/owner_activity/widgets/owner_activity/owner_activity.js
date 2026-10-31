@@ -7,8 +7,8 @@
 
 // directionInScope reports whether a client-family direction is in a traffic scope.
 function directionInScope(host, scope, direction) {
-  var directions = host.volume.directions;
-  var scopes = host.volume.scopes;
+  var directions = host.lib.figures.volume.directions;
+  var scopes = host.lib.figures.volume.scopes;
   if (scope === scopes.east_west) {
     return direction === directions.inter_interface;
   }
@@ -116,7 +116,7 @@ exports.widget = {
     if (owners.length === 0) {
       host.envelope.override(host.envelope.conditions.no_owner_exists);
     }
-    var read = host.clients.volumes();
+    var read = host.lib.figures.clients.volumes(host);
     var volumes = read.clients;
     var scope = host.params.text("scope");
     var measure = host.params.text("measure");
@@ -258,7 +258,7 @@ exports.widget = {
           unassigned.push(info);
         }
       });
-      // host.clients.volumes() lists the clients by ascending id already.
+      // host.lib.figures.clients.volumes(host) lists the clients by ascending id already.
       var card = build("unassigned", null, unassigned);
       total = host.figures.add(total, card.volume);
       data.unassigned = card;

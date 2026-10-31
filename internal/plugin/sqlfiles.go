@@ -116,16 +116,19 @@ func applySQL(ctx context.Context, plugin *Plugin, options Options) *contract.Re
 	if err := options.Store.ApplyRelations(ctx, plugin.Name, plugin.relations); err != nil {
 		return contract.Refuse(plugin.Name, contract.RefusalRelationRefused, "%v", err)
 	}
-	names := make([]string, 0, len(plugin.statements))
-	for name := range plugin.statements {
+	// Every statement planned under the plugin's role, in one transaction, the first refused by name.
+	failed, err := options.Store.CheckPluginStatements(ctx, plugin.Name, plugin.statements)
+	if err != nil {
+		return contract.Refuse(plugin.Name, contract.RefusalStatementRefused, "planning the statements: %v", err)
+	}
+	names := make([]string, 0, len(failed))
+	for name := range failed {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if err := options.Store.CheckPluginStatement(ctx, plugin.Name, plugin.statements[name]); err != nil {
-			return contract.Refuse(plugin.Name, contract.RefusalStatementRefused,
-				"the statement %s does not plan under the plugin's role: %v", name, strings.TrimSpace(err.Error()))
-		}
+		return contract.Refuse(plugin.Name, contract.RefusalStatementRefused,
+			"the statement %s does not plan under the plugin's role: %v", name, strings.TrimSpace(failed[name].Error()))
 	}
 	return nil
 }

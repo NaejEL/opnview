@@ -32,8 +32,8 @@ function node(key, iface, client, asn, operator, countryCode) {
 
 // scopeOf derives a row's scope from its interfaces and direction, as the schema pins it.
 function scopeOf(host, direction, src, dst) {
-  var directions = host.volume.directions;
-  var scopes = host.volume.scopes;
+  var directions = host.lib.figures.volume.directions;
+  var scopes = host.lib.figures.volume.scopes;
   if (direction === directions.to_this_firewall || direction === directions.from_this_firewall) {
     return scopes.this_firewall;
   }
@@ -48,12 +48,12 @@ function scopeOf(host, direction, src, dst) {
 function leftFlows(host, left, scope, selected) {
   var flows = [];
   if (left === "interface") {
-    host.volume.window().rows.forEach(function (row) {
-      if (row.exit_leg_device !== null || !host.volume.scopeMatches(scope, row) ||
+    host.lib.figures.volume.window(host).rows.forEach(function (row) {
+      if (row.exit_leg_device !== null || !host.lib.figures.volume.scopeMatches(scope, row) ||
         !host.peers.keepInterface(selected, row)) {
         return;
       }
-      var local = host.volume.localInterface(row);
+      var local = host.lib.figures.volume.localInterface(row);
       flows.push({
         left: local === null ? "outside" : host.figures.interfaceKey(local),
         direction: row.traffic_direction,
@@ -78,7 +78,7 @@ function leftFlows(host, left, scope, selected) {
       traffic_direction: row.traffic_direction,
       exit_leg_device: null
     };
-    if (!host.volume.scopeMatches(scope, key) || !host.peers.keepInterface(selected, key)) {
+    if (!host.lib.figures.volume.scopeMatches(scope, key) || !host.peers.keepInterface(selected, key)) {
       return;
     }
     flows.push({
@@ -106,7 +106,7 @@ exports.widget = {
     var left = host.params.text("left");
     var right = host.params.text("right");
     var measure = host.params.text("measure");
-    var directions = host.volume.directions;
+    var directions = host.lib.figures.volume.directions;
     var thisFirewall = host.lib.figures.matrixplacement.keys.this_firewall;
     var reasons = host.peers.reasons;
     var flows = leftFlows(host, left, host.params.text("scope"), host.refs.ids("interfaces"));

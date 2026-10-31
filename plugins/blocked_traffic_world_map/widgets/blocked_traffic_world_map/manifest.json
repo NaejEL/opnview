@@ -89,7 +89,8 @@
     "interface"
   ],
   "queries": [
-    "blocked_traffic_world_map.statements.sql"
+    "blocked_traffic_world_map.statements.sql",
+    "volume.statements.sql"
   ],
   "script": "blocked_traffic_world_map.js",
   "renderer": {

@@ -65,7 +65,9 @@
   "references": [
     "interface"
   ],
-  "queries": [],
+  "queries": [
+    "volume.statements.sql"
+  ],
   "script": "destination_operators.js",
   "renderer": {
     "entry": "renderer.js"

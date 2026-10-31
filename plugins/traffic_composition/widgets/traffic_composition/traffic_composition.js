@@ -95,8 +95,8 @@ function pfStateRates(host, groupBy) {
 
 // directionInScope reports whether a client-family direction is in a traffic scope.
 function directionInScope(host, scope, direction) {
-  var directions = host.volume.directions;
-  var scopes = host.volume.scopes;
+  var directions = host.lib.figures.volume.directions;
+  var scopes = host.lib.figures.volume.scopes;
   if (scope === scopes.east_west) {
     return direction === directions.inter_interface;
   }
@@ -288,7 +288,7 @@ exports.widget = {
 
     if (groupBy === "client") {
       whole = "traffic_with_an_inside_client";
-      host.clients.volumes().clients.forEach(function (volume) {
+      host.lib.figures.clients.volumes(host).clients.forEach(function (volume) {
         var info = host.lib.figures.installation.client(host, volume.client_id);
         if (info === null || (clients !== null && !clients[volume.client_id]) ||
           (interfaces !== null && (info.interface_id === null || !interfaces[info.interface_id]))) {
@@ -308,11 +308,11 @@ exports.widget = {
         hasRows = hasRows || added;
       });
     } else if (groupBy === "interface" && clients === null) {
-      host.volume.window().rows.forEach(function (row) {
-        if (row.exit_leg_device !== null || !host.volume.scopeMatches(scope, row)) {
+      host.lib.figures.volume.window(host).rows.forEach(function (row) {
+        if (row.exit_leg_device !== null || !host.lib.figures.volume.scopeMatches(scope, row)) {
           return;
         }
-        var local = host.volume.localInterface(row);
+        var local = host.lib.figures.volume.localInterface(row);
         if (interfaces !== null && (local === null || !interfaces[local])) {
           return;
         }

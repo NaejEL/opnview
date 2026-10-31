@@ -16,7 +16,7 @@ function rankDescending(host, members) {
 
 exports.widget = {
   serve: function (host) {
-    var volumes = host.clients.volumes().clients;
+    var volumes = host.lib.figures.clients.volumes(host).clients;
     var selectedIds = host.refs.ids("interfaces");
     var selected = null;
     if (selectedIds !== null) {

@@ -72,7 +72,8 @@
     "interface"
   ],
   "queries": [
-    "installation.statements.sql"
+    "installation.statements.sql",
+    "clients.statements.sql"
   ],
   "script": "client_volume_ranking.js",
   "renderer": {

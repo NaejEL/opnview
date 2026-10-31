@@ -89,7 +89,8 @@
   ],
   "queries": [
     "owner_activity.statements.sql",
-    "installation.statements.sql"
+    "installation.statements.sql",
+    "clients.statements.sql"
   ],
   "script": "owner_activity.js",
   "renderer": {

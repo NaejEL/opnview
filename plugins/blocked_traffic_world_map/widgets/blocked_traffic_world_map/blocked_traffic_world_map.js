@@ -22,14 +22,14 @@ function numeric(a, b) {
 
 exports.widget = {
   serve: function (host) {
-    var volume = host.volume.window();
+    var volume = host.lib.figures.volume.window(host);
     var window = host.request.window;
     var endpoint = host.params.text("endpoint");
     var sizeBy = host.params.text("size_by");
     var minimum = host.params.integer("min_count");
     var selected = host.refs.ids("interfaces");
     var reasons = host.peers.reasons;
-    var directions = host.volume.directions;
+    var directions = host.lib.figures.volume.directions;
     var firewall = host.params.has("engines", "firewall_rule");
     var points = [];
     var belowMembers = 0;
@@ -73,7 +73,7 @@ exports.widget = {
           order.push(peer);
         }
         peer.figures = host.figures.add(peer.figures, blocked);
-        var local = host.volume.localInterface(row);
+        var local = host.lib.figures.volume.localInterface(row);
         if (local !== null && peer.interfaces.indexOf(local) < 0) {
           peer.interfaces.push(local);
         }

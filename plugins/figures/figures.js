@@ -411,3 +411,195 @@ exports.installation = {
     return INSTALLATION.rules[id];
   }
 };
+
+// ---- volume: the rolling window of volume every volume widget reads, assembled as the core assembled
+// it (ADR 0021, step 4): the whole hours inside the window from the 1 h slots of the rollups plugin,
+// the partial hours at either edge from the classified flows, in the measure the request is answered
+// under -- the host runs a statement's measured twin when the answer is in a declared measure. Reading
+// it records the window's coverage and the freshness of the slots read. The widget declares:
+//
+//   -- statement: widget_volume_slots / widget_volume_slots_measured    the 1 h slots of [:from, :to)
+//   -- statement: widget_volume_flows / widget_volume_flows_measured    the flows of [:from, :to)
+//   -- statement: widget_volume_earliest_slot                            SELECT min(period_start_at) AS earliest
+//
+// each row keyed by src_interface_id, dst_interface_id, peer_address, traffic_scope, traffic_direction
+// and exit_leg_device, with its summable figures (host.figures) under their names.
+var VOLUME_KEYS = ["src_interface_id", "dst_interface_id", "peer_address", "traffic_scope", "traffic_direction", "exit_leg_device"];
+var FIGURE_KEYS = ["bytes", "allowed_bytes", "blocked_bytes", "unknown_bytes", "allowed_connections", "blocked_connections",
+  "unknown_connections", "measure", "measure_parts"];
+
+function hourEdges(window) {
+  var first = window.from - floorMod(window.from, 3600);
+  if (first < window.from) first += 3600;
+  return { first: first, last: window.to - floorMod(window.to, 3600) };
+}
+
+function windowOf(host, what) {
+  var window = hostOf(host).request.window;
+  if (window === null || window === undefined) throw new TypeError(what + " reads a rolling window, and the widget " + host.request.type + " is not windowed");
+  return window;
+}
+
+// readParts runs a statement over the edges and the whole hours of a window: the flows statement for
+// [from, first hour) and [last hour, to), the slots statement between, as the core read them.
+function readParts(host, window, flows, slots) {
+  var edges = hourEdges(window);
+  var parts = [];
+  function read(name, from, to) {
+    if (to <= from) return;
+    host.query.rows(name, { from: from, to: to }).forEach(function (row) { parts.push(row); });
+  }
+  if (edges.first < edges.last) {
+    read(flows, window.from, edges.first);
+    read(slots, edges.first, edges.last);
+    read(flows, edges.last, window.to);
+  } else {
+    read(flows, window.from, window.to);
+  }
+  return parts;
+}
+
+function figuresOf(row) {
+  var figures = {};
+  FIGURE_KEYS.forEach(function (key) { if (row[key] !== undefined && row[key] !== null) figures[key] = row[key]; });
+  return figures;
+}
+
+function volumeKey(row) {
+  function part(value) { return value === null || value === undefined ? "-" : String(value); }
+  return [part(row.src_interface_id), part(row.dst_interface_id),
+    row.peer_address === null || row.peer_address === undefined ? "-" : "=" + row.peer_address,
+    row.traffic_scope, row.traffic_direction,
+    row.exit_leg_device === null || row.exit_leg_device === undefined ? "-" : "=" + row.exit_leg_device].join("\u001f");
+}
+
+function compareText(a, b) { return a < b ? -1 : (a > b ? 1 : 0); }
+
+// coverAssembled records the coverage of a window assembled from the slots and the flows: from the
+// earliest flow or slot kept, whichever is older, to now; none when neither holds a record.
+function coverAssembled(host, earliestSlotStatement) {
+  var earliestFlow = host.envelope.earliest("widget_earliest_flow");
+  var slot = host.query.row(earliestSlotStatement, {});
+  var earliestSlot = slot === null ? null : slot.earliest;
+  var earliest = null;
+  if (earliestFlow !== null && earliestSlot !== null) earliest = Math.min(earliestFlow, earliestSlot);
+  else if (earliestFlow !== null) earliest = earliestFlow;
+  else if (earliestSlot !== null) earliest = earliestSlot;
+  host.envelope.coverFrom(earliest);
+  if (earliest === null) return null;
+  var window = host.request.window;
+  var covered = { from: Math.max(window.from, earliest), to: Math.min(window.to, host.request.now) };
+  return covered.to > covered.from ? covered : null;
+}
+
+exports.volume = {
+  directions: { outbound: "outbound", inbound: "inbound", inter_interface: "inter_interface",
+    to_this_firewall: "to_this_firewall", from_this_firewall: "from_this_firewall" },
+  scopes: { all: "all", east_west: "east_west", north_south: "north_south", this_firewall: "this_firewall" },
+  // window answers {requested, covered, rows}: covered is null when the store holds none of the window;
+  // the rows are by bytes then key.
+  window: function (host) {
+    var window = windowOf(host, "volume.window");
+    var sums = {};
+    var order = [];
+    readParts(host, window, "widget_volume_flows", "widget_volume_slots").forEach(function (row) {
+      var key = volumeKey(row);
+      if (sums[key] === undefined) {
+        var kept = {};
+        VOLUME_KEYS.forEach(function (name) { kept[name] = row[name] === undefined ? null : row[name]; });
+        sums[key] = { row: kept, figures: figuresOf(row) };
+        order.push(key);
+      } else {
+        sums[key].figures = host.figures.add(sums[key].figures, figuresOf(row));
+      }
+    });
+    var rows = order.map(function (key) {
+      var kept = sums[key].row;
+      FIGURE_KEYS.forEach(function (name) { if (sums[key].figures[name] !== undefined) kept[name] = sums[key].figures[name]; });
+      return { key: key, row: kept };
+    });
+    rows.sort(function (a, b) { return a.row.bytes !== b.row.bytes ? (a.row.bytes > b.row.bytes ? -1 : 1) : compareText(a.key, b.key); });
+    // The left edge is read from the flows: when its flows are purged while the slot of its hour survives,
+    // the edge is not covered.
+    var earliestFlow = host.envelope.earliest("widget_earliest_flow");
+    var slot = host.query.row("widget_volume_earliest_slot", {});
+    var earliestSlot = slot === null ? null : slot.earliest;
+    var covered = null;
+    if (earliestFlow !== null || earliestSlot !== null) {
+      var dataStart = earliestFlow;
+      if (earliestFlow === null || (earliestSlot !== null && earliestSlot < dataStart)) dataStart = earliestSlot;
+      covered = { from: Math.max(window.from, dataStart), to: Math.min(window.to, host.request.now) };
+      var edges = hourEdges(window);
+      if ((earliestFlow === null || window.from < earliestFlow) && earliestSlot !== null &&
+          earliestSlot <= window.from - floorMod(window.from, 3600) && edges.first < edges.last) {
+        covered.from = Math.max(covered.from, edges.first);
+      }
+      if (covered.to <= covered.from) covered = null;
+    }
+    host.envelope.cover(covered);
+    host.envelope.hourFreshness(window.from, window.to);
+    return { requested: { from: window.from, to: window.to }, covered: covered, rows: rows.map(function (entry) { return entry.row; }) };
+  },
+  // total is the summable figures of every row that counts a connection: every row but the second
+  // legs, so a connection logged on two interfaces is counted once.
+  total: function (host, rows) {
+    var counted = [];
+    rows.forEach(function (row) { if (row.exit_leg_device === null || row.exit_leg_device === undefined) counted.push(figuresOf(row)); });
+    return hostOf(host).figures.sum(counted);
+  },
+  // localInterface is the inside interface a row belongs to -- the source of an outbound,
+  // inter-interface or to-this-firewall row, the destination of an inbound or from-this-firewall row --
+  // or null when neither end is inside.
+  localInterface: function (row) {
+    var local = (row.traffic_direction === "inbound" || row.traffic_direction === "from_this_firewall") ? row.dst_interface_id : row.src_interface_id;
+    return local === undefined ? null : local;
+  },
+  // scopeMatches says whether a row is in a traffic scope; "all" holds every row.
+  scopeMatches: function (scope, row) {
+    text(scope, "the scope");
+    return scope === "all" || scope === "" || row.traffic_scope === scope;
+  }
+};
+
+// ---- clients: every client's logged volume over the request's window, assembled as the interface
+// family's window is -- whole hours from the client and peer families' 1 h slots, the partial hours at
+// either edge from the flows. A client's flows are those whose inside end it is; this firewall is never
+// a client, and a second leg is its first leg's connection. The widget declares:
+//
+//   -- statement: widget_client_volume_slots / _measured   client_id, traffic_direction and the figures
+//   -- statement: widget_client_volume_flows / _measured   the same from the flows
+//   -- statement: widget_client_peer_slots                 DISTINCT client_id, peer
+//   -- statement: widget_client_peer_flows                 the same from the flows
+//   -- statement: widget_client_earliest_slot              SELECT min(period_start_at) AS earliest
+exports.clients = {
+  // volumes answers {requested, covered, clients}, one entry per client with traffic in the window, by
+  // ascending id: {client_id, figures, by_direction, destinations}.
+  volumes: function (host) {
+    var window = windowOf(host, "clients.volumes");
+    var members = {};
+    var ids = [];
+    function member(id) {
+      if (members[id] === undefined) { members[id] = { figures: host.figures.zero(), byDirection: {}, peers: {} }; ids.push(id); }
+      return members[id];
+    }
+    readParts(host, window, "widget_client_volume_flows", "widget_client_volume_slots").forEach(function (row) {
+      var entry = member(row.client_id);
+      var figures = figuresOf(row);
+      entry.figures = host.figures.add(entry.figures, figures);
+      entry.byDirection[row.traffic_direction] = host.figures.add(
+        entry.byDirection[row.traffic_direction] === undefined ? host.figures.zero() : entry.byDirection[row.traffic_direction], figures);
+    });
+    readParts(host, window, "widget_client_peer_flows", "widget_client_peer_slots").forEach(function (row) {
+      member(row.client_id).peers[row.peer] = true;
+    });
+    var covered = coverAssembled(host, "widget_client_earliest_slot");
+    host.envelope.hourFreshness(window.from, window.to);
+    ids.sort(function (a, b) { return a - b; });
+    var clients = ids.map(function (id) {
+      var entry = members[id];
+      return { client_id: id, figures: entry.figures, by_direction: host.json.map(entry.byDirection),
+        destinations: Object.keys(entry.peers).length };
+    });
+    return { requested: { from: window.from, to: window.to }, covered: covered, clients: clients };
+  }
+};

@@ -65,7 +65,8 @@
   ],
   "queries": [
     "interface_traffic_matrix.statements.sql",
-    "installation.statements.sql"
+    "installation.statements.sql",
+    "volume.statements.sql"
   ],
   "script": "interface_traffic_matrix.js",
   "renderer": {

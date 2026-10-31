@@ -59,9 +59,9 @@ function firstRanked(rows, limit, rank) {
 exports.widget = {
   serve: function (host) {
     var group = host.params.text("group");
-    var volume = host.volume.window();
+    var volume = host.lib.figures.volume.window(host);
     var reasons = host.peers.reasons;
-    var peers = host.peers.outside(volume.rows, host.volume.scopes.all, host.refs.ids("interfaces")).peers;
+    var peers = host.peers.outside(volume.rows, host.lib.figures.volume.scopes.all, host.refs.ids("interfaces")).peers;
     var bins = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row]);
     var groups = {};
     var groupList = [];
