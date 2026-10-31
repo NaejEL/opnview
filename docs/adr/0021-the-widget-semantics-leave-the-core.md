@@ -1,7 +1,7 @@
 # 0021 — The widget semantics leave the core: a shared JavaScript library, the rollups as a derivation, the end of the bridge
 
-Status: Proposed
-Proposed by the orchestrator, 31 October 2026, from the live validation of ADR 0020's five waves, the widget host's use across the 30 built-in widgets, and the Go that still reads and writes the rollups
+Status: Accepted
+Decided by: the maintainer, 31 October 2026 ("Accepté, enchaîne les six étapes"), on the orchestrator's proposal of the same day, written from the live validation of ADR 0020's five waves, the widget host's use across the 30 built-in widgets, and the Go that still reads and writes the rollups. The two questions left to him at the end are decided with the first step that meets them, as recorded in the progress table.
 
 ## Context
 
