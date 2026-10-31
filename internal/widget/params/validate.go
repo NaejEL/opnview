@@ -45,8 +45,6 @@ const (
 	RefusalQueryNotReadOnly            = "query_not_read_only"
 	RefusalQueryDoesNotPlan            = "query_does_not_plan"
 	RefusalUnknownQueryParameter       = "unknown_query_parameter"
-	RefusalMissingColumn               = "missing_column"
-	RefusalTooManyQueries              = "too_many_queries"
 	RefusalNotADirectory               = "not_a_directory"
 	RefusalStatementRegistrationFailed = "statement_registration_failed"
 	// RefusalScriptMissing is a script the manifest names that the directory does not hold.

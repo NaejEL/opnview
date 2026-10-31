@@ -47,6 +47,17 @@ func DeclaredTables(manifest Manifest) ([]plugindecl.PluginTable, *Refusal) {
 				}
 				converted.ReferencesTable, converted.ReferencesColumn = referencedTable, referencedColumn
 			}
+			switch {
+			case column.OnDelete == "":
+			case column.References == "":
+				return nil, Refuse(manifest.Name, RefusalTableInvalid, "the column %q of %s declares on_delete and "+
+					"references nothing", column.Name, declaration.Name)
+			case column.OnDelete != plugindecl.OnDeleteCascade:
+				return nil, Refuse(manifest.Name, RefusalTableInvalid, "the column %q of %s declares on_delete %q; "+
+					"the one value is %q", column.Name, declaration.Name, column.OnDelete, plugindecl.OnDeleteCascade)
+			default:
+				converted.OnDelete = column.OnDelete
+			}
 			table.Columns = append(table.Columns, converted)
 		}
 		for _, index := range declaration.Indexes {

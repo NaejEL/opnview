@@ -210,7 +210,7 @@ table of the same name; a query names it `plugin_<plugin>.<table>`.
 | `counters` | `true` makes it a table of counters, which only a derivation writes (*Derivations*): it has a primary key, every other column is a NOT NULL number, and a row written with a key already held adds its figures to the held row's, in one batched write, instead of replacing it; rows of one key written together are added first, and a row whose figures all come back to zero is removed. A counter outlives the purge of whatever it counts. |
 | `identity` (a column) | `true` on a NOT NULL integer column: the database numbers each row, and no row written carries it (ADR 0019). |
 | `generated` (a column) | An SQL expression over the row's other columns the column is computed from and stored; no row written carries it. Never the time column nor part of the primary key. |
-| `references` (a column) | A foreign key: `table(column)` of the plugin's own, or `plugin.table(column)` of a plugin the manifest `requires`, which loads first. A table with a time column may reference, and is never referenced. |
+| `references` (a column) | A foreign key: `table(column)` of the plugin's own, or `plugin.table(column)` of a plugin the manifest `requires`, which loads first. A table with a time column may reference, and is never referenced. `on_delete` beside it, `"cascade"`, deletes the referencing rows with the referenced one -- the rollups' keys to the installation model -- where the default refuses the deletion. |
 | `checks` | The table's CHECK constraints, each `{"name", "expression"}`, named `<table>_<name>` in the database. |
 | `where` (an index) | The predicate of a partial index. |
 | an expression (an index entry) | An entry of `columns` that is not a column name is an expression over the row, `canonical_address(src_address)`, checked as every declared expression is. |
@@ -827,8 +827,8 @@ widget plugin adds one key:
 | `queries` | The statement files the script runs, in the widget's own directory. |
 | `volumes` | `true` for a widget serving Volume or byte Count figures: the core gives it `volume_measure` and answers it in the measure that parameter chooses (*Volume figures and their measure*, below). |
 
-A widget with no `script` is declarative: one query file, a single `SELECT`, whose columns the shape
-engine turns into the data (`docs/widget-authoring.md`, *Shape contracts*). A key the manifest does
+A widget is answered by its `script`, or has a renderer alone and neither `script` nor `queries`
+(*Renderers*); the declarative form the core once drew is gone (ADR 0017). A key the manifest does
 not define is refused (`manifest_invalid`), so a misspelt key never passes silently.
 
 ### Statements

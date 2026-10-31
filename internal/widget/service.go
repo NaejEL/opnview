@@ -36,7 +36,6 @@ type Service struct {
 	// frontOnly are the front-only widgets (renderer.go): listed, never served.
 	frontOnly map[string]request.Preset
 	refusals  []params.Refusal
-	operator  []string
 	// datasets is the data catalogue: the core's datasets and the loaded plugins'
 	// (internal/widget/datasets/datasets.go).
 	datasets *dataset.Catalogue
@@ -53,10 +52,6 @@ type Options struct {
 	// SuffixLists is the Public Suffix List in use, for the registrable-domain grouping;
 	// nil reports the grouping unavailable.
 	SuffixLists request.SuffixLists
-	// OperatorDir is the directory operator widgets are read from, <data-dir>/widgets; empty
-	// loads none. A missing directory is not an error. Every widget the loader refuses is
-	// reported by Service.Refusals and never stops the service.
-	OperatorDir string
 	// Datasets is the data catalogue the service answers from; nil is the core's datasets alone.
 	Datasets *dataset.Catalogue
 	// Plugins are the widgets the loaded plugins carry (source.go): the built-ins' and the data
@@ -116,28 +111,7 @@ func New(database *store.Store, options Options) (*Service, error) {
 	service.refusals = append(service.refusals, refused...)
 	for _, preset := range fromPlugins {
 		service.presets[preset.Type] = preset
-		if preset.Origin == request.OriginOperator {
-			service.operator = append(service.operator, preset.Type)
-		}
 	}
-	if options.OperatorDir != "" {
-		// An operator widget binds what the plugins loaded with it make bindable, as theirs do.
-		bindable := params.CoreBindableKinds()
-		for _, source := range sources {
-			if len(source.BindableKinds) > 0 {
-				bindable = source.BindableKinds
-				break
-			}
-		}
-		loaded, refusals := loadOperatorWidgets(context.Background(), database, options.OperatorDir, service.presets,
-			bindable)
-		service.refusals = append(service.refusals, refusals...)
-		for _, preset := range loaded {
-			service.presets[preset.Type] = preset
-			service.operator = append(service.operator, preset.Type)
-		}
-	}
-	sort.Strings(service.operator)
 	sort.Slice(service.refusals, func(i, j int) bool { return service.refusals[i].Type < service.refusals[j].Type })
 	// A front-only widget is known and never served: it leaves the served presets for a map of its
 	// own, so no route is built for it and Respond answers it as an unknown type.
@@ -174,15 +148,10 @@ func (s *Service) Known(widgetType string) (request.Preset, bool) {
 	return preset, found
 }
 
-// Refusals returns the operator widgets the loader refused, each with its named reason. The
+// Refusals returns the third parties' widgets the loader refused, each with its named reason. The
 // service is running without them.
 func (s *Service) Refusals() []params.Refusal {
 	return append([]params.Refusal(nil), s.refusals...)
-}
-
-// OperatorTypes returns the operator widgets that loaded, sorted.
-func (s *Service) OperatorTypes() []string {
-	return append([]string(nil), s.operator...)
 }
 
 // Types returns every served type, sorted. The HTTP routes are built from it.

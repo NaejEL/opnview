@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/auth"
@@ -274,10 +273,7 @@ func New(options Options) (*Server, error) {
 		Plugins: server.plugins.WidgetSources(),
 		// The live cadence the strip and every live figure are bucketed at: the finest live pass of the
 		// loaded plugins, in force now.
-		LiveCadence: func(ctx context.Context) int64 { return server.plugins.FinestLiveCadence(ctx, options.Store) },
-		// Operator widgets are read from <data-dir>/widgets; a refused one is reported by
-		// Widgets().Refusals() and never stops the service.
-		OperatorDir: filepath.Join(options.DataDir, "widgets")})
+		LiveCadence: func(ctx context.Context) int64 { return server.plugins.FinestLiveCadence(ctx, options.Store) }})
 	if err != nil {
 		return nil, err
 	}

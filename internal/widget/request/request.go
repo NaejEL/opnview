@@ -18,14 +18,12 @@ import (
 
 // ServeFunc answers one request of a widget, returning the data and whether the data holds any row
 // (the difference between reachable and reachable_no_rows, and between a degraded widget that still
-// has history to show and one that has nothing). A script widget's is its script
-// (internal/widget/script/script.go); a declarative widget's is the shape engine
-// (serveDeclarative).
+// has history to show and one that has nothing): the widget's script (internal/widget/script/script.go).
 type ServeFunc = func(r *Request) (data any, hasRows bool, err error)
 
 // Preset is one served widget type: its catalogue identity, what it binds, the keys it
 // accepts, and the function that answers it. A preset is built from a widget directory's
-// manifest by a loader (pluginwidget.go, loader.go); there is no list of them.
+// manifest by the plugin widget loader (pluginwidget.go); there is no list of them.
 type Preset struct {
 	// Type is the catalogue's `snake_case` identifier, which is also the last element of its path.
 	Type string
@@ -49,16 +47,8 @@ type Preset struct {
 	// the difference between reachable and reachable_no_rows, and between a degraded
 	// widget that still has history to show and one that has nothing.
 	Serve ServeFunc
-	// LowerBound and Measure come from the manifest: whether the figures of a declarative
-	// widget are lower bounds, and what they measure.
-	LowerBound bool
-	Measure    string
 	// Origin is OriginBuiltin or OriginOperator.
 	Origin string
-	// Statement is the registered read statement of a declarative preset, and Columns the
-	// result columns it was checked to return.
-	Statement string
-	Columns   []string
 	// Manifest is the manifest the preset was built from.
 	Manifest params.Manifest
 	// Volumes says the preset serves Volume or byte Count figures, answered under the measure

@@ -97,9 +97,15 @@ type PluginColumn struct {
 	// ReferencesTable and ReferencesColumn make the column a foreign key to a qualified table (ADR 0019).
 	ReferencesTable  string
 	ReferencesColumn string
+	// OnDelete is OnDeleteCascade for a foreign key that deletes the referencing rows with the referenced
+	// one (ADR 0020), empty for one that refuses the deletion.
+	OnDelete string
 	// Default is the SQL literal a row written without the column takes, empty for none (ADR 0020).
 	Default string
 }
+
+// OnDeleteCascade is the one value of a column's OnDelete: the referencing rows go with the referenced one.
+const OnDeleteCascade = "cascade"
 
 // Written reports whether rows written to the table carry the column: an identity or a generated
 // column is the database's to fill.
@@ -433,6 +439,9 @@ func (t PluginTable) CreateStatements() []string {
 		}
 		if column.ReferencesTable != "" {
 			definition.WriteString(" REFERENCES " + column.ReferencesTable + " (" + QuoteIdentifier(column.ReferencesColumn) + ")")
+			if column.OnDelete == OnDeleteCascade {
+				definition.WriteString(" ON DELETE CASCADE")
+			}
 		}
 	}
 	if len(t.PrimaryKey) > 0 {

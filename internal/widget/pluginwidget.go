@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/reads"
@@ -18,7 +19,6 @@ import (
 	"github.com/NaejEL/opnview/internal/widget/params"
 	"github.com/NaejEL/opnview/internal/widget/request"
 	"github.com/NaejEL/opnview/internal/widget/script"
-	"github.com/NaejEL/opnview/internal/widget/shapes"
 )
 
 // Loading the widgets plugins carry (source.go).
@@ -65,6 +65,30 @@ var pluginStatements = struct {
 	checked map[string]checkedStatement
 }{builtin: map[string]map[string]script.WidgetStatement{}, checked: map[string]checkedStatement{}}
 
+// loadTimeout bounds the planning of the queries at load.
+const loadTimeout = 30 * time.Second
+
+// manifestFile is the manifest's file name in every widget directory.
+const manifestFile = "manifest.json"
+
+// presetFromManifest builds the preset of a validated manifest.
+func presetFromManifest(manifest params.Manifest, origin string) request.Preset {
+	parameters := make([]params.Param, 0, len(manifest.Parameters))
+	for _, parameter := range manifest.Parameters {
+		parameters = append(parameters, parameter.Param())
+	}
+	if manifest.Volumes {
+		// The core's parameter, which the widget does not declare (internal/widget/request/volumes.go).
+		parameters = append(parameters, request.VolumeMeasureParam())
+	}
+	return request.Preset{
+		Type: manifest.Type, Shape: manifest.Shape, Providers: append([]string{}, manifest.Providers...),
+		Primary: manifest.Primary, Windowed: manifest.Windowed,
+		WithheldWholeUnderNoDomains: manifest.NoDomains == params.NoDomainsWhole,
+		Params:                      parameters, Origin: origin, Manifest: manifest, Volumes: manifest.Volumes,
+	}
+}
+
 // builtinRegistration serialises the registration of the built-in plugin widgets' statements.
 var builtinRegistration sync.Mutex
 
@@ -107,11 +131,10 @@ func loadPluginWidget(ctx context.Context, database *store.Store, source Source,
 		return frontOnlyPreset(source.Files, source.Location, manifest, origin)
 	}
 	if manifest.Script == "" {
-		preset, refusal := loadPluginDeclarative(ctx, database, source, manifest, origin)
-		if refusal != nil {
-			return request.Preset{}, refusal
-		}
-		return withRenderer(source.Files, source.Location, manifest, preset)
+		// The declarative form -- one query drawn by a shape engine of the core -- is gone (ADR 0017,
+		// ADR 0021 step 6): a widget is answered by its script.
+		return request.Preset{}, params.Refuse(name, params.RefusalScriptMissing,
+			"the manifest declares no script; a widget is answered by its script, and a widget with a renderer alone declares neither script nor queries")
 	}
 
 	text, err := fs.ReadFile(source.Files, manifest.Script)
@@ -131,55 +154,6 @@ func loadPluginWidget(ctx context.Context, database *store.Store, source Source,
 		Builtin: source.Builtin, Datasets: script.DatasetsAdmitted(source.Plugin, source.Datasets), Libraries: source.Libraries}
 	preset.Serve = script.Serve
 	return withRenderer(source.Files, source.Location, manifest, preset)
-}
-
-// loadPluginDeclarative loads a plugin widget with no script: one query, served by the declarative
-// engine.
-func loadPluginDeclarative(ctx context.Context, database *store.Store, source Source, manifest params.Manifest,
-	origin string) (request.Preset, *params.Refusal) {
-	name := manifest.Type
-	switch len(manifest.Queries) {
-	case 0:
-		return request.Preset{}, params.Refuse(name, params.RefusalQueryMissing, "a declarative widget declares its query file in `queries`")
-	case 1:
-	default:
-		return request.Preset{}, params.Refuse(name, params.RefusalTooManyQueries,
-			"a widget with no script runs exactly one query and this one declares %d", len(manifest.Queries))
-	}
-	text, err := fs.ReadFile(source.Files, manifest.Queries[0])
-	if err != nil {
-		code := params.RefusalQueryUnreadable
-		if errors.Is(err, fs.ErrNotExist) {
-			code = params.RefusalQueryMissing
-		}
-		return request.Preset{}, params.Refuse(name, code, "%s cannot be read: %v", manifest.Queries[0], err)
-	}
-	columns, refusal := checkDeclarative(ctx, database, manifest, string(text))
-	if refusal != nil {
-		return request.Preset{}, refusal
-	}
-	preset := presetFromManifest(manifest, origin)
-	preset.Columns = columns
-	preset.Serve = shapes.ServeDeclarative
-	statement := declarativeStatementPrefix + manifest.Type
-	owner := "widget:" + manifest.Type
-	if !source.Builtin {
-		sequence := pluginSequence.Add(1)
-		statement = fmt.Sprintf("%s%s%d", statement, pluginStatementSeparator, sequence)
-		owner = fmt.Sprintf("plugin:%s/%s#%d", source.Plugin, manifest.Type, sequence)
-	}
-	preset.Statement = statement
-	if source.Builtin {
-		builtinRegistration.Lock()
-		defer builtinRegistration.Unlock()
-	}
-	if sqldb.StatementOwner(statement) == owner {
-		return preset, nil
-	}
-	if err := sqldb.RegisterQuery(owner, statement, string(text)); err != nil {
-		return request.Preset{}, params.Refuse(name, params.RefusalStatementRegistrationFailed, "%v", err)
-	}
-	return preset, nil
 }
 
 // pluginWidgetStatements reads, checks and registers the statements a script widget's query files

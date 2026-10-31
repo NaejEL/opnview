@@ -17,10 +17,10 @@
 // shape cannot express. A widget a plugin carries -- plugins/<name>/widgets/<type>/ in the
 // repository, <data-dir>/plugins/<name>/widgets/<type>/ for a third party -- writes that logic in
 // JavaScript, run by the script host (internal/widget/script and its areas, internal/widget/hostareas; docs/plugins.md, "Widgets"). Every
-// built-in widget is such a plugin; an operator widget under <data-dir>/widgets is a manifest and
-// a query. The HTTP routes are built from the loaded types, the parameter handling
-// from the manifest, the envelope from its bindings, and what is common to a shape is written
-// once in the core (internal/widget/shapes). docs/widget-authoring.md is the reference.
+// built-in widget is such a plugin, and so is a third party's. The HTTP routes are built from the
+// loaded types, the parameter handling from the manifest, the envelope from its bindings; what the
+// widgets share is the figures library's (plugins/figures, ADR 0021). docs/widget-authoring.md is
+// the reference.
 //
 // WHAT IT NEVER DOES. It never calls the firewall, MaxMind or the Public Suffix List --
 // the three outbound calls stay three, and none is reachable from here -- and it never

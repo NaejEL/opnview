@@ -326,6 +326,10 @@ type ColumnDeclaration struct {
 	// References makes the column a foreign key: "table(column)" of the plugin's own, or
 	// "plugin.table(column)" of a plugin the manifest requires (ADR 0019).
 	References string `json:"references,omitempty"`
+	// OnDelete is what the foreign key does when the referenced row is deleted: "cascade" deletes the
+	// referencing rows with it (ADR 0020, the rollups' keys to the installation model); empty refuses
+	// the deletion, PostgreSQL's default.
+	OnDelete string `json:"on_delete,omitempty"`
 	// Default is the SQL literal a row written without the column takes (ADR 0020): "false", "0", "'none'".
 	Default string `json:"default,omitempty"`
 }

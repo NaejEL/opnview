@@ -130,3 +130,60 @@ func TestAReferenceToAPluginNotRequiredIsRefused(t *testing.T) {
 		t.Fatalf("a reference to a plugin not required loaded, or was refused otherwise: %+v", refusal)
 	}
 }
+
+// TestAForeignKeyMayCascadeOnDelete is ADR 0020's restored keys: on_delete "cascade" deletes the
+// referencing rows with the referenced one, the default refuses the deletion, and on_delete is refused
+// where it names another value or references nothing.
+func TestAForeignKeyMayCascadeOnDelete(t *testing.T) {
+	t.Parallel()
+	database := storetest.Open(t)
+	dataDir := t.TempDir()
+	writeDeclaredPlugin(t, dataDir, "decl_interfaces", interfacesManifest)
+	cascading := strings.Replace(recordsManifest("true"), `"references": "decl_interfaces.interface(id)"`,
+		`"references": "decl_interfaces.interface(id)", "on_delete": "cascade"`, 1)
+	writeDeclaredPlugin(t, dataDir, "decl_records", cascading)
+	loaded, err := plugin.Load(context.Background(), plugin.Options{DataDir: dataDir, Store: database})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"decl_interfaces", "decl_records"} {
+		if refusal := refusalOf(loaded, name); refusal != nil {
+			t.Fatalf("%s was refused: %v", name, refusal)
+		}
+	}
+	ctx := context.Background()
+	if _, err := database.SQL.ExecContext(ctx, "INSERT INTO plugin_decl_interfaces.interface (device) VALUES ('igb0'), ('igb1')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SQL.ExecContext(ctx, "INSERT INTO plugin_decl_records.record (observed_at, interface_id, action, bytes) "+
+		"VALUES (100, 1, 'pass', 40), (101, 2, 'pass', 60)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SQL.ExecContext(ctx, "DELETE FROM plugin_decl_interfaces.interface WHERE device = 'igb0'"); err != nil {
+		t.Fatalf("deleting a referenced interface under cascade: %v", err)
+	}
+	var left int
+	if err := database.SQL.QueryRowContext(ctx, "SELECT count(*) FROM plugin_decl_records.record").Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 1 {
+		t.Errorf("%d records are left after the cascade, not 1", left)
+	}
+	for name, change := range map[string]string{
+		"a value that is not cascade": `"references": "decl_interfaces.interface(id)", "on_delete": "restrict"`,
+		"on_delete with no reference": `"on_delete": "cascade"`,
+	} {
+		wrong := strings.Replace(recordsManifest("true"), `"references": "decl_interfaces.interface(id)"`, change, 1)
+		wrongDir := t.TempDir()
+		writeDeclaredPlugin(t, wrongDir, "decl_interfaces", interfacesManifest)
+		writeDeclaredPlugin(t, wrongDir, "decl_records", wrong)
+		refusing, err := plugin.Load(context.Background(), plugin.Options{DataDir: wrongDir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		refusal := refusalOf(refusing, "decl_records")
+		if refusal == nil || refusal.Code != contract.RefusalTableInvalid || !strings.Contains(refusal.Detail, "on_delete") {
+			t.Errorf("%s: loaded, or refused otherwise: %+v", name, refusal)
+		}
+	}
+}
