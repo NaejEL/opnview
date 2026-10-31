@@ -60,7 +60,10 @@
     "client",
     "interface"
   ],
-  "queries": [],
+  "queries": [
+    "attribution.statements.sql",
+    "installation.statements.sql"
+  ],
   "script": "attribution_rate_per_client.js",
   "renderer": {
     "entry": "renderer.js"

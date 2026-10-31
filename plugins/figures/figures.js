@@ -739,3 +739,282 @@ exports.peers = {
     };
   }
 };
+
+// ---- sites: the site names of the request's window and the table row a set of them sums to -- the
+// shared figures of every widget that ranks inferred site names. Inside the flow horizon they are read
+// from the attributions, which carry each name's method; for the whole hours the retention purge has
+// removed, from the domain family's 1 h slots, which keep the totals and not the method. The widget
+// declares, in a sites.statements.sql:
+//
+//   -- statement: widget_site_flows / _measured       the attributed flows of [:from, :to), per site,
+//                                                     client, interface, method and destination operator
+//   -- statement: widget_site_slots / _measured       the domain family's 1 h slots of [:from, :to)
+//   -- statement: widget_address_flows / _measured    the eligible flows no name was inferred for
+//   -- statement: widget_sites_purged_before          SELECT purged_before FROM retention_purge WHERE id = 1
+//   -- statement: widget_site_client_interface        SELECT interface_id FROM plugin_installation.client WHERE id = :client_id
+var METHOD_NOT_RECORDED = "not_recorded_beyond_flow_horizon";
+var SITE_CLIENT_INTERFACES = {};
+
+function idSet(list) {
+  if (list === null || list === undefined) return null;
+  var set = {};
+  list.forEach(function (id) { set[id] = true; });
+  return set;
+}
+
+function keptBy(clients, interfaces, clientId, interfaceId) {
+  if (clients !== null && (clientId === null || clientId === undefined || clients[clientId] !== true)) return false;
+  if (interfaces !== null && (interfaceId === null || interfaceId === undefined || interfaces[interfaceId] !== true)) return false;
+  return true;
+}
+
+function orNull(value) { return value === undefined ? null : value; }
+
+function withMeasure(into, row) {
+  if (row.measure !== undefined && row.measure !== null) { into.measure = row.measure; if (row.measure_parts !== undefined && row.measure_parts !== null) into.measure_parts = row.measure_parts; }
+  return into;
+}
+
+// measuredFigures are a row's bytes in the measure it was read in.
+function measuredFigures(row) { return withMeasure({ bytes: row.bytes }, row); }
+
+function clientInterface(host, id) {
+  if (!Object.prototype.hasOwnProperty.call(SITE_CLIENT_INTERFACES, id)) {
+    var found = host.query.row("widget_site_client_interface", { client_id: id });
+    SITE_CLIENT_INTERFACES[id] = found === null ? null : orNull(found.interface_id);
+  }
+  return SITE_CLIENT_INTERFACES[id];
+}
+
+function methodCounts(rows) {
+  var counts = { resolver_cache_answer: 0, lookup_timing: 0, not_recorded_beyond_flow_horizon: 0 };
+  rows.forEach(function (row) {
+    if (row.method === "resolver_cache_answer") counts.resolver_cache_answer += row.flows;
+    else if (row.method === "lookup_timing") counts.lookup_timing += row.flows;
+    else counts.not_recorded_beyond_flow_horizon += row.flows;
+  });
+  return counts;
+}
+
+function sortedIds(set) {
+  var ids = Object.keys(set).map(Number);
+  ids.sort(function (a, b) { return a - b; });
+  return ids;
+}
+
+exports.sites = {
+  // rows are the window's site figures, filtered by the request's interfaces and clients references:
+  // [{site, client_id, interface_id, method, country_code, asn, operator, flows, bytes, delay_sum,
+  // delay_max}]. Reading them records the window's coverage, and the named state
+  // site_methods_not_recorded_beyond_flow_horizon when slots were read.
+  rows: function (host) {
+    var window = windowOf(host, "sites.rows");
+    var interfaces = idSet(host.refs.ids("interfaces"));
+    var clients = idSet(host.refs.ids("clients"));
+    var rows = [];
+    var flowsFrom = window.from;
+    var purgedRow = host.query.row("widget_sites_purged_before", {});
+    var purged = purgedRow === null ? null : orNull(purgedRow.purged_before);
+    var earliest = host.envelope.earliest("widget_earliest_flow");
+    var coveredFrom = window.to;
+    if (earliest !== null) coveredFrom = Math.max(window.from, earliest);
+    if (purged !== null && purged > window.from) {
+      var boundary = purged - floorMod(purged, 3600);
+      if (boundary < purged) boundary += 3600;
+      var firstHour = hourEdges(window).first;
+      boundary = Math.min(boundary, window.to - floorMod(window.to, 3600));
+      if (firstHour < boundary) {
+        var read = false;
+        host.query.rows("widget_site_slots", { from: firstHour, to: boundary }).forEach(function (slot) {
+          var clientId = orNull(slot.client_id);
+          var item = { site: slot.site, client_id: clientId, interface_id: clientId === null ? null : clientInterface(host, clientId),
+            method: METHOD_NOT_RECORDED, country_code: null, asn: null, operator: null, flows: slot.flows, bytes: slot.bytes,
+            delay_sum: null, delay_max: null };
+          withMeasure(item, slot);
+          read = true;
+          if (keptBy(clients, interfaces, item.client_id, item.interface_id)) rows.push(item);
+        });
+        flowsFrom = boundary;
+        if (read) {
+          coveredFrom = Math.min(coveredFrom, firstHour);
+          host.envelope.state("site_methods_not_recorded_beyond_flow_horizon");
+        }
+      }
+    }
+    host.query.rows("widget_site_flows", { from: flowsFrom, to: window.to }).forEach(function (flow) {
+      var item = { site: flow.site, client_id: orNull(flow.client_id), interface_id: orNull(flow.interface_id), method: flow.method,
+        country_code: orNull(flow.country_code), asn: orNull(flow.asn), operator: orNull(flow.operator), flows: flow.flows,
+        bytes: flow.bytes, delay_sum: orNull(flow.delay_sum), delay_max: orNull(flow.delay_max) };
+      withMeasure(item, flow);
+      if (keptBy(clients, interfaces, item.client_id, item.interface_id)) rows.push(item);
+    });
+    var until = Math.min(window.to, host.request.now);
+    host.envelope.cover(coveredFrom < until ? { from: coveredFrom, to: until } : null);
+    return rows;
+  },
+  // accumulate is the table row a list of site rows sums to, named name: {kind: "site", name, flows,
+  // bytes, clients, client_ids, methods, mean_delay_seconds, max_delay_seconds, country_code, asn,
+  // operator}, the country and operator being those that carried most of its bytes.
+  accumulate: function (host, name, rows) {
+    hostOf(host);
+    text(name, "the row's name");
+    if (!Array.isArray(rows)) throw new TypeError("the site rows are " + describe(rows) + ", not an array");
+    var flows = 0, figures = {}, clients = {}, delaySum = 0, timed = 0, maxDelay = null;
+    var geoBytes = {}, geo = {};
+    rows.forEach(function (item) {
+      if (item.delay_sum !== null && item.delay_sum !== undefined && (item.delay_max === null || item.delay_max === undefined)) {
+        throw new TypeError("a site row carries delay_sum without delay_max");
+      }
+      flows += item.flows;
+      figures = host.figures.add(figures, measuredFigures(item));
+      if (item.client_id !== null && item.client_id !== undefined) clients[item.client_id] = true;
+      if (item.delay_sum !== null && item.delay_sum !== undefined) {
+        delaySum += item.delay_sum;
+        timed += item.flows;
+        if (maxDelay === null || item.delay_max > maxDelay) maxDelay = item.delay_max;
+      }
+      var hasCountry = item.country_code !== null && item.country_code !== undefined;
+      var hasAsn = item.asn !== null && item.asn !== undefined;
+      if (hasCountry || hasAsn) {
+        var key = (hasCountry ? item.country_code : "") + "|" + (hasAsn ? String(item.asn) : "");
+        geoBytes[key] = (geoBytes[key] || 0) + item.bytes;
+        geo[key] = [orNull(item.country_code), orNull(item.asn), orNull(item.operator)];
+      }
+    });
+    var row = { kind: "site", name: name, flows: host.figures.count(flows), bytes: host.figures.byteCount(figures),
+      clients: 0, client_ids: sortedIds(clients), methods: methodCounts(rows),
+      mean_delay_seconds: timed > 0 ? delaySum / timed : null, max_delay_seconds: maxDelay,
+      country_code: null, asn: null, operator: null };
+    row.clients = row.client_ids.length;
+    var best = "", bestBytes = -1;
+    Object.keys(geoBytes).sort().forEach(function (key) { if (geoBytes[key] > bestBytes) { best = key; bestBytes = geoBytes[key]; } });
+    if (geo[best] !== undefined) { row.country_code = geo[best][0]; row.asn = geo[best][1]; row.operator = geo[best][2]; }
+    return row;
+  },
+  // addresses are the window's eligible flows no site name was inferred for, per destination address,
+  // filtered as rows is: [{address, client_id, interface_id, lookup_state, country_code, asn,
+  // operator, flows, bytes}]. A window reaching past the flow horizon records the named state
+  // unnamed_destinations_beyond_flow_horizon.
+  addresses: function (host) {
+    var window = windowOf(host, "sites.addresses");
+    var interfaces = idSet(host.refs.ids("interfaces"));
+    var clients = idSet(host.refs.ids("clients"));
+    var rows = [];
+    host.query.rows("widget_address_flows", { from: window.from, to: window.to }).forEach(function (flow) {
+      var item = { address: flow.address, client_id: orNull(flow.client_id), interface_id: orNull(flow.interface_id),
+        lookup_state: flow.lookup_state, country_code: orNull(flow.country_code), asn: orNull(flow.asn), operator: orNull(flow.operator),
+        flows: flow.flows, bytes: flow.bytes };
+      withMeasure(item, flow);
+      if (keptBy(clients, interfaces, item.client_id, item.interface_id)) rows.push(item);
+    });
+    host.envelope.coverFlowsState("unnamed_destinations_beyond_flow_horizon");
+    return rows;
+  },
+  // accumulateAddress is the table row of one address: {kind: "address", address, flows, bytes,
+  // clients, client_ids, lookup_state, country_code, asn, operator}.
+  accumulateAddress: function (host, address, rows) {
+    hostOf(host);
+    text(address, "the address");
+    if (!Array.isArray(rows)) throw new TypeError("the address rows are " + describe(rows) + ", not an array");
+    var flows = 0, figures = {}, clients = {};
+    var row = { kind: "address", address: address, flows: null, bytes: null, clients: 0, client_ids: [], lookup_state: "no_row",
+      country_code: null, asn: null, operator: null };
+    rows.forEach(function (item) {
+      if (item.address !== address) throw new TypeError("accumulateAddress(" + address + ") is handed a row of " + item.address);
+      flows += item.flows;
+      figures = host.figures.add(figures, measuredFigures(item));
+      if (item.client_id !== null && item.client_id !== undefined) clients[item.client_id] = true;
+      // One address has one geolocation, so every row of it carries the same.
+      row.lookup_state = item.lookup_state; row.country_code = orNull(item.country_code); row.asn = orNull(item.asn); row.operator = orNull(item.operator);
+    });
+    row.flows = host.figures.count(flows);
+    row.bytes = host.figures.byteCount(figures);
+    row.client_ids = sortedIds(clients);
+    row.clients = row.client_ids.length;
+    return row;
+  }
+};
+
+// ---- attribution: how much of the window's outbound traffic could be named at all, as a whole and
+// per client. A rate is UNDEFINED -- null, never 0 -- when no resolver source answered for the window
+// or there is no eligible flow to divide by; rate_state says which. The widget declares, in an
+// attribution.statements.sql:
+//
+//   -- statement: widget_attribution_window              the window's counts: eligible_flows, named_flows,
+//                                                        mean_delay, max_delay, by_cache_answer, by_lookup_timing
+//   -- statement: widget_attribution_lookup_coverage     covered > 0 when a resolver source answered for the window
+//   -- statement: widget_attribution_cache_coverage      covered > 0 when the resolver's cache was read over it
+//   -- statement: widget_attribution_rate_by_client / _measured   the same counts per client_id, with the eligible bytes
+//
+// and widget_installation_client (the installation area) for the client a row names.
+var ATTRIBUTION = { whole: null, counts: null };
+var EMPTY_CLIENT = { id: 0, identity_kind: "", identity_key: "", interface_id: null, mac: null, hostname: null, last_address: null,
+  owner_id: null, owner_assigned_at: null, unstable_identity: false, last_seen_at: 0 };
+
+function attributionWhole(host) {
+  if (ATTRIBUTION.whole === null) {
+    var window = windowOf(host, "attribution.window");
+    var parameters = { from: window.from, to: window.to };
+    var lookups = host.query.row("widget_attribution_lookup_coverage", parameters);
+    var cache = host.query.row("widget_attribution_cache_coverage", parameters);
+    var counts = host.query.row("widget_attribution_window", parameters);
+    ATTRIBUTION.whole = { resolver_covered: lookups !== null && lookups.covered > 0, cache_covered: cache !== null && cache.covered > 0,
+      eligible: counts.eligible_flows, named: counts.named_flows, mean: orNull(counts.mean_delay), max: orNull(counts.max_delay),
+      cache: counts.by_cache_answer, timing: counts.by_lookup_timing };
+  }
+  return ATTRIBUTION.whole;
+}
+
+function attributionCounts(host) {
+  if (ATTRIBUTION.counts === null) {
+    var window = windowOf(host, "attribution.clients");
+    var counts = {};
+    host.query.rows("widget_attribution_rate_by_client", { from: window.from, to: window.to }).forEach(function (row) {
+      counts[row.client_id] = { eligible: row.eligible_flows, named: row.named_flows, mean: orNull(row.mean_delay), max: orNull(row.max_delay),
+        cache: row.by_cache_answer, timing: row.by_lookup_timing, figures: withMeasure({ bytes: row.eligible_bytes }, row) };
+    });
+    ATTRIBUTION.counts = counts;
+  }
+  return ATTRIBUTION.counts;
+}
+
+function rateOf(count, resolverCovered) {
+  if (!resolverCovered) return { rate: null, state: "undefined_no_resolver_evidence" };
+  if (count.eligible === 0) return { rate: null, state: "undefined_no_eligible_flow" };
+  return { rate: count.named / count.eligible, state: "defined" };
+}
+
+exports.attribution = {
+  // window answers {resolver_covered, cache_covered, attribution}: whether a resolver source answered
+  // for the window, whether its cache was read over it, and the window's attribution row as a whole
+  // (its client empty, no eligible_bytes).
+  window: function (host) {
+    var whole = attributionWhole(host);
+    var rate = rateOf(whole, whole.resolver_covered);
+    return { resolver_covered: whole.resolver_covered, cache_covered: whole.cache_covered,
+      attribution: { client: EMPTY_CLIENT, eligible_flows: host.figures.count(whole.eligible), named_flows: host.figures.count(whole.named),
+        methods: { resolver_cache_answer: whole.cache, lookup_timing: whole.timing, not_recorded_beyond_flow_horizon: 0 },
+        rate: rate.rate, rate_state: rate.state, mean_delay_seconds: whole.mean, max_delay_seconds: whole.max } };
+  },
+  // clients are the ids of the clients with an eligible flow in the window, ascending.
+  clients: function (host) {
+    attributionWhole(host);
+    return sortedIds(attributionCounts(host));
+  },
+  // client is one client's attribution row: {client, eligible_flows, eligible_bytes, named_flows,
+  // methods, rate, rate_state, mean_delay_seconds, max_delay_seconds}, its counts 0 when it has no
+  // eligible flow; null for no such client.
+  client: function (host, id) {
+    whole(id, "the client id");
+    var all = attributionWhole(host);
+    var counts = attributionCounts(host);
+    var info = exports.installation.client(host, id);
+    if (info === null) return null;
+    var count = counts[id] || { eligible: 0, named: 0, mean: null, max: null, cache: 0, timing: 0, figures: {} };
+    var rate = rateOf(count, all.resolver_covered);
+    return { client: info, eligible_flows: host.figures.count(count.eligible), eligible_bytes: host.figures.byteCount(count.figures),
+      named_flows: host.figures.count(count.named),
+      methods: { resolver_cache_answer: count.cache, lookup_timing: count.timing, not_recorded_beyond_flow_horizon: 0 },
+      rate: rate.rate, rate_state: rate.state, mean_delay_seconds: count.mean, max_delay_seconds: count.max };
+  }
+};

@@ -65,7 +65,11 @@
     "client",
     "interface"
   ],
-  "queries": [],
+  "queries": [
+    "sites.statements.sql",
+    "attribution.statements.sql",
+    "installation.statements.sql"
+  ],
   "script": "top_sites.js",
   "renderer": {
     "entry": "renderer.js"

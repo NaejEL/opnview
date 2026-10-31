@@ -13,12 +13,12 @@ function rateKey(row) {
 exports.widget = {
   serve: function (host) {
     host.envelope.coverFlows("attribution_beyond_flow_horizon");
-    var window = host.attribution.window();
+    var window = host.lib.figures.attribution.window(host);
     var interfaces = host.refs.ids("interfaces");
     var clients = host.refs.ids("clients");
     var rows = [];
-    host.attribution.clients().forEach(function (id) {
-      var row = host.attribution.client(id);
+    host.lib.figures.attribution.clients(host).forEach(function (id) {
+      var row = host.lib.figures.attribution.client(host, id);
       if (row === null || (clients !== null && clients.indexOf(id) < 0) ||
         (interfaces !== null && (row.client.interface_id === null || interfaces.indexOf(row.client.interface_id) < 0))) {
         return;

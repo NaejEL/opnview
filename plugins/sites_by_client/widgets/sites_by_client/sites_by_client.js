@@ -71,7 +71,7 @@ function totalFlows(row) {
 
 exports.widget = {
   serve: function (host) {
-    var rows = host.sites.rows();
+    var rows = host.lib.figures.sites.rows(host);
     var interfaces = host.refs.ids("interfaces");
     var clients = host.refs.ids("clients");
     // The site rows of each client, by site name, in the order they were read. A Map, so a site
@@ -93,7 +93,7 @@ exports.widget = {
     // The destinations of each client no name was inferred for, by address: each a cell of its own,
     // ranked with the names, never one unnamed bucket (C2).
     var addressesPerClient = new Map();
-    var addresses = host.sites.addresses();
+    var addresses = host.lib.figures.sites.addresses(host);
     addresses.forEach(function (row) {
       if (row.client_id === null) {
         return;
@@ -111,7 +111,7 @@ exports.widget = {
       }
     });
     // A client with eligible flows and no named one keeps its row.
-    host.attribution.clients().forEach(function (id) {
+    host.lib.figures.attribution.clients(host).forEach(function (id) {
       if (!perClient.has(id)) {
         perClient.set(id, new Map());
       }
@@ -160,8 +160,8 @@ exports.widget = {
         isShown.set(site, true);
       });
       var shown = first.map(function (site) {
-        return site.kind === "site" ? host.sites.accumulate(site.name, site.rows) :
-          host.sites.accumulateAddress(site.address, site.rows);
+        return site.kind === "site" ? host.lib.figures.sites.accumulate(host, site.name, site.rows) :
+          host.lib.figures.sites.accumulateAddress(host, site.address, site.rows);
       });
       // The rows of every cell not shown are judged as the cells shown are (host.figures.cover): their
       // flows are counted in the remainders. A logged answer has nothing to judge.
@@ -186,7 +186,7 @@ exports.widget = {
         below_min_flows: host.figures.remainder(belowMembers, null, host.figures.count(below))
       };
       if (showRate) {
-        entry.attribution = host.attribution.client(id);
+        entry.attribution = host.lib.figures.attribution.client(host, id);
       }
       answer.push(entry);
     });

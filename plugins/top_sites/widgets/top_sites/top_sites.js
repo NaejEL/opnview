@@ -59,7 +59,7 @@ function firstRanked(rows, limit, rank) {
 exports.widget = {
   serve: function (host) {
     var compare = host.figures.compare;
-    var rows = host.sites.rows();
+    var rows = host.lib.figures.sites.rows(host);
     var grouping = "site_name";
     var groups = null;
     if (host.params.flag("group_by_registrable_domain")) {
@@ -102,7 +102,7 @@ exports.widget = {
     // A destination no name was inferred for is a row of its own, by its address with its operator
     // and country, ranked with the names: never one unnamed bucket (C2).
     var byAddress = new Map();
-    host.sites.addresses().forEach(function (row) {
+    host.lib.figures.sites.addresses(host).forEach(function (row) {
       if (!byAddress.has(row.address)) {
         byAddress.set(row.address, []);
       }
@@ -148,9 +148,9 @@ exports.widget = {
     });
     var shown = first.map(function (entry) {
       if (entry.kind === "address") {
-        return host.sites.accumulateAddress(entry.address, entry.rows);
+        return host.lib.figures.sites.accumulateAddress(host, entry.address, entry.rows);
       }
-      var row = host.sites.accumulate(entry.name, entry.rows);
+      var row = host.lib.figures.sites.accumulate(host, entry.name, entry.rows);
       return groups === null ? row : withSiteNames(row, Array.from(entry.members.keys()).sort(compare));
     });
     // The rows of every name and address not shown are judged as the rows shown are
@@ -168,7 +168,7 @@ exports.widget = {
     shown.forEach(function (row) {
       rest -= row.flows.value;
     });
-    var window = host.attribution.window();
+    var window = host.lib.figures.attribution.window(host);
     // The members in the order the table has always been written in.
     return {
       data: {
