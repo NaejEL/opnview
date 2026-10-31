@@ -594,14 +594,6 @@ WHERE last_seen_at < (
 );
 
 -- ---------------------------------------------------------------------------
-DELETE FROM state_snapshot
-WHERE captured_at < (
-    SELECT :now - CAST(value AS BIGINT)
-    FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
-);
-
--- ---------------------------------------------------------------------------
 -- Source periods. A period is written at every handover between polling and a
 -- push path (internal/store/push/push.go, OpenSourcePeriod), and every start of
 -- opnview whose last period was a push one writes a pull period
