@@ -2220,7 +2220,7 @@ collector writes this table and none will. The only per-pair endpoint the survey
 found carries **neither a port nor a protocol**, and `flow` carries both exactly,
 from the filter log — so these rows are **step 5's to compute from `flow`**, and
 nobody should go looking for the collector that fills them. Since step 5A the
-derivation exists: `insert_pair_volume` in `internal/store/aggregates/pairvolume.statements.sql`, run with
+derivation exists: `insert_pair_volume` in `plugins/rollups/rollups.statements.sql`, run with
 the rest of a day's slot. A test fails if any non-test code other than that
 statement and the retention purge writes the table.
 
@@ -2261,7 +2261,7 @@ constraint, plus `idx_pair_volume_day`.
 ### The aggregate families — six keys, four calendar periods each
 
 Twenty-four materialised tables in six families, all computed from `opnview`'s own
-`flow` by `internal/store/aggregates/aggregate.statements.sql` and refreshed **together, slot by slot**, on
+`flow` by `plugins/rollups/rollups.statements.sql` and refreshed **together, slot by slot**, on
 the one contract below:
 
 | Family | Key, within a period slot | Closes |
@@ -2345,7 +2345,7 @@ per-person aggregate that dropped the unowned clients would under-report the
 network while looking complete. The checks assert every period holds an
 unassigned slot and that the unowned bytes land in it.
 
-**Refresh contract** — `store.RefreshAggregatesAt(ctx, since, watermark, now, forced)`,
+**Refresh contract** — the rollups plugin's derivation `refresh` (`plugins/rollups/rollups.statements.sql`, ADR 0021),
 and `store.RefreshAggregates(ctx, since, now, forced)` for a caller with nothing
 ingesting concurrently, which passes `now` as the watermark:
 

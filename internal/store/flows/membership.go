@@ -192,22 +192,3 @@ func LoadPrefixes(ctx context.Context, q sqldb.Querier) ([]PrefixEvidence, error
 	}
 	return evidence, nil
 }
-
-// ChangedFlowInstants are the observed_at instants of the flows a derivation changed since an instant:
-// the slots the aggregate refresh recomputes (ADR 0020 wave 3; plugins/clients stamps changed_at).
-func (s *FlowStore) ChangedFlowInstants(ctx context.Context, since int64) ([]int64, error) {
-	rows, err := s.SQL.QueryContext(ctx, "SELECT DISTINCT observed_at FROM flow WHERE changed_at >= $1", since)
-	if err != nil {
-		return nil, fmt.Errorf("store: reading the changed flows: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var instants []int64
-	for rows.Next() {
-		var instant int64
-		if err := rows.Scan(&instant); err != nil {
-			return nil, fmt.Errorf("store: reading the changed flows: %w", err)
-		}
-		instants = append(instants, instant)
-	}
-	return instants, rows.Err()
-}

@@ -246,7 +246,9 @@ func newTestWorld(ctx context.Context, directory string) (*testWorld, error) {
 		DerivationParameters: func(context.Context) (map[string]any, error) {
 			return map[string]any{"held_margin": int64(flows.DefaultDiscoveryIntervalSeconds),
 				"leg_pairing_window": int64(flows.DefaultPairingWindowSeconds), "retention": config.DefaultRetentionSeconds,
-				"attribution_max_delay": config.DefaultAttributionMaxDelaySeconds, "cache_answer_delay": config.DefaultCacheAnswerDelaySeconds}, nil
+				"attribution_max_delay": config.DefaultAttributionMaxDelaySeconds, "cache_answer_delay": config.DefaultCacheAnswerDelaySeconds,
+				// No pass is in flight in a test world: a derivation's watermark is its own instant.
+				"ingest_watermark": nil}, nil
 		}}
 	taken := map[string]string{}
 	required, err := requiredDirectories(directory)

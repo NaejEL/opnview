@@ -71,11 +71,9 @@ type Collector struct {
 	ReadDetails map[int64]string
 	// ReadOutcomes holds the outcome code of the same reads, beside their words.
 	ReadOutcomes map[int64]vocab.AvailabilityOutcome
-	// LastRefreshAt is the instant of the last successful aggregate refresh, and
-	// onLinkFingerprint what classification read of the interfaces themselves --
+	// OnLinkFingerprint is what classification read of the interfaces themselves --
 	// which are upstream, their link-local rule, the networks that count -- at the
-	// last derivation that placed every address; the mutex guards both.
-	LastRefreshAt     int64
+	// last derivation that placed every address; the mutex guards it.
 	OnLinkFingerprint string
 	// PairingWindowSeconds is the leg_pairing_window_seconds setting: how far apart
 	// the two records of one connection may have been logged and still be paired. The
@@ -88,13 +86,9 @@ type Collector struct {
 	// has read; see beginIngest.
 	Ingesting      map[uint64]int64
 	IngestSequence uint64
-	// DeriveMutex serialises the derivations, so two passes finishing together
-	// never refresh one slot from two half-classified states.
-	DeriveMutex sync.Mutex
 	// PurgeMutex orders the retention purge against the passes: a pass holds it for
-	// reading from before it stores its first row until its derivation has ended, and
-	// the purge holds it for writing. It is taken before deriveMutex, never after; see
-	// purge.go.
+	// reading from before it stores its first row until it has written the last, and
+	// the purge holds it for writing; see purge.go.
 	PurgeMutex sync.RWMutex
 	// Services is what the collector last heard from each service kind (services.go).
 	Services Services

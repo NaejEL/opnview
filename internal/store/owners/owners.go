@@ -20,9 +20,9 @@ import (
 // A CHANGE OF OWNERSHIP INVALIDATES THE OWNER FAMILY. Ownership is an attribute of the person, not
 // of the flow, so the refresh contract's recognition rule cannot see it (docs/data-model.md,
 // "Refresh contract", rule 3). Every write that moves a machine between people records, in its own
-// transaction, the kept hour slots holding the machine's traffic in owner_reassigned_hour; the next
-// refresh rewrites them as forced instants (RefreshAggregatesAt) and the widget API reports them
-// stale until it has.
+// transaction, the kept hour slots holding the machine's traffic in owner_reassigned_hour -- the rollups
+// plugin's table, reached through the bridge -- and that plugin's next refresh rewrites them as forced
+// slots (ADR 0021); the widget API reports them stale until it has.
 
 // The closed refusal codes of the writes below. An answer carries the code, never a sentence.
 const (
@@ -759,45 +759,6 @@ func (s *OwnerStore) SetBlocklistPurpose(ctx context.Context, id int64, purpose 
 		return err
 	})
 	return list, err
-}
-
-// reassignedHours are the rows of owner_reassigned_hour one refresh read.
-type reassignedHours struct {
-	IDs   []int64
-	Hours []int64
-}
-
-// ReadReassignedHours reads every hour a change of ownership recorded.
-func ReadReassignedHours(ctx context.Context, q sqldb.Querier) (reassignedHours, error) {
-	var read reassignedHours
-	text, err := sqldb.Statement("reassigned_hours")
-	if err != nil {
-		return read, err
-	}
-	rows, err := q.QueryContext(ctx, text)
-	if err != nil {
-		return read, fmt.Errorf("store: reassigned_hours: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var id, hour int64
-		if err := rows.Scan(&id, &hour); err != nil {
-			return read, fmt.Errorf("store: reassigned_hours: %w", err)
-		}
-		read.IDs = append(read.IDs, id)
-		read.Hours = append(read.Hours, hour)
-	}
-	return read, rows.Err()
-}
-
-// ForgetReassignedHours deletes exactly the rows a refresh read, once it has rewritten their slots;
-// a row a change recorded while the refresh ran is kept for the next one.
-func ForgetReassignedHours(ctx context.Context, q sqldb.Querier, ids []int64) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	_, err := sqldb.ExecNamed(ctx, q, "reassigned_hours_forget", map[string]any{"ids": jsonIDs(ids)})
-	return err
 }
 
 // inTransaction runs work in one transaction, committed when work returns nil.

@@ -184,11 +184,22 @@ func (c *FilterLogCoordinator) receivePushed(ctx context.Context, key string, an
 			return err
 		}
 	}
-	return c.storePushed(ctx, providerID, kept)
+	return c.storePushed(ctx, key, providerID, kept)
 }
 
-// storePushed stores pushed records and derives from them, as a pull pass does.
-func (c *FilterLogCoordinator) storePushed(ctx context.Context, providerID int64, records []vocab.Flow) error {
+// storePushed stores pushed records and derives from them, as a pull pass does, and announces the
+// batch as a pass of the kind, so the derivations that follow a firewall_log pass -- the rollups
+// plugin's refresh among them (ADR 0021) -- follow a push batch as well.
+func (c *FilterLogCoordinator) storePushed(ctx context.Context, key string, providerID int64, records []vocab.Flow) error {
+	err := c.storePushedRecords(ctx, providerID, records)
+	if err != nil || len(records) == 0 {
+		return err
+	}
+	return c.Store.NotifyCollectionPass(ctx, Kind, key)
+}
+
+// storePushedRecords is storePushed's storing: the records stamped and stored.
+func (c *FilterLogCoordinator) storePushedRecords(ctx context.Context, providerID int64, records []vocab.Flow) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -196,8 +207,7 @@ func (c *FilterLogCoordinator) storePushed(ctx context.Context, providerID int64
 	defer c.Storing()()
 	now, ingest := derive.On(c.Collector).BeginIngest()
 	defer derive.On(c.Collector).EndIngest(ingest)
-	var stored derive.Derivation
-	passErr := c.storeRecords(ctx, records, snapshot, now, &stored)
+	passErr := c.storeRecords(ctx, records, snapshot, now)
 	derive.On(c.Collector).EndIngest(ingest)
 	if passErr == nil {
 		// A TCP push path delivers in order: every line logged before the newest one delivered is in.
@@ -209,14 +219,13 @@ func (c *FilterLogCoordinator) storePushed(ctx context.Context, providerID int64
 			passErr = err
 		}
 	}
-	return derive.On(c.Collector).DeriveAfter(ctx, stored, passErr)
+	return passErr
 }
 
 // storeRecords stores records that are not stored yet, recording what it wrote in stored. It costs two
 // statements whatever the number of records (PA17 of specs/SPEC-backend-completion-plugins.md): one
 // reads which digests are stored already, one writes the rest.
-func (c *FilterLogCoordinator) storeRecords(ctx context.Context, records []vocab.Flow, snapshot core.Discovery, now int64,
-	stored *derive.Derivation) error {
+func (c *FilterLogCoordinator) storeRecords(ctx context.Context, records []vocab.Flow, snapshot core.Discovery, now int64) error {
 	digests := make([]string, 0, len(records))
 	for _, record := range records {
 		digests = append(digests, record.LogDigest)

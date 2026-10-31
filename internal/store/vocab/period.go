@@ -100,22 +100,6 @@ func (p Period) Slots(from, to int64) []int64 {
 	return starts
 }
 
-// Purgeable reports whether the retention purge removes the slot starting at start
-// when the horizon is horizon: the rule of internal/store/purge/purge.sql, restated. A
-// week or a month goes once it has ended before the horizon; an hour or a day only
-// once its ISO week and its calendar month have ended before it as well, because a
-// week and a month are composed from them.
-func (p Period) Purgeable(start, horizon int64) bool {
-	if p.SlotEnd(start) >= horizon {
-		return false
-	}
-	if p.unit == unitHour || p.unit == unitDay {
-		return PeriodWeek.SlotEnd(PeriodWeek.SlotStart(start)) < horizon &&
-			PeriodMonth.SlotEnd(PeriodMonth.SlotStart(start)) < horizon
-	}
-	return true
-}
-
 // Child returns the finer period whose slots tile this period's slots exactly, and
 // whether there is one: the hour for a day, the day for a week and for a month. The
 // hour has none. Every slot of a period with a child is composed from its children

@@ -33,6 +33,6 @@ WHERE EXISTS (SELECT 1 FROM plugin_pf.flow AS f
               WHERE f.observed_at >= computed_slot.period_start_at
                 AND f.observed_at < computed_slot.period_end_at
                 AND f.ingested_at >= computed_slot.computed)
-   OR EXISTS (SELECT 1 FROM owner_reassigned_hour AS r
+   OR EXISTS (SELECT 1 FROM plugin_rollups.owner_reassigned_hour AS r
               WHERE r.hour_start_at >= computed_slot.period_start_at
                 AND r.hour_start_at < computed_slot.period_end_at);

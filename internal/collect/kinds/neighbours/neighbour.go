@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -47,9 +46,6 @@ func (c *NeighbourCoordinator) CollectNeighbour(ctx context.Context) error {
 			failures = append(failures, err)
 		}
 		seen = append(seen, addresses...)
-	}
-	if err := derive.On(c.Collector).Derive(ctx, derive.Derivation{}); err != nil {
-		failures = append(failures, err)
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("collect: the neighbour pass was incomplete: %w", core.JoinErrors(failures))

@@ -3,9 +3,11 @@
   "name": "rollups",
   "version": "1.0.0",
   "display_name": "Volume rollups",
-  "description": "The volume rollups the widgets read -- six families (interface pair and peer, owner, client, peer address, site name, rule), four periods each -- the purged part of each hour, and the daily per-address-pair volumes. The tables are this plugin's (ADR 0020 wave 5); the refresh that computes them is still the collector's, reaching them through the bridge until the widgets move, as ADR 0020's progress records.",
+  "description": "The volume rollups the widgets read -- six families (interface pair and peer, owner, client, peer address, site name, rule), four periods each -- the purged part of each hour, and the daily per-address-pair volumes, computed by this plugin's derivation `refresh` after every filter-log pass, after the derivations that place, pair and attribute the flows, and every minute (ADR 0021, step 3). The purged part is still written by the core's retention purge through the bridge, until the purge is the plugins' own.",
   "requires": [
-    "installation"
+    "installation",
+    "pf",
+    "unbound"
   ],
   "tables": [
     {
@@ -3800,6 +3802,205 @@
           "name": "endpoints_ordered",
           "expression": "endpoint_low <= endpoint_high"
         }
+      ]
+    },
+    {
+      "name": "owner_reassigned_hour",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "identity": true
+        },
+        {
+          "name": "hour_start_at",
+          "type": "integer"
+        },
+        {
+          "name": "recorded_at",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "hour_start_at"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "hour_start_at_instant",
+          "expression": "hour_start_at >= 0 AND hour_start_at < 4102444800 AND hour_start_at % 3600 = 0"
+        },
+        {
+          "name": "recorded_at_instant",
+          "expression": "recorded_at >= 0 AND recorded_at < 4102444800"
+        }
+      ]
+    },
+    {
+      "name": "refresh_slot",
+      "columns": [
+        {
+          "name": "period",
+          "type": "text"
+        },
+        {
+          "name": "slot_start",
+          "type": "integer"
+        },
+        {
+          "name": "slot_end",
+          "type": "integer"
+        },
+        {
+          "name": "forced",
+          "type": "boolean"
+        },
+        {
+          "name": "stale",
+          "type": "boolean"
+        }
+      ],
+      "primary_key": [
+        "period",
+        "slot_start"
+      ],
+      "checks": [
+        {
+          "name": "period_known",
+          "expression": "period IN ('1h', '24h', '7d', '30d')"
+        },
+        {
+          "name": "slot_ordered",
+          "expression": "slot_end > slot_start"
+        }
+      ]
+    },
+    {
+      "name": "refresh_reassigned",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ]
+    },
+    {
+      "name": "refresh_state",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer"
+        },
+        {
+          "name": "watermark",
+          "type": "integer"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "checks": [
+        {
+          "name": "one_row",
+          "expression": "id = 1"
+        },
+        {
+          "name": "watermark_not_negative",
+          "expression": "watermark >= 0"
+        }
+      ]
+    }
+  ],
+  "statements": [
+    "rollups.statements.sql"
+  ],
+  "derivations": [
+    {
+      "name": "refresh",
+      "after_passes": [
+        "firewall_log"
+      ],
+      "after_derivations": [
+        "unbound/attribute"
+      ],
+      "cadence_seconds": 60,
+      "statements": [
+        "refresh_state_init",
+        "refresh_clear_slots",
+        "refresh_clear_reassigned",
+        "refresh_read_reassigned",
+        "refresh_hours",
+        "refresh_slots_24h",
+        "refresh_slots_7d",
+        "refresh_slots_30d",
+        "refresh_prune_purgeable",
+        "refresh_stale_1h",
+        "refresh_stale_24h",
+        "refresh_stale_7d",
+        "refresh_stale_30d",
+        "refresh_drop_unchanged",
+        "delete_volume_1h",
+        "delete_rule_1h",
+        "delete_domain_1h",
+        "delete_peer_1h",
+        "delete_client_1h",
+        "delete_owner_1h",
+        "insert_volume_1h",
+        "insert_rule_1h",
+        "insert_domain_1h",
+        "insert_peer_1h",
+        "regroup_client_1h",
+        "regroup_owner_1h",
+        "delete_volume_24h",
+        "delete_rule_24h",
+        "delete_domain_24h",
+        "delete_peer_24h",
+        "delete_client_24h",
+        "delete_owner_24h",
+        "compose_volume_24h",
+        "compose_rule_24h",
+        "compose_domain_24h",
+        "compose_peer_24h",
+        "regroup_client_24h",
+        "regroup_owner_24h",
+        "delete_pair_volume",
+        "insert_pair_volume",
+        "delete_volume_7d",
+        "delete_rule_7d",
+        "delete_domain_7d",
+        "delete_peer_7d",
+        "delete_client_7d",
+        "delete_owner_7d",
+        "compose_volume_7d",
+        "compose_rule_7d",
+        "compose_domain_7d",
+        "compose_peer_7d",
+        "regroup_client_7d",
+        "regroup_owner_7d",
+        "delete_volume_30d",
+        "delete_rule_30d",
+        "delete_domain_30d",
+        "delete_peer_30d",
+        "delete_client_30d",
+        "delete_owner_30d",
+        "compose_volume_30d",
+        "compose_rule_30d",
+        "compose_domain_30d",
+        "compose_peer_30d",
+        "regroup_client_30d",
+        "regroup_owner_30d",
+        "refresh_notify",
+        "refresh_forget_reassigned",
+        "refresh_state_advance"
       ]
     }
   ]

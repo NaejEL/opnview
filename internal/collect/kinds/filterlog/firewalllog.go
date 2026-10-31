@@ -50,7 +50,7 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 			scriptlessProbe(providerKey), pushAnswers(providerKey)); err != nil {
 			return err
 		}
-		return derive.On(c.Collector).Derive(ctx, derive.Derivation{})
+		return nil
 	}
 
 	// Every record the firewall logged before the page was asked for is in it, or in the gap the
@@ -70,12 +70,12 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 		return readErr
 	}
 	if len(records) == 0 {
-		// The refresh runs after every pass, an empty one included: the current slot
-		// of each period is rewritten on every pass, because it is still filling.
+		// The pass is announced after an empty page too: the rollups plugin's refresh follows it and
+		// rewrites the current slot of each period, which is still filling.
 		if err := c.Store.RecordReadThrough(ctx, providerID, readStarted, c.Now()); err != nil {
 			return err
 		}
-		return derive.On(c.Collector).Derive(ctx, derive.Derivation{})
+		return nil
 	}
 
 	newestStored, hasStored, err := c.Store.NewestFlowObservedAt(ctx)
@@ -95,16 +95,14 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 	// rows are written, so no refresh running meanwhile moves its watermark past it.
 	now, ingest := derive.On(c.Collector).BeginIngest()
 	defer derive.On(c.Collector).EndIngest(ingest)
-	var stored derive.Derivation
-	passErr := c.storeFirewallLog(ctx, records, plan, snapshot, now, providerID, newestStored, hasStored,
-		&stored)
+	passErr := c.storeFirewallLog(ctx, records, plan, snapshot, now, providerID, newestStored, hasStored)
 	if passErr == nil && plan.path != nil {
 		// An overlap ends once polling has read up to a second the push path covers.
 		accepted, err := c.handOver(ctx, providerID, plan.path, records)
 		if err != nil {
 			passErr = err
 		} else if len(accepted) > 0 {
-			passErr = c.storeRecords(ctx, accepted, snapshot, now, &stored)
+			passErr = c.storeRecords(ctx, accepted, snapshot, now)
 		}
 	}
 	if c.Hooks.AfterStore != nil {
@@ -114,15 +112,15 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 	if passErr == nil {
 		passErr = c.Store.RecordReadThrough(ctx, providerID, readStarted, c.Now())
 	}
-	// Every record of the page that was stored -- all of them, or those stored before
-	// the pass failed -- can be placed from everything held, its flows attributed, and
-	// the slots refreshed; a failure is still returned.
+	// Every record of the page that was stored -- all of them, or those stored before the pass
+	// failed -- is placed, attributed and rolled up by the plugins' derivations that follow the pass;
+	// a failure is still returned.
 	derive.On(c.Collector).EndIngest(ingest)
-	return derive.On(c.Collector).DeriveAfter(ctx, stored, passErr)
+	return passErr
 }
 
 // storeFirewallLog stores the records of one page and runs the gap test, recording
-// in stored every address and instant it wrote, so the derivation that follows
+// what it wrote, so the derivations that follow the pass
 // reaches them even when this returns an error part-way. A record the retention purge
 // has already removed is not stored again: store.InsertFlow refuses it inside the
 // insert itself, so a purge committing at any moment of this loop is seen.
@@ -130,14 +128,14 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 // THE SOURCE PERIODS DECIDE WHICH RECORDS ARE KEPT (plan, pushpaths.go): a record of an instant a
 // push path covers is superseded, and a gap is clipped by what the push path stored.
 func (c *FilterLogCoordinator) storeFirewallLog(ctx context.Context, records []vocab.Flow, plan pullPlan,
-	snapshot core.Discovery, now, providerID, newestStored int64, hasStored bool, stored *derive.Derivation) error {
+	snapshot core.Discovery, now, providerID, newestStored int64, hasStored bool) error {
 	oldestReturned := int64(0)
 	for index, record := range records {
 		if index == 0 || record.ObservedAt < oldestReturned {
 			oldestReturned = record.ObservedAt
 		}
 	}
-	if err := c.storeRecords(ctx, plan.keep, snapshot, now, stored); err != nil {
+	if err := c.storeRecords(ctx, plan.keep, snapshot, now); err != nil {
 		return err
 	}
 

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
@@ -92,11 +91,9 @@ func (c *Collector) RunDerivation(ctx context.Context, derivation provider.Deriv
 			}
 		}
 	}
-	if outcome.Ran {
-		// The refresh after a run: the slots of the flows the run changed (changed_at), and of the connections
-		// it wrote measure rows for.
-		return derive.On(c.Collector).Derive(ctx, derive.Derivation{Instants: outcome.Instants})
-	}
+	// The rollups plugin's refresh follows on its own triggers (ADR 0021): the flows a run changed
+	// (changed_at) and the connections it wrote measure rows for (connection_measure.computed_at)
+	// select their slots at its next run.
 	return nil
 }
 
@@ -114,7 +111,16 @@ func (c *Collector) DerivationParameters(ctx context.Context) (map[string]any, e
 	retention := c.SettingSeconds(ctx, config.KeyRetentionSeconds, config.DefaultRetentionSeconds)
 	c.Mutex.RLock()
 	timing, cache := c.MaxDelaySeconds, c.CacheAnswerDelaySeconds
+	// The ingest watermark (ADR 0021, step 3): the oldest instant a pass still in flight stamped its rows
+	// with, or nothing when none is -- what a slot's computed_at may be stamped with so that a row committed
+	// after the run read its slot, stamped before, is read by the next run rather than lost.
+	var watermark any
+	for _, stamped := range c.Ingesting {
+		if watermark == nil || stamped < watermark.(int64) {
+			watermark = stamped
+		}
+	}
 	c.Mutex.RUnlock()
 	return map[string]any{"held_margin": held, "leg_pairing_window": window, "retention": retention,
-		"attribution_max_delay": timing, "cache_answer_delay": cache}, nil
+		"attribution_max_delay": timing, "cache_answer_delay": cache, "ingest_watermark": watermark}, nil
 }

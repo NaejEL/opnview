@@ -1,5 +1,4 @@
-// Package aggregates is the part of the store holding the aggregate families: their refresh, slot
-// by slot and period by period, with the per-pair volume derivation (aggregate.go and its
-// statements), and the record of the service's own downtime (downtime.go). internal/store
-// composes it into Store.
+// Package aggregates is the part of the store holding the record of the service's own downtime
+// (downtime.go). The aggregate families and their refresh it was named for are the rollups plugin's
+// tables and derivation since ADR 0021 (plugins/rollups). internal/store composes it into Store.
 package aggregates

@@ -6,7 +6,8 @@ import (
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
-// AggregateStore is the part of the store this package holds: the aggregate families and the refresh of their periods, and the service's own downtime.
+// AggregateStore is the part of the store this package holds: the service's own downtime. The aggregate
+// families and their refresh are the rollups plugin's since ADR 0021.
 // internal/store composes it into its Store, so its methods are the Store's.
 type AggregateStore struct{ *sqldb.Handle }
 

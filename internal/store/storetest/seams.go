@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/NaejEL/opnview/internal/store"
-	"github.com/NaejEL/opnview/internal/store/aggregates"
 	"github.com/NaejEL/opnview/internal/store/plugindecl"
 	"github.com/NaejEL/opnview/internal/store/plugintables"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
@@ -160,13 +159,6 @@ func ReadStatementsOutsideTheFiles(database *store.Store) ([]string, error) {
 		}
 	}
 	return outside, nil
-}
-
-// RefreshAggregates applies the refresh contract with nothing ingesting concurrently: the refresh's
-// watermark is its own instant (store.RefreshAggregatesAt).
-func RefreshAggregates(ctx context.Context, database *store.Store, since, now int64, forced []int64) (
-	aggregates.Refresh, error) {
-	return database.RefreshAggregatesAt(ctx, since, now, now, forced)
 }
 
 // IsPeriodTemplate reports whether a named statement is a period template: one PeriodStatement expands.

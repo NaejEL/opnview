@@ -204,7 +204,7 @@ func TestAThirdPartyPluginAddsAMeasureInJavaScriptAlone(t *testing.T) {
 	specs = append(specs, storetest.Flow{ObservedAt: network.Now - 650, Device: network.Upstream.Device,
 		Direction: "in", Src: toFirewall.src, Dst: toFirewall.dst, SrcPort: storetest.Ptr(toFirewall.srcPort),
 		DstPort: storetest.Ptr(toFirewall.dstPort), Protocol: "tcp", Action: "pass", Bytes: toFirewall.bytes})
-	addresses := network.Insert(t, specs)
+	network.Insert(t, specs)
 	var loggedBytes int64
 	for _, c := range connections {
 		loggedBytes += c.bytes
@@ -227,8 +227,8 @@ func TestAThirdPartyPluginAddsAMeasureInJavaScriptAlone(t *testing.T) {
 	}
 	// The classification and the pairing: the clients plugin's derivation (ADR 0020 wave 3).
 	network.Classify = classifyWith(loaded)
-	network.DerivePairs(t, addresses, network.Now-3600, network.Now)
-	network.ClassifyAndRefresh(t, addresses)
+	network.RunClassification(t)
+	refreshRollups(t, loaded, network.Now)
 	clock := collecttest.NewFixedClock(time.Unix(network.Now, 0))
 	collector := collecttest.NewTestCollectorWithSources(t, providertest.NewClient(t, providertest.NewFirewall(t)),
 		network.DB, clock, loaded.Set)
@@ -309,9 +309,7 @@ func TestAThirdPartyPluginAddsAMeasureInJavaScriptAlone(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the derivation failed: %v", err)
 		}
-		if _, err := storetest.RefreshAggregates(ctx, network.DB, 0, network.Now+5, outcome.Instants); err != nil {
-			t.Fatal(err)
-		}
+		refreshRollups(t, loaded, network.Now+5)
 		return outcome
 	}
 

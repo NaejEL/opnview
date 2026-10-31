@@ -12,7 +12,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/store"
 
-	"github.com/NaejEL/opnview/internal/store/aggregates"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -309,30 +308,14 @@ func (n *Network) FlowsFor(count int, span int64) []Flow {
 
 func Ptr[T any](value T) *T { return &value }
 
-// ClassifyAndRefresh runs what the collector runs after a pass: the classification the test's Classify
-// hook runs -- the clients plugin's derivation, which only a test that loaded the plugins can run (ADR
-// 0020 wave 3) -- then the refresh.
-func (n *Network) ClassifyAndRefresh(t *testing.T, addresses []string) aggregates.Refresh {
+// RunClassification runs the classification the test's Classify hook runs -- the clients plugin's
+// derivation, which only a test that loaded the plugins can run (ADR 0020 wave 3). The refresh that
+// followed it here is the rollups plugin's derivation since ADR 0021, run by the test that loaded it.
+func (n *Network) RunClassification(t *testing.T) {
 	t.Helper()
-	ctx := context.Background()
 	if n.Classify != nil {
 		n.Classify(t)
 	}
-	refresh, err := RefreshAggregates(ctx, n.DB, 0, n.Now, nil)
-	if err != nil {
-		t.Fatalf("refreshing: %v", err)
-	}
-	return refresh
-}
-
-// Populated returns a network with flows over the last span seconds, classified and
-// refreshed.
-func Populated(t *testing.T, interfaceCount, clientCount, flowCount int, span int64) *Network {
-	t.Helper()
-	network := NewNetwork(t, interfaceCount, clientCount)
-	addresses := network.Insert(t, network.FlowsFor(flowCount, span))
-	network.ClassifyAndRefresh(t, addresses)
-	return network
 }
 
 // QueryInt reads one integer.
@@ -431,13 +414,6 @@ func (n *Network) Legs(c Connection, upstream6 string) (Flow, Flow) {
 	first.IPID, second.IPID = &id, &id
 	second.Src, second.SrcPort = n.Upstream.Address, &natPort
 	return first, second
-}
-
-// DerivePairs classifies and pairs what was stored and refreshes, as a derivation does: the test's
-// Classify hook runs the clients plugin's derivation, which places and pairs in one run.
-func (n *Network) DerivePairs(t *testing.T, addresses []string, from, to int64) {
-	t.Helper()
-	n.ClassifyAndRefresh(t, addresses)
 }
 
 // PairState renders every record's outcome and partner by what the record is -- its

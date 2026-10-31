@@ -137,14 +137,6 @@ WHERE id = :id;
 -- The refresh's side: the hours a change of ownership invalidated (aggregate.go).
 -- ---------------------------------------------------------------------------
 
--- statement: reassigned_hours
-SELECT id, hour_start_at
-FROM owner_reassigned_hour
-ORDER BY id;
-
--- statement: reassigned_hours_forget
-DELETE FROM owner_reassigned_hour
-WHERE id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(:ids AS jsonb)) AS j(value));
 
 
 -- ---------------------------------------------------------------------------

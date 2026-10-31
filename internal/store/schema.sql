@@ -998,15 +998,9 @@ CREATE TABLE IF NOT EXISTS retention_purge (
 --
 -- Bounded: the rows live from a change of ownership to the next refresh, seconds
 -- at most. Never purged: the refresh empties it.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS owner_reassigned_hour (
-    id            BIGINT PRIMARY KEY,
-    hour_start_at BIGINT NOT NULL CHECK (hour_start_at >= 0 AND hour_start_at < 4102444800
-                                         AND hour_start_at % 3600 = 0),
-    recorded_at   BIGINT NOT NULL CHECK (recorded_at >= 0 AND recorded_at < 4102444800)
-);
-
-CREATE INDEX IF NOT EXISTS idx_owner_reassigned_hour ON owner_reassigned_hour (hour_start_at);
+-- owner_reassigned_hour -- the rollups plugin's table, plugin_rollups.owner_reassigned_hour, since ADR
+-- 0021 step 3 (plugins/rollups/plugin.json): the owners' writes reach it unqualified through the bridge, and
+-- the plugin's refresh reads and forgets it.
 
 -- ---------------------------------------------------------------------------
 -- Address classification — the evidence each address was last placed from.
@@ -1632,8 +1626,7 @@ SELECT install_assign_id(t::regclass) FROM unnest(ARRAY[
     'account',
     'provider',
     'collection_gap',
-    'opnview_downtime',
-    'owner_reassigned_hour'
+    'opnview_downtime'
 ]) AS t;
 
 INSERT INTO setting (key, value, updated_at) VALUES
