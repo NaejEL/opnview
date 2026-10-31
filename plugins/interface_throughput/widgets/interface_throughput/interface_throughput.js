@@ -26,10 +26,10 @@ exports.widget = {
         // since intra-interface traffic never reaches the counters either, and every counter reset
         // in the window is counted, each a hole and never a rate.
         var line = {
-          key: host.figures.interfaceKey(info.id) + ":" + direction,
+          key: host.lib.figures.figures.interfaceKey(info.id) + ":" + direction,
           interface: info,
           direction: direction,
-          measure: host.figures.measures.interface_counter,
+          measure: host.lib.figures.figures.measures.interface_counter,
           unit: measure,
           lower_bound: true,
           points: [],

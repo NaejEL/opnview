@@ -55,7 +55,7 @@ function leftFlows(host, left, scope, selected) {
       }
       var local = host.lib.figures.volume.localInterface(row);
       flows.push({
-        left: local === null ? "outside" : host.figures.interfaceKey(local),
+        left: local === null ? "outside" : host.lib.figures.figures.interfaceKey(local),
         direction: row.traffic_direction,
         src: row.src_interface_id,
         dst: row.dst_interface_id,
@@ -82,12 +82,12 @@ function leftFlows(host, left, scope, selected) {
       return;
     }
     flows.push({
-      left: host.figures.clientKey(row.client_id),
+      left: host.lib.figures.figures.clientKey(row.client_id),
       direction: row.traffic_direction,
       src: row.src_interface_id,
       dst: row.dst_interface_id,
       peer: row.peer_address,
-      figures: host.figures.withMeasure({
+      figures: host.lib.figures.figures.withMeasure({
         bytes: row.bytes,
         allowed_bytes: row.bytes - row.blocked_bytes,
         blocked_bytes: row.blocked_bytes,
@@ -102,150 +102,154 @@ function leftFlows(host, left, scope, selected) {
 }
 
 exports.widget = {
-  serve: function (host) {
-    var left = host.params.text("left");
-    var right = host.params.text("right");
-    var measure = host.params.text("measure");
-    var directions = host.lib.figures.volume.directions;
-    var thisFirewall = host.lib.figures.matrixplacement.keys.this_firewall;
-    var reasons = host.lib.figures.peers.reasons;
-    var flows = leftFlows(host, left, host.params.text("scope"), host.refs.ids("interfaces"));
+  serve: function (host) { return host.lib.figures.measure.serve(host, serveInMeasure); }
+};
 
-    // Each unnamed bin lists its addresses with their figures, which sum to the bin: a destination the
-    // right-hand side cannot name is still shown by its address (C2).
-    var unnamed = host.lib.figures.peers.bins(host, [reasons.miss, reasons.pending, reasons.no_row], true);
-    var pairs = {};
-    var pairList = [];
-    var nodes = {};
-    // Every flow's figures, summed in one call: host.figures.sum is add folded over a list. The Other
-    // band's figures are listed as they fall into it and summed once, below.
-    var total = host.figures.sum(flows.map(function (flow) { return flow.figures; }));
-    var otherList = [];
-    flows.forEach(function (flow) {
-      var rightKey;
-      if (flow.direction === directions.to_this_firewall ||
-        flow.direction === directions.from_this_firewall) {
-        rightKey = thisFirewall;
-      } else if (flow.peer === null) {
-        var far = flow.dst;
-        if (flow.leftIface !== null && flow.dst !== null && flow.leftIface === flow.dst) {
-          far = flow.src;
+// serveInMeasure builds the answer under the measure the figures library put in force: it is run
+// once per measure tried, and never names one (ADR 0021, step 5).
+function serveInMeasure(host) {
+  var left = host.params.text("left");
+  var right = host.params.text("right");
+  var measure = host.params.text("measure");
+  var directions = host.lib.figures.volume.directions;
+  var thisFirewall = host.lib.figures.matrixplacement.keys.this_firewall;
+  var reasons = host.lib.figures.peers.reasons;
+  var flows = leftFlows(host, left, host.params.text("scope"), host.refs.ids("interfaces"));
+
+  // Each unnamed bin lists its addresses with their figures, which sum to the bin: a destination the
+  // right-hand side cannot name is still shown by its address (C2).
+  var unnamed = host.lib.figures.peers.bins(host, [reasons.miss, reasons.pending, reasons.no_row], true);
+  var pairs = {};
+  var pairList = [];
+  var nodes = {};
+  // Every flow's figures, summed in one call: host.lib.figures.figures.sum is add folded over a list. The Other
+  // band's figures are listed as they fall into it and summed once, below.
+  var total = host.lib.figures.figures.sum(flows.map(function (flow) { return flow.figures; }));
+  var otherList = [];
+  flows.forEach(function (flow) {
+    var rightKey;
+    if (flow.direction === directions.to_this_firewall ||
+      flow.direction === directions.from_this_firewall) {
+      rightKey = thisFirewall;
+    } else if (flow.peer === null) {
+      var far = flow.dst;
+      if (flow.leftIface !== null && flow.dst !== null && flow.leftIface === flow.dst) {
+        far = flow.src;
+      }
+      if (right === "interface" && far !== null) {
+        rightKey = host.lib.figures.figures.interfaceKey(far);
+        var known = host.lib.figures.installation.interface(host, far);
+        if (known !== null) {
+          nodes[rightKey] = node(rightKey, known, null, null, null, null);
         }
-        if (right === "interface" && far !== null) {
-          rightKey = host.figures.interfaceKey(far);
-          var known = host.lib.figures.installation.interface(host, far);
-          if (known !== null) {
-            nodes[rightKey] = node(rightKey, known, null, null, null, null);
-          }
-        } else {
-          rightKey = "inter_interface";
-        }
-      } else if (right === "interface") {
-        rightKey = "outside";
       } else {
-        var geo = host.lib.figures.services.geolocation(host, flow.peer);
-        if (geo.lookup_state !== "resolved") {
-          unnamed.addAddress(host.lib.figures.peers.placementState(geo), flow.peer, flow.figures);
-          otherList.push(flow.figures);
-          return;
-        }
-        if (right === "country") {
-          rightKey = "country:" + (geo.country_code === null ? "none" : geo.country_code);
-          nodes[rightKey] = node(rightKey, null, null, null, null, geo.country_code);
-        } else {
-          rightKey = "operator:" + (geo.asn === null ? "none" : String(geo.asn));
-          nodes[rightKey] = node(rightKey, null, null, geo.asn, geo.operator, null);
-        }
+        rightKey = "inter_interface";
       }
-      var pairKey = flow.left + "\u0000" + rightKey;
-      var entry = has(pairs, pairKey) ? pairs[pairKey] : null;
-      if (entry === null) {
-        entry = { left: flow.left, right: rightKey, members: [], figures: null };
-        pairs[pairKey] = entry;
-        pairList.push(entry);
-      }
-      entry.members.push(flow.figures);
-      if (!has(nodes, flow.left)) {
-        var iface = null;
-        if (flow.leftIface !== null && left === "interface") {
-          iface = host.lib.figures.installation.interface(host, flow.leftIface);
-        }
-        var client = null;
-        if (flow.leftClient !== null) {
-          client = host.lib.figures.installation.client(host, flow.leftClient);
-        }
-        nodes[flow.left] = node(flow.left, iface, client, null, null, null);
-      }
-    });
-
-    var showBlocked = host.params.flag("show_blocked");
-    var ribbons = pairList.map(function (entry) {
-      entry.figures = host.figures.sum(entry.members);
-      var volume = host.figures.volume(entry.figures);
-      var ribbon = {
-        left: entry.left,
-        right: entry.right,
-        value: host.figures.value(measure, entry.figures),
-        bytes: host.figures.byteCount(entry.figures),
-        connections: host.figures.count(volume.connections)
-      };
-      if (showBlocked && volume.connections > 0) {
-        ribbon.blocked_share = volume.blocked_connections / volume.connections;
-      }
-      return { ribbon: ribbon, figures: entry.figures };
-    });
-    // The largest first; equal values by their left end, then their right, in byte order.
-    ribbons.sort(function (a, b) {
-      return b.ribbon.value - a.ribbon.value || host.figures.compare(a.ribbon.left, b.ribbon.left) ||
-        host.figures.compare(a.ribbon.right, b.ribbon.right);
-    });
-
-    var whole = host.figures.value(measure, total);
-    var maxNodes = host.params.integer("max_nodes");
-    var minShare = host.params.number("min_share");
-    var drawnRibbons = [];
-    var otherRibbons = 0;
-    var drawn = {};
-    ribbons.forEach(function (entry) {
-      var share = whole > 0 ? entry.ribbon.value / whole : 0;
-      if (drawnRibbons.length >= maxNodes || share < minShare) {
-        otherRibbons++;
-        otherList.push(entry.figures);
+    } else if (right === "interface") {
+      rightKey = "outside";
+    } else {
+      var geo = host.lib.figures.services.geolocation(host, flow.peer);
+      if (geo.lookup_state !== "resolved") {
+        unnamed.addAddress(host.lib.figures.peers.placementState(geo), flow.peer, flow.figures);
+        otherList.push(flow.figures);
         return;
       }
-      drawnRibbons.push(entry.ribbon);
-      drawn[entry.ribbon.left] = true;
-      drawn[entry.ribbon.right] = true;
-    });
-    var drawnNodes = [];
-    Object.keys(nodes).sort(host.figures.compare).forEach(function (key) {
-      if (drawn[key] === true) {
-        drawnNodes.push(nodes[key]);
+      if (right === "country") {
+        rightKey = "country:" + (geo.country_code === null ? "none" : geo.country_code);
+        nodes[rightKey] = node(rightKey, null, null, null, null, geo.country_code);
+      } else {
+        rightKey = "operator:" + (geo.asn === null ? "none" : String(geo.asn));
+        nodes[rightKey] = node(rightKey, null, null, geo.asn, geo.operator, null);
       }
-    });
-    ["outside", "inter_interface", thisFirewall].forEach(function (key) {
-      if (drawn[key] === true) {
-        drawnNodes.push({ key: key });
+    }
+    var pairKey = flow.left + "\u0000" + rightKey;
+    var entry = has(pairs, pairKey) ? pairs[pairKey] : null;
+    if (entry === null) {
+      entry = { left: flow.left, right: rightKey, members: [], figures: null };
+      pairs[pairKey] = entry;
+      pairList.push(entry);
+    }
+    entry.members.push(flow.figures);
+    if (!has(nodes, flow.left)) {
+      var iface = null;
+      if (flow.leftIface !== null && left === "interface") {
+        iface = host.lib.figures.installation.interface(host, flow.leftIface);
       }
-    });
-    var other = host.figures.sum(otherList);
-    var otherVolume = host.figures.volume(other);
-    return {
-      data: {
-        left: left,
-        right: right,
-        measure: measure,
-        nodes: drawnNodes,
-        ribbons: drawnRibbons,
-        other: {
-          ribbons: otherRibbons,
-          bytes: host.figures.byteCount(other),
-          connections: host.figures.count(otherVolume.connections),
-          unnamed: unnamed.list()
-        },
-        total: host.figures.volume(total)
-      },
-      has_rows: flows.length > 0
+      var client = null;
+      if (flow.leftClient !== null) {
+        client = host.lib.figures.installation.client(host, flow.leftClient);
+      }
+      nodes[flow.left] = node(flow.left, iface, client, null, null, null);
+    }
+  });
+
+  var showBlocked = host.params.flag("show_blocked");
+  var ribbons = pairList.map(function (entry) {
+    entry.figures = host.lib.figures.figures.sum(entry.members);
+    var volume = host.lib.figures.figures.volume(entry.figures);
+    var ribbon = {
+      left: entry.left,
+      right: entry.right,
+      value: host.lib.figures.figures.value(measure, entry.figures),
+      bytes: host.lib.figures.figures.byteCount(entry.figures),
+      connections: host.lib.figures.figures.count(volume.connections)
     };
-  }
-};
+    if (showBlocked && volume.connections > 0) {
+      ribbon.blocked_share = volume.blocked_connections / volume.connections;
+    }
+    return { ribbon: ribbon, figures: entry.figures };
+  });
+  // The largest first; equal values by their left end, then their right, in byte order.
+  ribbons.sort(function (a, b) {
+    return b.ribbon.value - a.ribbon.value || host.lib.figures.figures.compare(a.ribbon.left, b.ribbon.left) ||
+      host.lib.figures.figures.compare(a.ribbon.right, b.ribbon.right);
+  });
+
+  var whole = host.lib.figures.figures.value(measure, total);
+  var maxNodes = host.params.integer("max_nodes");
+  var minShare = host.params.number("min_share");
+  var drawnRibbons = [];
+  var otherRibbons = 0;
+  var drawn = {};
+  ribbons.forEach(function (entry) {
+    var share = whole > 0 ? entry.ribbon.value / whole : 0;
+    if (drawnRibbons.length >= maxNodes || share < minShare) {
+      otherRibbons++;
+      otherList.push(entry.figures);
+      return;
+    }
+    drawnRibbons.push(entry.ribbon);
+    drawn[entry.ribbon.left] = true;
+    drawn[entry.ribbon.right] = true;
+  });
+  var drawnNodes = [];
+  Object.keys(nodes).sort(host.lib.figures.figures.compare).forEach(function (key) {
+    if (drawn[key] === true) {
+      drawnNodes.push(nodes[key]);
+    }
+  });
+  ["outside", "inter_interface", thisFirewall].forEach(function (key) {
+    if (drawn[key] === true) {
+      drawnNodes.push({ key: key });
+    }
+  });
+  var other = host.lib.figures.figures.sum(otherList);
+  var otherVolume = host.lib.figures.figures.volume(other);
+  return {
+    data: {
+      left: left,
+      right: right,
+      measure: measure,
+      nodes: drawnNodes,
+      ribbons: drawnRibbons,
+      other: {
+        ribbons: otherRibbons,
+        bytes: host.lib.figures.figures.byteCount(other),
+        connections: host.lib.figures.figures.count(otherVolume.connections),
+        unnamed: unnamed.list()
+      },
+      total: host.lib.figures.figures.volume(total)
+    },
+    has_rows: flows.length > 0
+  };
+}

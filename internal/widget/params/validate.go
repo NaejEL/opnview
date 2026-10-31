@@ -60,11 +60,6 @@ const (
 	// RefusalStatementNameInvalid is a statement of a widget's query files whose name is not a
 	// snake_case word beginning with widget_.
 	RefusalStatementNameInvalid = "statement_name_invalid"
-	// RefusalMeasuredTwinMismatch is a statement's measured twin, <name>_measured, that binds other
-	// parameters than <name>'s and :measure, or is a period template where <name> is not or the
-	// reverse: the core runs the twin in its statement's place with the statement's parameters and the
-	// measure's name (internal/widget/request/measure.go).
-	RefusalMeasuredTwinMismatch = "measured_twin_mismatch"
 )
 
 // Refusal is one widget the loader would not serve.

@@ -91,7 +91,8 @@
   "queries": [
     "blocked_traffic_world_map.statements.sql",
     "volume.statements.sql",
-    "geolocation.statements.sql"
+    "geolocation.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "blocked_traffic_world_map.js",
   "renderer": {

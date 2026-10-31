@@ -66,7 +66,8 @@
     "interface"
   ],
   "queries": [
-    "series.statements.sql"
+    "series.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "traffic_over_time_by_scope.js",
   "renderer": {

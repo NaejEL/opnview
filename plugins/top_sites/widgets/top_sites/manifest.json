@@ -68,7 +68,8 @@
   "queries": [
     "sites.statements.sql",
     "attribution.statements.sql",
-    "installation.statements.sql"
+    "installation.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "top_sites.js",
   "renderer": {

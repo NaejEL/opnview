@@ -125,7 +125,8 @@
     "volume.statements.sql",
     "clients.statements.sql",
     "flows.statements.sql",
-    "rates.statements.sql"
+    "rates.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "traffic_composition.js",
   "renderer": {

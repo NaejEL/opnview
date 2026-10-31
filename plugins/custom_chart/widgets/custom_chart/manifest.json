@@ -78,7 +78,8 @@
     "custom_chart.statements.sql",
     "installation.statements.sql",
     "series.statements.sql",
-    "samples.statements.sql"
+    "samples.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "custom_chart.js",
   "renderer": {

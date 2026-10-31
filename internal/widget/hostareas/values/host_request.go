@@ -3,6 +3,7 @@ package values
 import (
 	"github.com/dop251/goja"
 
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/script"
 )
 
@@ -13,6 +14,9 @@ import (
 //	host.request.window          the requested window {from, to} of a windowed widget, null otherwise
 //	host.request.aggregate_mode  the aggregate_mode setting in force: "full" or "no_domains"
 //	host.request.no_domains      true when the aggregate mode withholds domain names
+//	host.request.measures        the declared measures, in name order, each as its plugin's manifest
+//	                             declares it (docs/plugins.md, "Measures"): the registry the figures
+//	                             library reads the measure of a figure by
 
 func init() {
 	script.RegisterHostArea("request", func(call *script.ScriptCall, area *goja.Object) {
@@ -26,5 +30,10 @@ func init() {
 		}
 		_ = area.Set("aggregate_mode", r.Mode)
 		_ = area.Set("no_domains", r.NoDomains())
+		measures := vocab.Measures()
+		if measures == nil {
+			measures = []vocab.DeclaredMeasure{}
+		}
+		_ = area.Set("measures", call.Value(measures))
 	})
 }

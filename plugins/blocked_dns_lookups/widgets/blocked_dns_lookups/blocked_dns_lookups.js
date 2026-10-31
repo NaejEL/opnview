@@ -76,7 +76,7 @@ exports.widget = {
     });
 
     var noDomains = host.request.no_domains;
-    var list = Object.keys(rows).sort(host.figures.compare).map(function (key, index) {
+    var list = Object.keys(rows).sort(host.lib.figures.figures.compare).map(function (key, index) {
       var entry = rows[key];
       if (noDomains) {
         host.envelope.withhold("rows[].domain");
@@ -91,7 +91,7 @@ exports.widget = {
           purpose: entry.purpose,
           lookups: lookupCount(entry.lookups),
           clients: sortedIds(entry.clients),
-          unmatched_client_addresses: Object.keys(entry.addresses).sort(host.figures.compare),
+          unmatched_client_addresses: Object.keys(entry.addresses).sort(host.lib.figures.figures.compare),
           interfaces: sortedIds(entry.interfaces),
           last_seen_at: entry.lastSeenAt
         }
@@ -104,7 +104,7 @@ exports.widget = {
         return b.lookups - a.lookups;
       }
       if (noDomains) {
-        var byHash = host.figures.nameFreeCompare(a.key, b.key);
+        var byHash = host.lib.figures.figures.nameFreeCompare(a.key, b.key);
         if (byHash !== 0) {
           return byHash;
         }

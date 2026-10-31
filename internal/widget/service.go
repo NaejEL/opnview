@@ -338,11 +338,7 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 		return *response, nil
 	}
 
-	serve := preset.Serve
-	if preset.Volumes {
-		serve = func(r *request.Request) (any, bool, error) { return r.ServeMeasured(preset.Serve) }
-	}
-	data, hasRows, err := serve(widgetRequest)
+	data, hasRows, err := preset.Serve(widgetRequest)
 	if errors.Is(err, script.ErrWithheldUnderNoDomains) {
 		response.Condition = envelope.ConditionWithheldByAggregateMode
 		response.Data = nil

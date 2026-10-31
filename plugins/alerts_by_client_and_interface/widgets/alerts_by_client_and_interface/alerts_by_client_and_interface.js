@@ -132,7 +132,7 @@ exports.widget = {
     var entries = [];
     var excludedMembers = 0;
     var excludedEvents = 0;
-    Object.keys(subjects).sort(host.figures.compare).forEach(function (key) {
+    Object.keys(subjects).sort(host.lib.figures.figures.compare).forEach(function (key) {
       var subject = subjects[key];
       if (subject.kind === "unmatched" && !includeUnmatched) {
         excludedMembers++;
@@ -179,7 +179,7 @@ exports.widget = {
       }
       var signatures = Object.keys(entry.signatures).map(function (key) { return entry.signatures[key]; });
       signatures.sort(function (a, b) {
-        return b.events !== a.events ? b.events - a.events : host.figures.compare(a.key, b.key);
+        return b.events !== a.events ? b.events - a.events : host.lib.figures.figures.compare(a.key, b.key);
       });
       rows.push([
         entry.kind,

@@ -17,7 +17,7 @@ exports.widget = {
       return { target: target, samples: sorted.length, value: sorted[index] };
     });
     // Slowest first; equal values in the byte order of their names, as the core ranks a tie.
-    bars.sort(function (a, b) { return b.value - a.value || host.figures.compare(a.target, b.target); });
+    bars.sort(function (a, b) { return b.value - a.value || host.lib.figures.figures.compare(a.target, b.target); });
     var shown = bars.slice(0, limit);
     var dropped = bars.slice(limit).reduce(function (sum, bar) { return sum + bar.samples; }, 0);
     host.envelope.cover(rows.length > 0 ? window : null);

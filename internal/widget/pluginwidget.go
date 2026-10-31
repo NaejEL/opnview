@@ -228,11 +228,6 @@ func pluginWidgetStatements(ctx context.Context, database *store.Store, source S
 			texts[statement] = text
 		}
 	}
-	for _, statement := range request.SortedNames(texts) {
-		if mismatch := request.MeasuredTwinMismatch(texts, statement); mismatch != "" {
-			return nil, params.Refuse(name, params.RefusalMeasuredTwinMismatch, "%s", mismatch)
-		}
-	}
 	statements := map[string]script.WidgetStatement{}
 	for _, statement := range request.SortedNames(texts) {
 		text := texts[statement]

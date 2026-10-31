@@ -28,7 +28,7 @@ function ruleKey(ruleId, rid) {
 
 // sortedKeys are an object's keys in byte order.
 function sortedKeys(host, object) {
-  return Object.keys(object).sort(host.figures.compare);
+  return Object.keys(object).sort(host.lib.figures.figures.compare);
 }
 
 // sortedIds is an id set as a sorted list.

@@ -61,7 +61,7 @@ function measuredFigure(host, name) {
   }
   var measure = name.slice(0, cut);
   var figure = name.slice(cut + 1);
-  if ((figure !== "bytes" && figure !== "packets") || host.figures.declared.indexOf(measure) < 0) {
+  if ((figure !== "bytes" && figure !== "packets") || host.lib.figures.figures.declared.indexOf(measure) < 0) {
     return null;
   }
   return { measure: measure, figure: figure };
@@ -72,7 +72,7 @@ function measuredFigure(host, name) {
 // <measure>_packets, which carry no figure when that measure cannot answer the window.
 function fillTraffic(host, line, entry, index, width) {
   var measured = measuredFigure(host, entry.measure);
-  if (measured !== null && host.series.measureState(measured.measure) !== null) {
+  if (measured !== null && host.lib.figures.measure.windowState(host, measured.measure) !== null) {
     line.measure = measured.measure;
     line.unit = entry.measure;
     line.lower_bound = true;
@@ -103,7 +103,7 @@ function fillTraffic(host, line, entry, index, width) {
     measure: measured === null ? null : measured.measure
   }, width);
   setCovered(host, line.window, traffic.covered);
-  line.measure = measured !== null ? measured.measure : host.figures.measure;
+  line.measure = measured !== null ? measured.measure : host.lib.figures.figures.measure;
   line.unit = entry.measure;
   line.lower_bound = true;
   var figure = measured !== null ? measured.figure :
@@ -111,29 +111,29 @@ function fillTraffic(host, line, entry, index, width) {
   if (figure === undefined) {
     figure = "";
   }
-  var total = host.figures.zero();
+  var total = host.lib.figures.figures.zero();
   var rows = false;
   host.lib.figures.buckets.intervals(host.request.window, width).forEach(function (interval) {
     var directions = traffic.buckets[bucketStart(host, interval, width)];
-    var sum = host.figures.zero();
+    var sum = host.lib.figures.figures.zero();
     var present = false;
     if (directions !== undefined) {
       Object.keys(directions).forEach(function (direction) {
-        sum = host.figures.add(sum, directions[direction]);
+        sum = host.lib.figures.figures.add(sum, directions[direction]);
         present = true;
       });
     }
     var bucket = { from: interval.from, to: interval.to, gap: host.lib.figures.buckets.isGap(interval, traffic.covered, line.gaps),
       value: null };
     if (present || !bucket.gap) {
-      bucket.value = host.figures.value(figure, sum);
-      bucket.volume = host.figures.volume(sum);
-      total = host.figures.add(total, sum);
+      bucket.value = host.lib.figures.figures.value(figure, sum);
+      bucket.volume = host.lib.figures.figures.volume(sum);
+      total = host.lib.figures.figures.add(total, sum);
       rows = rows || present;
     }
     line.buckets.push(bucket);
   });
-  line.total = host.figures.value(figure, total);
+  line.total = host.lib.figures.figures.value(figure, total);
   return rows;
 }
 
@@ -169,7 +169,7 @@ function fillThroughput(host, line, entry, index, width) {
       points = points.concat(host.lib.figures.samples.throughput(host, info.device, entry.measure, direction).points);
     });
   });
-  line.measure = host.figures.measures.interface_counter;
+  line.measure = host.lib.figures.figures.measures.interface_counter;
   line.unit = entry.measure;
   line.lower_bound = true;
   line.buckets = host.lib.figures.samples.aggregate(host.request.window, width, points, entry.aggregation);
@@ -283,9 +283,9 @@ function annotation(host, kind, width) {
     return a - b;
   }).forEach(function (start) {
     var directions = traffic.buckets[start];
-    var sum = host.figures.zero();
+    var sum = host.lib.figures.figures.zero();
     Object.keys(directions).forEach(function (direction) {
-      sum = host.figures.add(sum, directions[direction]);
+      sum = host.lib.figures.figures.add(sum, directions[direction]);
     });
     if (sum.blocked_connections === 0) {
       return;
@@ -301,109 +301,113 @@ function omitEmpty(value) {
 }
 
 exports.widget = {
-  serve: function (host) {
-    var conditions = host.envelope.conditions;
-    var providers = host.series.providers();
-    var width = host.lib.figures.buckets.width(host.params.text("period"));
-    var window = host.request.window;
-    var report = host.series.window();
-    var unresolved = host.series.unresolved();
-    var effective = host.params.effective().series;
-    var series = [];
-    var hasRows = false;
-    var kinds = [];
-    (Array.isArray(effective) ? effective : []).forEach(function (fields, index) {
-      var entry = {
-        source: text(fields, "source"),
-        metric: text(fields, "metric"),
-        measure: text(fields, "measure"),
-        label: text(fields, "label"),
-        aggregation: text(fields, "aggregation")
-      };
-      var kindsOf = (SERIES_PROVIDERS[entry.source] || []).slice();
-      var dataset = host.series.dataset(entry.source);
-      if (dataset !== null) {
-        // A dataset of the data catalogue: the provider that dates it.
-        kindsOf = [dataset.freshness_kind];
-      }
-      if (entry.source === "traffic") {
-        if (host.refs.entry(index, "country") !== null) {
-          kindsOf.push("ip_geolocation");
-        }
-        if (host.refs.entry(index, "operator") !== null) {
-          kindsOf.push("ip_geolocation");
-        }
-        if (host.refs.entry(index, "site") !== null) {
-          kindsOf.push("dns_lookup");
-        }
-      }
-      // The members in the order a series has always been written in; the entry's parameters are
-      // echoed after defaults, as a map.
-      var line = {
-        key: "series:" + index,
-        label: omitEmpty(entry.label),
-        condition: "",
-        availability: providers.filter(function (provider) {
-          return kindsOf.indexOf(provider.kind) >= 0;
-        }),
-        window: null,
-        gaps: [],
-        unresolved_references: [],
-        aggregation: omitEmpty(entry.aggregation),
-        measure: "",
-        lower_bound: false,
-        unit: undefined,
-        total: null,
-        total_volume: undefined,
-        buckets: [],
-        parameters: Object.keys(fields).length === 0 ? undefined : host.json.map(fields)
-      };
-      kindsOf.forEach(function (kind) {
-        if (kinds.indexOf(kind) < 0) {
-          kinds.push(kind);
-        }
-      });
-      var prefix = "series[" + index + "].";
-      line.unresolved_references = unresolved.filter(function (reference) {
-        return reference.path.length > prefix.length && reference.path.slice(0, prefix.length) === prefix;
-      });
-      line.window = { requested: { from: window.from, to: window.to }, covered: null,
-        coverage: host.envelope.coverage.not_covered, flow_horizon_at: report.flow_horizon_at };
-      if (host.refs.failed(index)) {
-        line.condition = conditions.unresolved_reference;
-        if (host.refs.withheld(index)) {
-          // Scoped by a site under no_domains: no data, whatever the name, so the series cannot
-          // tell which names were visited (A10, decision 6).
-          line.condition = conditions.withheld_by_aggregate_mode;
-        }
-        line.buckets = null;
-        series.push(line);
-        return;
-      }
-      line.gaps = host.envelope.readGaps(kindsOf, window);
-      var rows = fill(host, line, entry, index, width);
-      line.unit = omitEmpty(line.unit === undefined ? "" : line.unit);
-      line.condition = host.series.kindCondition(line.availability, kindsOf[0]);
-      if (line.condition === conditions.reachable && !rows) {
-        line.condition = conditions.reachable_no_rows;
-      }
-      if (line.condition !== conditions.reachable && line.condition !== conditions.reachable_no_rows && !rows) {
-        line.buckets = null;
-        line.total = null;
-      }
-      hasRows = hasRows || rows;
-      series.push(line);
-    });
-    host.series.bind(kinds);
-    if (series.length > 0) {
-      host.envelope.cover(series[0].window.covered);
-    }
-    var annotations = (host.params.set("annotations") || []).map(function (kind) {
-      return annotation(host, kind, width);
-    });
-    return {
-      data: { bucket_seconds: width, series: series, annotations: annotations },
-      has_rows: hasRows
-    };
-  }
+  serve: function (host) { return host.lib.figures.measure.serve(host, serveInMeasure); }
 };
+
+// serveInMeasure builds the answer under the measure the figures library put in force: it is run
+// once per measure tried, and never names one (ADR 0021, step 5).
+function serveInMeasure(host) {
+  var conditions = host.envelope.conditions;
+  var providers = host.series.providers();
+  var width = host.lib.figures.buckets.width(host.params.text("period"));
+  var window = host.request.window;
+  var report = host.series.window();
+  var unresolved = host.series.unresolved();
+  var effective = host.params.effective().series;
+  var series = [];
+  var hasRows = false;
+  var kinds = [];
+  (Array.isArray(effective) ? effective : []).forEach(function (fields, index) {
+    var entry = {
+      source: text(fields, "source"),
+      metric: text(fields, "metric"),
+      measure: text(fields, "measure"),
+      label: text(fields, "label"),
+      aggregation: text(fields, "aggregation")
+    };
+    var kindsOf = (SERIES_PROVIDERS[entry.source] || []).slice();
+    var dataset = host.series.dataset(entry.source);
+    if (dataset !== null) {
+      // A dataset of the data catalogue: the provider that dates it.
+      kindsOf = [dataset.freshness_kind];
+    }
+    if (entry.source === "traffic") {
+      if (host.refs.entry(index, "country") !== null) {
+        kindsOf.push("ip_geolocation");
+      }
+      if (host.refs.entry(index, "operator") !== null) {
+        kindsOf.push("ip_geolocation");
+      }
+      if (host.refs.entry(index, "site") !== null) {
+        kindsOf.push("dns_lookup");
+      }
+    }
+    // The members in the order a series has always been written in; the entry's parameters are
+    // echoed after defaults, as a map.
+    var line = {
+      key: "series:" + index,
+      label: omitEmpty(entry.label),
+      condition: "",
+      availability: providers.filter(function (provider) {
+        return kindsOf.indexOf(provider.kind) >= 0;
+      }),
+      window: null,
+      gaps: [],
+      unresolved_references: [],
+      aggregation: omitEmpty(entry.aggregation),
+      measure: "",
+      lower_bound: false,
+      unit: undefined,
+      total: null,
+      total_volume: undefined,
+      buckets: [],
+      parameters: Object.keys(fields).length === 0 ? undefined : host.json.map(fields)
+    };
+    kindsOf.forEach(function (kind) {
+      if (kinds.indexOf(kind) < 0) {
+        kinds.push(kind);
+      }
+    });
+    var prefix = "series[" + index + "].";
+    line.unresolved_references = unresolved.filter(function (reference) {
+      return reference.path.length > prefix.length && reference.path.slice(0, prefix.length) === prefix;
+    });
+    line.window = { requested: { from: window.from, to: window.to }, covered: null,
+      coverage: host.envelope.coverage.not_covered, flow_horizon_at: report.flow_horizon_at };
+    if (host.refs.failed(index)) {
+      line.condition = conditions.unresolved_reference;
+      if (host.refs.withheld(index)) {
+        // Scoped by a site under no_domains: no data, whatever the name, so the series cannot
+        // tell which names were visited (A10, decision 6).
+        line.condition = conditions.withheld_by_aggregate_mode;
+      }
+      line.buckets = null;
+      series.push(line);
+      return;
+    }
+    line.gaps = host.envelope.readGaps(kindsOf, window);
+    var rows = fill(host, line, entry, index, width);
+    line.unit = omitEmpty(line.unit === undefined ? "" : line.unit);
+    line.condition = host.series.kindCondition(line.availability, kindsOf[0]);
+    if (line.condition === conditions.reachable && !rows) {
+      line.condition = conditions.reachable_no_rows;
+    }
+    if (line.condition !== conditions.reachable && line.condition !== conditions.reachable_no_rows && !rows) {
+      line.buckets = null;
+      line.total = null;
+    }
+    hasRows = hasRows || rows;
+    series.push(line);
+  });
+  host.series.bind(kinds);
+  if (series.length > 0) {
+    host.envelope.cover(series[0].window.covered);
+  }
+  var annotations = (host.params.set("annotations") || []).map(function (kind) {
+    return annotation(host, kind, width);
+  });
+  return {
+    data: { bucket_seconds: width, series: series, annotations: annotations },
+    has_rows: hasRows
+  };
+}

@@ -365,6 +365,7 @@ var INSTALLATION = { interfaces: null, byId: null, clients: {}, owners: null, ru
 
 function hostOf(host) {
   if (host === null || typeof host !== "object" || !host.query) throw new TypeError("the host is " + describe(host) + ", not the widget's host");
+  bindMeasures(host);
   return host;
 }
 
@@ -510,7 +511,7 @@ exports.volume = {
         sums[key] = { row: kept, figures: figuresOf(row) };
         order.push(key);
       } else {
-        sums[key].figures = host.figures.add(sums[key].figures, figuresOf(row));
+        sums[key].figures = FIGURES.add(sums[key].figures, figuresOf(row));
       }
     });
     var rows = order.map(function (key) {
@@ -547,7 +548,7 @@ exports.volume = {
   total: function (host, rows) {
     var counted = [];
     rows.forEach(function (row) { if (row.exit_leg_device === null || row.exit_leg_device === undefined) counted.push(figuresOf(row)); });
-    return hostOf(host).figures.sum(counted);
+    return FIGURES.sum(counted);
   },
   // localInterface is the inside interface a row belongs to -- the source of an outbound,
   // inter-interface or to-this-firewall row, the destination of an inbound or from-this-firewall row --
@@ -581,15 +582,15 @@ exports.clients = {
     var members = {};
     var ids = [];
     function member(id) {
-      if (members[id] === undefined) { members[id] = { figures: host.figures.zero(), byDirection: {}, peers: {} }; ids.push(id); }
+      if (members[id] === undefined) { members[id] = { figures: FIGURES.zero(), byDirection: {}, peers: {} }; ids.push(id); }
       return members[id];
     }
     readParts(host, window, "widget_client_volume_flows", "widget_client_volume_slots").forEach(function (row) {
       var entry = member(row.client_id);
       var figures = figuresOf(row);
-      entry.figures = host.figures.add(entry.figures, figures);
-      entry.byDirection[row.traffic_direction] = host.figures.add(
-        entry.byDirection[row.traffic_direction] === undefined ? host.figures.zero() : entry.byDirection[row.traffic_direction], figures);
+      entry.figures = FIGURES.add(entry.figures, figures);
+      entry.byDirection[row.traffic_direction] = FIGURES.add(
+        entry.byDirection[row.traffic_direction] === undefined ? FIGURES.zero() : entry.byDirection[row.traffic_direction], figures);
     });
     readParts(host, window, "widget_client_peer_flows", "widget_client_peer_slots").forEach(function (row) {
       member(row.client_id).peers[row.peer] = true;
@@ -659,8 +660,8 @@ exports.peers = {
           !keepInterface(selected, row)) return;
       if (row.peer_address === null || row.peer_address === undefined) { others.push(row); return; }
       var peer = peers[row.peer_address];
-      if (peer === undefined) { peer = { address: row.peer_address, figures: host.figures.zero(), interfaces: {} }; peers[row.peer_address] = peer; }
-      peer.figures = host.figures.add(peer.figures, figuresOf(row));
+      if (peer === undefined) { peer = { address: row.peer_address, figures: FIGURES.zero(), interfaces: {} }; peers[row.peer_address] = peer; }
+      peer.figures = FIGURES.add(peer.figures, figuresOf(row));
       var local = exports.volume.localInterface(row);
       if (local !== null) peer.interfaces[local] = true;
     });
@@ -674,7 +675,7 @@ exports.peers = {
       if (peers[peer.address] !== undefined) throw new TypeError("peers.sorted is handed the address " + peer.address + " twice");
       var interfaces = {};
       (peer.interfaces || []).forEach(function (id) { interfaces[id] = true; });
-      peers[peer.address] = { address: peer.address, figures: host.figures.add(host.figures.zero(), figuresOf(peer.figures)), interfaces: interfaces };
+      peers[peer.address] = { address: peer.address, figures: FIGURES.add(FIGURES.zero(), figuresOf(peer.figures)), interfaces: interfaces };
     });
     return sortedPeers(peers);
   },
@@ -708,11 +709,11 @@ exports.peers = {
     var figures = {};
     var members = {};
     var addresses = {};
-    order.forEach(function (reason) { figures[reason] = host.figures.zero(); members[reason] = 0; });
+    order.forEach(function (reason) { figures[reason] = FIGURES.zero(); members[reason] = 0; });
     function add(reason, added, count) {
       text(reason, "the reason");
-      if (figures[reason] === undefined) { figures[reason] = host.figures.zero(); members[reason] = 0; order.push(reason); }
-      figures[reason] = host.figures.add(figures[reason], added);
+      if (figures[reason] === undefined) { figures[reason] = FIGURES.zero(); members[reason] = 0; order.push(reason); }
+      figures[reason] = FIGURES.add(figures[reason], added);
       members[reason] += count;
     }
     return {
@@ -721,23 +722,23 @@ exports.peers = {
         text(address, "the address");
         if (addresses[reason] === undefined) addresses[reason] = {};
         var known = addresses[reason][address];
-        if (known === undefined) { addresses[reason][address] = host.figures.zero(); add(reason, host.figures.zero(), 1); }
-        addresses[reason][address] = host.figures.add(addresses[reason][address], figuresOf(added));
-        figures[reason] = host.figures.add(figures[reason], figuresOf(added));
+        if (known === undefined) { addresses[reason][address] = FIGURES.zero(); add(reason, FIGURES.zero(), 1); }
+        addresses[reason][address] = FIGURES.add(addresses[reason][address], figuresOf(added));
+        figures[reason] = FIGURES.add(figures[reason], figuresOf(added));
       },
       list: function () {
         return order.map(function (reason) {
-          var bin = { reason: reason, addresses: members[reason], volume: host.figures.volume(figures[reason]) };
+          var bin = { reason: reason, addresses: members[reason], volume: FIGURES.volume(figures[reason]) };
           if (listed === true) {
             var held = addresses[reason] || {};
-            var list = Object.keys(held).map(function (address) { return { address: address, volume: host.figures.volume(held[address]) }; });
+            var list = Object.keys(held).map(function (address) { return { address: address, volume: FIGURES.volume(held[address]) }; });
             list.sort(function (a, b) { return a.volume.bytes !== b.volume.bytes ? (a.volume.bytes > b.volume.bytes ? -1 : 1) : compareText(a.address, b.address); });
             bin.members = list;
           }
           return bin;
         });
       },
-      total: function () { return host.figures.sum(order.map(function (reason) { return figures[reason]; })); }
+      total: function () { return FIGURES.sum(order.map(function (reason) { return figures[reason]; })); }
     };
   }
 };
@@ -868,7 +869,7 @@ exports.sites = {
         throw new TypeError("a site row carries delay_sum without delay_max");
       }
       flows += item.flows;
-      figures = host.figures.add(figures, measuredFigures(item));
+      figures = FIGURES.add(figures, measuredFigures(item));
       if (item.client_id !== null && item.client_id !== undefined) clients[item.client_id] = true;
       if (item.delay_sum !== null && item.delay_sum !== undefined) {
         delaySum += item.delay_sum;
@@ -883,7 +884,7 @@ exports.sites = {
         geo[key] = [orNull(item.country_code), orNull(item.asn), orNull(item.operator)];
       }
     });
-    var row = { kind: "site", name: name, flows: host.figures.count(flows), bytes: host.figures.byteCount(figures),
+    var row = { kind: "site", name: name, flows: FIGURES.count(flows), bytes: FIGURES.byteCount(figures),
       clients: 0, client_ids: sortedIds(clients), methods: methodCounts(rows),
       mean_delay_seconds: timed > 0 ? delaySum / timed : null, max_delay_seconds: maxDelay,
       country_code: null, asn: null, operator: null };
@@ -924,13 +925,13 @@ exports.sites = {
     rows.forEach(function (item) {
       if (item.address !== address) throw new TypeError("accumulateAddress(" + address + ") is handed a row of " + item.address);
       flows += item.flows;
-      figures = host.figures.add(figures, measuredFigures(item));
+      figures = FIGURES.add(figures, measuredFigures(item));
       if (item.client_id !== null && item.client_id !== undefined) clients[item.client_id] = true;
       // One address has one geolocation, so every row of it carries the same.
       row.lookup_state = item.lookup_state; row.country_code = orNull(item.country_code); row.asn = orNull(item.asn); row.operator = orNull(item.operator);
     });
-    row.flows = host.figures.count(flows);
-    row.bytes = host.figures.byteCount(figures);
+    row.flows = FIGURES.count(flows);
+    row.bytes = FIGURES.byteCount(figures);
     row.client_ids = sortedIds(clients);
     row.clients = row.client_ids.length;
     return row;
@@ -994,7 +995,7 @@ exports.attribution = {
     var whole = attributionWhole(host);
     var rate = rateOf(whole, whole.resolver_covered);
     return { resolver_covered: whole.resolver_covered, cache_covered: whole.cache_covered,
-      attribution: { client: EMPTY_CLIENT, eligible_flows: host.figures.count(whole.eligible), named_flows: host.figures.count(whole.named),
+      attribution: { client: EMPTY_CLIENT, eligible_flows: FIGURES.count(whole.eligible), named_flows: FIGURES.count(whole.named),
         methods: { resolver_cache_answer: whole.cache, lookup_timing: whole.timing, not_recorded_beyond_flow_horizon: 0 },
         rate: rate.rate, rate_state: rate.state, mean_delay_seconds: whole.mean, max_delay_seconds: whole.max } };
   },
@@ -1014,8 +1015,8 @@ exports.attribution = {
     if (info === null) return null;
     var count = counts[id] || { eligible: 0, named: 0, mean: null, max: null, cache: 0, timing: 0, figures: {} };
     var rate = rateOf(count, all.resolver_covered);
-    return { client: info, eligible_flows: host.figures.count(count.eligible), eligible_bytes: host.figures.byteCount(count.figures),
-      named_flows: host.figures.count(count.named),
+    return { client: info, eligible_flows: FIGURES.count(count.eligible), eligible_bytes: FIGURES.byteCount(count.figures),
+      named_flows: FIGURES.count(count.named),
       methods: { resolver_cache_answer: count.cache, lookup_timing: count.timing, not_recorded_beyond_flow_horizon: 0 },
       rate: rate.rate, rate_state: rate.state, mean_delay_seconds: count.mean, max_delay_seconds: count.max };
   }
@@ -1117,13 +1118,13 @@ exports.series = {
     positive(width, "the bucket width");
     var scope = filter === null || filter === undefined ? {} : filter;
     var measure = scope.measure === null || scope.measure === undefined || scope.measure === "" ? "" : text(scope.measure, "the filter's measure");
-    if (measure !== "" && host.figures.declared.indexOf(measure) < 0) throw new TypeError("no plugin declares the measure \"" + measure + "\"");
+    if (measure !== "" && FIGURES.declared.indexOf(measure) < 0) throw new TypeError("no plugin declares the measure \"" + measure + "\"");
     var optional = function (value) { return value === undefined ? null : value; };
     var interfaces = optional(scope.interfaces);
     var buckets = {};
     function add(start, direction, figures) {
       if (buckets[start] === undefined) buckets[start] = {};
-      buckets[start][direction] = host.figures.add(buckets[start][direction] === undefined ? {} : buckets[start][direction], figures);
+      buckets[start][direction] = FIGURES.add(buckets[start][direction] === undefined ? {} : buckets[start][direction], figures);
     }
     var parameters = { from: window.from, to: window.to, width: width, interface_ids: interfaces, client_id: optional(scope.client_id),
       rule_id: optional(scope.rule_id), asn: optional(scope.asn), country: optional(scope.country), site: optional(scope.site) };
@@ -1664,5 +1665,673 @@ exports.services = {
       readGeolocations(host, pending);
     }
     return GEOLOCATION.read[address];
+  }
+};
+
+// ---- figures: the shapes of the figures every widget writes, and the measure they are in (ADR 0021,
+// step 5; the widget host's host.figures until then). opnview sees only what crosses the firewall, so
+// every byte and connection figure is a lower bound and says so beside its measure.
+//
+// THE MEASURE IS THE RUN'S. A widget whose manifest declares `volumes` is answered through
+// exports.measure.serve (below), which puts a declared measure in force for a run of the widget's
+// answer and judges what the run built: every figure handed back is read in the measure in force, a
+// Volume and a Count are built in the figures' own measure, and a figure the run did not read in the
+// measure -- a logged figure holding anything, a logged count -- or a connection with a direction not
+// covered is recorded against the run. A widget never names a measure, and two measures are never
+// summed.
+//
+//   figures.volume(figures)             the Volume of summable figures, in their measure: {measure,
+//                                       lower_bound, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
+//                                       connections, allowed_connections, blocked_connections,
+//                                       unknown_connections}, and for a declared measure's Volume its
+//                                       packets and its coverage, whole and per part
+//   figures.logged(figures)             the same: the name it had while every figure was logged
+//   figures.count(value)                a count of the connections or records the answer's figures
+//                                       count: {measure, lower_bound: true, value}, in the measure in
+//                                       force
+//   figures.byteCount(figures)          the Count of the figures' bytes, in their measure
+//   figures.connectionBytes(figures)    the same for one connection's figures: a measured figure of
+//                                       one connection complete in both directions is exact, and the
+//                                       only figure whose lower_bound is false
+//   figures.cover(figures)              says the answer counts figures whose numbers the widget uses
+//                                       directly, so they are judged as a Volume is; an array of
+//                                       figures is judged member by member
+//   figures.sum(list)                   the sum of an array of summable figures, as a new object
+//   figures.loggedCount(value)          {measure: "logged", lower_bound: true, value}: a count of
+//                                       logged records, which an answer in a declared measure cannot
+//                                       carry
+//   figures.withMeasure(figures, from)  figures carrying the measure of `from` (a row or figures read
+//                                       in it): its measure and its measure_parts
+//   figures.zero()                      summable figures holding nothing, in the measure in force
+//   figures.add(into, other)            the sum of two summable figures, as a new object
+//   figures.value(measure, figures)     the figure a `measure` names: bytes, packets, connections,
+//                                       allowed or blocked
+//   figures.remainder(members, volume, count)  what a truncating parameter dropped: {members, volume?,
+//                                       count?}, a null volume or count left out; count is a Count, or
+//                                       a number read as loggedCount reads one
+//   figures.compare(a, b)               -1, 0 or 1: two strings in byte order, the order every key of
+//                                       the core is ranked in (JavaScript's < compares UTF-16 code
+//                                       units and differs outside the Basic Multilingual Plane)
+//   figures.nameFreeCompare(a, b)       -1, 0 or 1: the tie-break between rows whose name is withheld,
+//                                       by a hash (FNV-64a) of the name that says nothing about it
+//   figures.interfaceKey(id)            "interface:<id>", an interface's member key
+//   figures.clientKey(id)               "client:<id>", a client's member key
+//   figures.measures                    the measures, by name: logged, sampled, interface_counter and
+//                                       every declared measure
+//   figures.declared                    the declared measures' names, in name order
+//   figures.measure                     the measure in force: logged or a declared measure
+//
+// Summable figures are {bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+// blocked_connections, unknown_connections}; a member left out is 0. A declared measure's figures also
+// carry measure, its name, and measure_parts, its parts as one array: for each of the allowed, blocked
+// and unknown parts, its bytes, its packets, its four coverage classes, one count per declared
+// direction state and one per declared marker. A row of a statement's measured twin carries them as the
+// columns measure and measure_parts, and a Volume handed back is read as its figures, its packets and
+// coverage objects read per part.
+//
+// The declared measures are the core's registry, read once per request from host.request.measures the
+// first time the library is handed the host (hostOf).
+
+var MEASURES = { byName: null, names: [] };
+
+function bindMeasures(host) {
+  if (MEASURES.byName !== null) return;
+  var declared = host.request && host.request.measures;
+  MEASURES.byName = {};
+  MEASURES.names = [];
+  (declared || []).forEach(function (measure) {
+    MEASURES.byName[measure.name] = measure;
+    MEASURES.names.push(measure.name);
+  });
+}
+
+// declaredMeasure is a declared measure by name, or null for a name that is not one.
+function declaredMeasure(name) {
+  if (typeof name !== "string" || name === "" || MEASURES.byName === null) return null;
+  var measure = MEASURES.byName[name];
+  return measure === undefined ? null : measure;
+}
+
+function measureStates(measure) { return measure.states || []; }
+function measureMarkers(measure) { return measure.markers || []; }
+// partWidth is the width of one part of a measure's parts: bytes, packets, the four classes, the states
+// and the markers.
+function partWidth(measure) { return 6 + measureStates(measure).length + measureMarkers(measure).length; }
+
+// RUN is the run in force: the measure every figure is read in, "" for logged, and what the run built
+// that cannot be served in the measure (exports.measure.serve).
+var LOGGED_RUN = { name: "", loggedFigure: false, uncovered: false };
+var RUN = LOGGED_RUN;
+
+function measureInForce() { return RUN.name === "" ? "logged" : RUN.name; }
+
+var PART_NAMES = ["allowed", "blocked", "unknown"];
+var PART_BYTES = ["allowed_bytes", "blocked_bytes", "unknown_bytes"];
+
+function wholeOrZero(value, what) {
+  if (value === undefined || value === null) return 0;
+  return whole(value, what);
+}
+
+function zeros(length) {
+  var list = [];
+  for (var index = 0; index < length; index++) list.push(0);
+  return list;
+}
+
+// storeFigures reads summable figures a widget hands the library, as the core read them: the seven
+// members, and for a declared measure its parts -- from measure_parts in the measure's layout, or from
+// the packets and coverage objects of a Volume handed back. Figures naming a measure nobody declares
+// are logged. Under a declared measure, figures holding anything that are not of a measure were not
+// read in it: the run cannot be served in the measure.
+function storeFigures(value, what) {
+  if (value === null || typeof value !== "object") throw new TypeError(what + " are " + describe(value) + ", not summable figures");
+  var figures = { measure: "", parts: null };
+  SUMMABLE.forEach(function (key) { figures[key] = wholeOrZero(value[key], what + "." + key); });
+  var measure = declaredMeasure(value.measure);
+  if (measure !== null) {
+    figures.measure = measure.name;
+    var width = partWidth(measure);
+    var parts = value.measure_parts;
+    if (typeof parts === "string") parts = JSON.parse(parts);
+    if (Array.isArray(parts) && parts.length === 3 * width) {
+      figures.parts = parts.map(function (figure, index) { return wholeOrZero(figure, what + ".measure_parts[" + index + "]"); });
+    } else {
+      figures.parts = zeros(3 * width);
+      PART_NAMES.forEach(function (part, index) {
+        var packets = value[part + "_packets"];
+        if (packets !== undefined && packets !== null) figures.parts[index * width + 1] = whole(packets, what + "." + part + "_packets");
+        var coverage = value[part + "_coverage"];
+        if (coverage !== null && typeof coverage === "object") readCoverage(measure, coverage, figures.parts, index * width);
+      });
+    }
+  }
+  if (RUN.name !== "" && figures.measure === "" && !holdsNothing(figures)) RUN.loggedFigure = true;
+  return figures;
+}
+
+// readCoverage reads a coverage object written in a measure's names into one part of the parts; a
+// name the measure does not declare is ignored, a count left out is 0.
+function readCoverage(measure, coverage, parts, at) {
+  function count(value) { return typeof value === "number" && isFinite(value) ? Math.floor(value) : 0; }
+  parts[at + 2] = count(coverage[measure.classes.complete]);
+  parts[at + 3] = count(coverage[measure.classes.partial]);
+  parts[at + 4] = count(coverage[measure.classes.unmeasured]);
+  parts[at + 5] = count(coverage[measure.classes.not_known]);
+  var states = coverage.direction_states !== null && typeof coverage.direction_states === "object" ? coverage.direction_states : {};
+  measureStates(measure).forEach(function (state, index) { parts[at + 6 + index] = count(states[state.name]); });
+  var offset = at + 6 + measureStates(measure).length;
+  measureMarkers(measure).forEach(function (marker, index) { parts[offset + index] = count(coverage[marker]); });
+}
+
+function holdsNothing(figures) {
+  for (var index = 0; index < SUMMABLE.length; index++) if (figures[SUMMABLE[index]] !== 0) return false;
+  return true;
+}
+
+function zeroFigures(measureName) {
+  var figures = { measure: "", parts: null };
+  SUMMABLE.forEach(function (key) { figures[key] = 0; });
+  var measure = declaredMeasure(measureName);
+  if (measure !== null) { figures.measure = measure.name; figures.parts = zeros(3 * partWidth(measure)); }
+  return figures;
+}
+
+// addFigures sums other into figures. Figures of a measure stay of it: the reads of one answer are all
+// of one measure, so a logged figure added to a measured one is the zero a sum starts from.
+function addFigures(figures, other) {
+  SUMMABLE.forEach(function (key) { figures[key] += other[key]; });
+  if (figures.measure === "") { figures.measure = other.measure; figures.parts = other.parts === null ? null : other.parts.slice(); }
+  else if (other.parts !== null && figures.parts !== null && other.parts.length === figures.parts.length) {
+    for (var index = 0; index < figures.parts.length; index++) figures.parts[index] += other.parts[index];
+  }
+  return figures;
+}
+
+function connectionsOf(figures) { return figures.allowed_connections + figures.blocked_connections + figures.unknown_connections; }
+
+// partsArray is the figures' parts in the layout of their measure, each part's bytes the figures' own:
+// what a widget's figures carry as measure_parts. null for logged figures.
+function partsArray(figures) {
+  if (figures.measure === "" || figures.parts === null) return null;
+  var width = figures.parts.length / 3;
+  var array = figures.parts.slice();
+  PART_BYTES.forEach(function (key, index) { array[index * width] = figures[key]; });
+  return array;
+}
+
+// partReading sums the parts the indexes name: packets, the four classes, the states and the markers.
+function partReading(measure, parts, indexes) {
+  var width = partWidth(measure);
+  var reading = { packets: 0, complete: 0, partial: 0, unmeasured: 0, not_known: 0, states: zeros(measureStates(measure).length),
+    markers: zeros(measureMarkers(measure).length) };
+  indexes.forEach(function (index) {
+    var at = index * width;
+    reading.packets += parts[at + 1];
+    reading.complete += parts[at + 2];
+    reading.partial += parts[at + 3];
+    reading.unmeasured += parts[at + 4];
+    reading.not_known += parts[at + 5];
+    for (var state = 0; state < reading.states.length; state++) reading.states[state] += parts[at + 6 + state];
+    for (var marker = 0; marker < reading.markers.length; marker++) reading.markers[marker] += parts[at + 6 + reading.states.length + marker];
+  });
+  return reading;
+}
+
+// coverageObject writes a reading's coverage in the measure's names and declared order.
+function coverageObject(measure, reading) {
+  var coverage = {};
+  coverage[measure.classes.complete] = reading.complete;
+  coverage[measure.classes.partial] = reading.partial;
+  coverage[measure.classes.unmeasured] = reading.unmeasured;
+  coverage[measure.classes.not_known] = reading.not_known;
+  var states = {};
+  measureStates(measure).forEach(function (state, index) { states[state.name] = reading.states[index]; });
+  coverage.direction_states = states;
+  measureMarkers(measure).forEach(function (marker, index) { coverage[marker] = reading.markers[index]; });
+  return coverage;
+}
+
+// covered reports whether every connection the figures count is covered by their measure: none not
+// known, and no direction in a state the measure declares not covered. Logged figures are not.
+function covered(figures) {
+  var measure = declaredMeasure(figures.measure);
+  if (measure === null) return false;
+  var whole = partReading(measure, figures.parts, [0, 1, 2]);
+  if (whole.not_known !== 0) return false;
+  var states = measureStates(measure);
+  for (var index = 0; index < states.length; index++) if (whole.states[index] !== 0 && !states[index].covered) return false;
+  return true;
+}
+
+// judge records measured figures counting a connection with a direction not covered.
+function judge(figures) {
+  if (RUN.name !== "" && !covered(figures)) RUN.uncovered = true;
+}
+
+// summable is store figures as a widget reads them.
+function summable(figures) {
+  var read = {};
+  SUMMABLE.forEach(function (key) { read[key] = figures[key]; });
+  if (figures.measure !== "") { read.measure = figures.measure; read.measure_parts = partsArray(figures); }
+  return read;
+}
+
+// loggedVolume is the Volume of figures in the logged measure.
+function loggedVolume(figures) {
+  return { measure: "logged", lower_bound: true, bytes: figures.bytes, allowed_bytes: figures.allowed_bytes,
+    blocked_bytes: figures.blocked_bytes, unknown_bytes: figures.unknown_bytes, connections: connectionsOf(figures),
+    allowed_connections: figures.allowed_connections, blocked_connections: figures.blocked_connections,
+    unknown_connections: figures.unknown_connections };
+}
+
+// measuredVolume is the Volume of a declared measure's figures, with its packets and coverage, whole
+// and per part.
+function measuredVolume(figures) {
+  var measure = declaredMeasure(figures.measure);
+  var volume = loggedVolume(figures);
+  volume.measure = figures.measure;
+  var whole = partReading(measure, figures.parts, [0, 1, 2]);
+  var parts = PART_NAMES.map(function (part, index) { return partReading(measure, figures.parts, [index]); });
+  volume.packets = whole.packets;
+  PART_NAMES.forEach(function (part, index) { volume[part + "_packets"] = parts[index].packets; });
+  volume.coverage = coverageObject(measure, whole);
+  PART_NAMES.forEach(function (part, index) { volume[part + "_coverage"] = coverageObject(measure, parts[index]); });
+  return volume;
+}
+
+// inMeasure says figures are read in the measure in force: measured figures, or, under a declared
+// measure, figures holding nothing, which are given the measure.
+function inMeasure(figures) {
+  if (figures.measure !== "") return true;
+  if (RUN.name !== "" && holdsNothing(figures)) {
+    var zero = zeroFigures(RUN.name);
+    figures.measure = zero.measure;
+    figures.parts = zero.parts;
+    return true;
+  }
+  return false;
+}
+
+// volumeOf is the Volume of some figures, in their own measure.
+function volumeOf(figures) {
+  if (inMeasure(figures)) { judge(figures); return measuredVolume(figures); }
+  if (RUN.name !== "") RUN.loggedFigure = true;
+  return loggedVolume(figures);
+}
+
+// byteCountOf is the Count of some figures' bytes, in their own measure. single says the figures are
+// one connection's: a measured figure of one connection complete in every direction is exact.
+function byteCountOf(figures, single) {
+  if (inMeasure(figures)) {
+    judge(figures);
+    var whole = partReading(declaredMeasure(figures.measure), figures.parts, [0, 1, 2]);
+    var exact = single && connectionsOf(figures) === 1 && whole.complete === 1;
+    return { measure: figures.measure, lower_bound: !exact, value: figures.bytes };
+  }
+  if (RUN.name !== "") RUN.loggedFigure = true;
+  return { measure: "logged", lower_bound: true, value: figures.bytes };
+}
+
+function countOf(value) { return { measure: measureInForce(), lower_bound: true, value: value }; }
+
+function loggedCountOf(value) {
+  if (RUN.name !== "") {
+    if (value !== 0) RUN.loggedFigure = true;
+    return countOf(value);
+  }
+  return { measure: "logged", lower_bound: true, value: value };
+}
+
+// coverFigures records figures an answer counts whose numbers a widget uses directly rather than
+// through a Volume or a Count.
+function coverFigures(figures) {
+  if (RUN.name === "") return;
+  if (figures.measure === "" && !holdsNothing(figures)) { RUN.loggedFigure = true; return; }
+  inMeasure(figures);
+  judge(figures);
+}
+
+// utf8Bytes is a string's UTF-8 encoding, byte by byte.
+function utf8Bytes(value) {
+  var bytes = [];
+  for (var index = 0; index < value.length; index++) {
+    var code = value.charCodeAt(index);
+    if (code >= 0xD800 && code <= 0xDBFF && index + 1 < value.length) {
+      var low = value.charCodeAt(index + 1);
+      if (low >= 0xDC00 && low <= 0xDFFF) { code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00); index++; }
+    }
+    if (code < 0x80) bytes.push(code);
+    else if (code < 0x800) bytes.push(0xC0 | (code >> 6), 0x80 | (code & 0x3F));
+    else if (code < 0x10000) bytes.push(0xE0 | (code >> 12), 0x80 | ((code >> 6) & 0x3F), 0x80 | (code & 0x3F));
+    else bytes.push(0xF0 | (code >> 18), 0x80 | ((code >> 12) & 0x3F), 0x80 | ((code >> 6) & 0x3F), 0x80 | (code & 0x3F));
+  }
+  return bytes;
+}
+
+// byteCompare is two strings in byte order: UTF-8 bytes compare as code points do.
+function byteCompare(a, b) {
+  var left = utf8Bytes(a), right = utf8Bytes(b);
+  var length = Math.min(left.length, right.length);
+  for (var index = 0; index < length; index++) {
+    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+  }
+  return left.length === right.length ? 0 : (left.length < right.length ? -1 : 1);
+}
+
+// fnv64a is the FNV-64a hash of a string's UTF-8 bytes, as two 32-bit halves [high, low].
+function fnv64a(value) {
+  var high = 0xcbf29ce4, low = 0x84222325;
+  utf8Bytes(value).forEach(function (byte) {
+    low = (low ^ byte) >>> 0;
+    // Multiply the 64-bit value by the prime 0x100000001b3 = 2^40 + 0x1b3, modulo 2^64: the low word
+    // times 0x1b3 is exact in a double (below 2^41), its carry and the low word shifted by 40 bits
+    // land in the high word with the high word times 0x1b3.
+    var product = low * 0x1b3;
+    var carry = Math.floor(product / 4294967296);
+    high = (Math.imul(high, 0x1b3) + ((low << 8) >>> 0) + carry) >>> 0;
+    low = product % 4294967296;
+  });
+  return [high, low];
+}
+
+function nameFreeCompare(a, b) {
+  var left = fnv64a(a), right = fnv64a(b);
+  if (left[0] !== right[0]) return left[0] < right[0] ? -1 : 1;
+  if (left[1] !== right[1]) return left[1] < right[1] ? -1 : 1;
+  return 0;
+}
+
+function figuresValue(measure, figures) {
+  switch (measure) {
+    case "packets": return figures.measure === "" ? 0 : partReading(declaredMeasure(figures.measure), figures.parts, [0, 1, 2]).packets;
+    case "connections": return connectionsOf(figures);
+    case "allowed": return figures.allowed_connections;
+    case "blocked": return figures.blocked_connections;
+  }
+  return figures.bytes;
+}
+
+var FIGURES = {
+  volume: function (figures) { return volumeOf(storeFigures(figures, "the figures")); },
+  logged: function (figures) { return volumeOf(storeFigures(figures, "the figures")); },
+  count: function (value) { return countOf(whole(value, "the count")); },
+  byteCount: function (figures) { return byteCountOf(storeFigures(figures, "the figures"), false); },
+  connectionBytes: function (figures) { return byteCountOf(storeFigures(figures, "the figures"), true); },
+  cover: function (figures) {
+    if (Array.isArray(figures)) { figures.forEach(function (member) { coverFigures(storeFigures(member, "the figures covered")); }); return; }
+    coverFigures(storeFigures(figures, "the figures"));
+  },
+  sum: function (list) {
+    if (!Array.isArray(list)) throw new TypeError("the figures summed are " + describe(list) + ", not an array");
+    var sum = zeroFigures(RUN.name);
+    list.forEach(function (member) { addFigures(sum, storeFigures(member, "the figures summed")); });
+    return summable(sum);
+  },
+  loggedCount: function (value) { return loggedCountOf(whole(value, "the count")); },
+  withMeasure: function (figures, from) {
+    var read = storeFigures(figures, "the figures");
+    var taken = storeFigures(from, "the figures whose measure is taken");
+    read.measure = taken.measure;
+    read.parts = taken.parts === null ? null : taken.parts.slice();
+    return summable(read);
+  },
+  zero: function () { return summable(zeroFigures(RUN.name)); },
+  add: function (into, other) {
+    var sum = storeFigures(into, "the figures added to");
+    addFigures(sum, storeFigures(other, "the figures added"));
+    return summable(sum);
+  },
+  value: function (measure, figures) { return figuresValue(text(measure, "the measure"), storeFigures(figures, "the figures")); },
+  remainder: function (members, volume, count) {
+    var remainder = { members: whole(members, "the members dropped") };
+    if (volume !== undefined && volume !== null) remainder.volume = volumeOf(storeFigures(volume, "the volume dropped"));
+    if (count !== undefined && count !== null) {
+      if (typeof count === "object") {
+        remainder.count = { measure: text(count.measure, "the count dropped's measure"), lower_bound: count.lower_bound === true,
+          value: wholeOrZero(count.value, "the count dropped's value") };
+      } else {
+        remainder.count = loggedCountOf(whole(count, "the count dropped"));
+      }
+    }
+    return remainder;
+  },
+  compare: function (a, b) { return byteCompare(text(a, "a"), text(b, "b")); },
+  nameFreeCompare: function (a, b) { return nameFreeCompare(text(a, "a"), text(b, "b")); },
+  interfaceKey: function (id) { return "interface:" + whole(id, "the interface id"); },
+  clientKey: function (id) { return "client:" + whole(id, "the client id"); }
+};
+Object.defineProperty(FIGURES, "measures", { enumerable: true, get: function () {
+  var measures = { logged: "logged", sampled: "sampled", interface_counter: "interface_counter" };
+  MEASURES.names.forEach(function (name) { measures[name] = name; });
+  return measures;
+} });
+Object.defineProperty(FIGURES, "declared", { enumerable: true, get: function () { return MEASURES.names.slice(); } });
+Object.defineProperty(FIGURES, "measure", { enumerable: true, get: measureInForce });
+exports.figures = FIGURES;
+
+// ---- measure: the choice of the measure a volume answer is given in (ADR 0021, step 5; the core's
+// widget/request/measure.go until then). A widget whose manifest declares `volumes` is given the
+// parameter volume_measure by the core -- logged, best_available, or the name of a declared measure,
+// best_available by default -- and answers through measure.serve(host, answer): the library decides
+// whether a measure can answer the window, runs the answer under it, and judges the figures it built.
+//
+//   measure.serve(host, answer)        answers the widget: answer(host) builds {data, has_rows} as
+//                                      widget.serve does, and is run once per measure tried
+//   measure.windowState(host, name)    null when a declared measure can answer the window (its window
+//                                      states recorded as covered throughout it); otherwise the named
+//                                      state, which the answer then carries: a series read in the
+//                                      measure by name carries no figure. A name no plugin declares is
+//                                      the widget's mistake
+//
+// ONE MEASURE PER ANSWER, NEVER A LOGGED FIGURE LABELLED WITH ANOTHER MEASURE. Under a declared measure
+// every statement of the widget that declares a twin, <name>_measured, is run as its twin with the
+// measure's name bound as :measure (host.query is answered through the twin for the run), and every
+// Volume and Count the run builds says the measure. A run that builds a figure not read in the measure
+// -- a non-zero logged figure, a logged count, a figure the answer wrote itself as logged -- or that
+// throws is not served in it: the answer falls back to logged with the measure's named state, or, for an
+// explicit measure, carries no figure.
+//
+// best_available answers a declared measure only under that measure's strict rule: its window states
+// recorded as covered throughout the window, and every connection the answer counts covered -- known
+// at its start, and no direction in a state the measure declares not covered. Among several measures
+// that best_available may choose, the first in name order that answers is answered; when none does,
+// it answers logged, byte for byte what volume_measure = logged answers, with the first candidate's
+// named state that says why and, for a state that carries one, its detail in state_details.
+//
+// The window's reading of a measure is the widget's own two statements, declared in its manifest:
+//
+//   -- statement: widget_measure_providers   SELECT id FROM provider WHERE kind = CAST(:kind AS TEXT) AND is_active ORDER BY id;
+//   -- statement: widget_measure_intervals   SELECT i.starts_at, i.ends_at, i.state FROM measure_interval AS i
+//                                            WHERE i.measure = CAST(:measure AS TEXT) AND i.provider_id = :provider_id
+//                                            ORDER BY i.starts_at;
+
+var WINDOWS = {};
+
+function statementsOf(host) {
+  var query = hostOf(host).query;
+  if (typeof query.declares !== "function") throw new TypeError("the host's query area declares no function declares");
+  return query;
+}
+
+// measuredQuery is host.query for a run under a declared measure: a statement that declares its twin
+// is run as its twin, bound with the measure's name.
+function measuredQuery(query, measure) {
+  function twin(name, parameters) {
+    if (!query.declares(name + "_measured")) return { name: name, parameters: parameters };
+    var bound = {};
+    if (parameters !== null && typeof parameters === "object") Object.keys(parameters).forEach(function (key) { bound[key] = parameters[key]; });
+    bound.measure = measure;
+    return { name: name + "_measured", parameters: bound };
+  }
+  return {
+    rows: function (name, parameters, period) { var run = twin(name, parameters); return query.rows(run.name, run.parameters, period); },
+    row: function (name, parameters, period) { var run = twin(name, parameters); return query.row(run.name, run.parameters, period); },
+    carriesDomain: function (name) { return query.carriesDomain(name); },
+    declares: function (name) { return query.declares(name); }
+  };
+}
+
+// windowState says whether a measure can answer the request's window, read once per request and
+// measure: {state: "" when it can, the named state otherwise; intervalStates: the window states of the
+// intervals the window meets, in name order}. With no active provider of the measure's kind, the window
+// is in the measure's no-provider state; with several, which the exclusive kind's constraint refuses,
+// in its not-covering state. An instant no interval holds is in its unrecorded state; a window mixing
+// several states is not covering.
+function windowState(host, measure) {
+  if (WINDOWS[measure.name] !== undefined) return WINDOWS[measure.name];
+  var query = statementsOf(host);
+  var providers = query.rows("widget_measure_providers", { kind: measure.provider_kind }).map(function (row) { return row.id; });
+  var names = measure.window_states;
+  var read;
+  if (providers.length === 0) {
+    read = { state: names.no_provider, intervalStates: [names.no_provider] };
+  } else {
+    var window = host.request.window;
+    if (window === null || window === undefined || window.to <= window.from) window = { from: host.request.now, to: host.request.now + 1 };
+    var states = {};
+    providers.forEach(function (provider) {
+      var intervals = query.rows("widget_measure_intervals", { measure: measure.name, provider_id: provider });
+      changePoints(intervals, window.from, window.to).forEach(function (at) { states[stateAt(intervals, at, names.unrecorded)] = true; });
+    });
+    var met = Object.keys(states).sort(byteCompare);
+    read = { intervalStates: met };
+    if (providers.length > 1) read.state = names.not_covering;
+    else if (met.length === 1 && met[0] === names.covered) read.state = "";
+    else if (met.length === 1) read.state = met[0];
+    else read.state = names.not_covering;
+  }
+  WINDOWS[measure.name] = read;
+  return read;
+}
+
+// changePoints are the instants inside [from, to) at which a measure's state may change, from with
+// them: the state is constant from one to the next.
+function changePoints(intervals, from, to) {
+  var points = {};
+  points[from] = true;
+  intervals.forEach(function (interval) {
+    if (interval.starts_at > from && interval.starts_at < to) points[interval.starts_at] = true;
+    if (interval.ends_at !== null && interval.ends_at !== undefined && interval.ends_at > from && interval.ends_at < to) points[interval.ends_at] = true;
+  });
+  return Object.keys(points).map(Number).sort(function (a, b) { return a - b; });
+}
+
+// stateAt is a measure's state at an instant: the latest interval holding it, or the unrecorded state.
+function stateAt(intervals, at, unrecorded) {
+  var state = unrecorded;
+  intervals.forEach(function (interval) {
+    if (interval.starts_at <= at && (interval.ends_at === null || interval.ends_at === undefined || at < interval.ends_at)) state = interval.state;
+  });
+  return state;
+}
+
+// measureState records a measure's named state of a volume answer and, for a state that carries one,
+// its detail: the interval states met for the measure's not-covering state. coverage says the state is
+// the run's judgment that a connection is not covered rather than the window's: the window is then
+// covered throughout.
+function measureState(host, measure, state, coverage) {
+  host.envelope.state(state);
+  if (state === measure.window_states.not_covering) {
+    var window = WINDOWS[measure.name];
+    var states = window === undefined ? [] : window.intervalStates.slice();
+    if (coverage && states.length === 0) states = [measure.window_states.covered];
+    host.envelope.stateDetail(state, { interval_states: states });
+  }
+}
+
+// holdsMeasure reports whether an answer's data holds a figure of a measure: an object whose member
+// `measure` is that measure, wherever it is.
+function holdsMeasure(node, measure) {
+  if (node === null || typeof node !== "object") return false;
+  if (Array.isArray(node)) {
+    for (var index = 0; index < node.length; index++) if (holdsMeasure(node[index], measure)) return true;
+    return false;
+  }
+  if (node.measure === measure) return true;
+  var keys = Object.keys(node);
+  for (var at = 0; at < keys.length; at++) if (holdsMeasure(node[keys[at]], measure)) return true;
+  return false;
+}
+
+// runAnswer runs the answer under a run, with host.query answered through the twins for a declared
+// measure, and puts the logged run back whatever happens.
+function runAnswer(host, answer, run) {
+  var query = host.query;
+  RUN = run;
+  if (run.name !== "") host.query = measuredQuery(query, run.name);
+  try {
+    return answer(host);
+  } finally {
+    host.query = query;
+    RUN = LOGGED_RUN;
+  }
+}
+
+exports.measure = {
+  windowState: function (host, name) {
+    hostOf(host);
+    var measure = declaredMeasure(text(name, "the measure"));
+    if (measure === null) throw new TypeError("no plugin declares the measure \"" + name + "\"");
+    var state = windowState(host, measure).state;
+    if (state === "") return null;
+    measureState(host, measure, state, false);
+    return state;
+  },
+  serve: function (host, answer) {
+    hostOf(host);
+    if (typeof answer !== "function") throw new TypeError("the answer is " + describe(answer) + ", not a function");
+    var requested = host.params.text("volume_measure");
+    if (requested === "logged") return runAnswer(host, answer, LOGGED_RUN);
+    var candidates = [];
+    if (requested === "best_available") {
+      MEASURES.names.forEach(function (name) { if (MEASURES.byName[name].best_available) candidates.push(MEASURES.byName[name]); });
+    } else if (declaredMeasure(requested) !== null) {
+      candidates.push(declaredMeasure(requested));
+    }
+    // No measure to try: what best_available answers with no declared measure is the logged one.
+    if (candidates.length === 0) return runAnswer(host, answer, LOGGED_RUN);
+    // The state answered when no candidate answers is the first candidate's.
+    var fallback = null;
+    for (var index = 0; index < candidates.length; index++) {
+      var measure = candidates[index];
+      var state = windowState(host, measure).state;
+      // coverage says the state is the run's own judgment, not the window's.
+      var coverage = false;
+      if (state === "") {
+        var before = host.envelope.snapshot();
+        var run = { name: measure.name, loggedFigure: false, uncovered: false };
+        var result = null;
+        try {
+          result = runAnswer(host, answer, run);
+        } catch (failure) {
+          // An answer that cannot be built in the measure is not answered in it.
+          run.loggedFigure = true;
+        }
+        if (!run.loggedFigure && result !== null && typeof result === "object" && holdsMeasure(result.data, "logged")) {
+          // A figure the answer wrote itself as logged: never served in an answer in another measure.
+          run.loggedFigure = true;
+        }
+        if (!run.loggedFigure && !run.uncovered) return result;
+        if (!run.loggedFigure && requested === measure.name) {
+          // Asked for the measure, and it covered only some of the answer: its figures, each with its
+          // coverage, and the state that says not every connection was covered.
+          measureState(host, measure, measure.window_states.not_covering, true);
+          return result;
+        }
+        if (run.loggedFigure) state = measure.window_states.not_served;
+        else { state = measure.window_states.not_covering; coverage = true; }
+        host.envelope.restore(before);
+      }
+      if (fallback === null) fallback = { measure: measure, state: state, coverage: coverage };
+    }
+    var logged = runAnswer(host, answer, LOGGED_RUN);
+    measureState(host, fallback.measure, fallback.state, fallback.coverage);
+    if (requested !== "best_available") {
+      // An explicit measure that cannot be answered carries no figure, never logged figures labelled
+      // with it.
+      return { data: null, has_rows: logged !== null && typeof logged === "object" && logged.has_rows === true };
+    }
+    return logged;
   }
 };

@@ -111,168 +111,172 @@ function sampledCount(host, chips) {
 }
 
 exports.widget = {
-  serve: function (host) {
-    var owners = host.lib.figures.installation.owners(host);
-    if (owners.length === 0) {
-      host.envelope.override(host.envelope.conditions.no_owner_exists);
-    }
-    var read = host.lib.figures.clients.volumes(host);
-    var volumes = read.clients;
-    var scope = host.params.text("scope");
-    var measure = host.params.text("measure");
-    var selectedIds = host.refs.ids("owners");
-    var selected = null;
-    if (selectedIds !== null) {
-      selected = {};
-      selectedIds.forEach(function (id) { selected[id] = true; });
-    }
-    var perClient = {};
-    volumes.forEach(function (volume) {
-      var figures = host.figures.zero();
-      Object.keys(volume.by_direction).forEach(function (direction) {
-        if (directionInScope(host, scope, direction)) {
-          figures = host.figures.add(figures, volume.by_direction[direction]);
-        }
-      });
-      perClient[volume.client_id] = figures;
-    });
-    var limit = host.params.integer("clients_per_card");
-    var rates = host.lib.figures.rates.byClient(host);
-    var noRate = host.lib.figures.rates.none(host);
+  serve: function (host) { return host.lib.figures.measure.serve(host, serveInMeasure); }
+};
 
-    // chipOf is one machine's chip: measured with its volume, or no_data_in_period -- which is not
-    // a zero the reader might take for its absence.
-    function chipOf(info) {
-      var chip = {
-        client: info,
-        state: "no_data_in_period",
-        volume: null,
-        current_rate: rates.hasOwnProperty(String(info.id)) ? rates[String(info.id)] : noRate
-      };
-      var figures = perClient[info.id];
-      if (figures !== undefined && (figures.bytes > 0 || connections(figures) > 0)) {
-        chip.state = "measured";
-        chip.volume = host.figures.volume(figures);
+// serveInMeasure builds the answer under the measure the figures library put in force: it is run
+// once per measure tried, and never names one (ADR 0021, step 5).
+function serveInMeasure(host) {
+  var owners = host.lib.figures.installation.owners(host);
+  if (owners.length === 0) {
+    host.envelope.override(host.envelope.conditions.no_owner_exists);
+  }
+  var read = host.lib.figures.clients.volumes(host);
+  var volumes = read.clients;
+  var scope = host.params.text("scope");
+  var measure = host.params.text("measure");
+  var selectedIds = host.refs.ids("owners");
+  var selected = null;
+  if (selectedIds !== null) {
+    selected = {};
+    selectedIds.forEach(function (id) { selected[id] = true; });
+  }
+  var perClient = {};
+  volumes.forEach(function (volume) {
+    var figures = host.lib.figures.figures.zero();
+    Object.keys(volume.by_direction).forEach(function (direction) {
+      if (directionInScope(host, scope, direction)) {
+        figures = host.lib.figures.figures.add(figures, volume.by_direction[direction]);
+      }
+    });
+    perClient[volume.client_id] = figures;
+  });
+  var limit = host.params.integer("clients_per_card");
+  var rates = host.lib.figures.rates.byClient(host);
+  var noRate = host.lib.figures.rates.none(host);
+
+  // chipOf is one machine's chip: measured with its volume, or no_data_in_period -- which is not
+  // a zero the reader might take for its absence.
+  function chipOf(info) {
+    var chip = {
+      client: info,
+      state: "no_data_in_period",
+      volume: null,
+      current_rate: rates.hasOwnProperty(String(info.id)) ? rates[String(info.id)] : noRate
+    };
+    var figures = perClient[info.id];
+    if (figures !== undefined && (figures.bytes > 0 || connections(figures) > 0)) {
+      chip.state = "measured";
+      chip.volume = host.lib.figures.figures.volume(figures);
+    }
+    return chip;
+  }
+
+  // build is one card: its chips by volume, the machines past clients_per_card in its remainder.
+  function build(key, owner, members) {
+    var card = {
+      key: key,
+      owner: owner,
+      value: 0,
+      volume: null,
+      machines: 0,
+      // The person's rate now and the interfaces their machines are on, over every machine of
+      // the card, those folded past clients_per_card included (rows 18 and E7 of the mockup's
+      // coverage); current_rate_clients counts the machines whose rate is summed.
+      current_rate: null,
+      current_rate_clients: 0,
+      interfaces: [],
+      chips: [],
+      chip_remainder: null,
+      timeline: undefined
+    };
+    var figures = host.lib.figures.figures.zero();
+    var chips = members.map(function (info) {
+      var chip = chipOf(info);
+      if (chip.volume !== null) {
+        card.machines++;
+        figures = host.lib.figures.figures.add(figures, chip.volume);
       }
       return chip;
-    }
-
-    // build is one card: its chips by volume, the machines past clients_per_card in its remainder.
-    function build(key, owner, members) {
-      var card = {
-        key: key,
-        owner: owner,
-        value: 0,
-        volume: null,
-        machines: 0,
-        // The person's rate now and the interfaces their machines are on, over every machine of
-        // the card, those folded past clients_per_card included (rows 18 and E7 of the mockup's
-        // coverage); current_rate_clients counts the machines whose rate is summed.
-        current_rate: null,
-        current_rate_clients: 0,
-        interfaces: [],
-        chips: [],
-        chip_remainder: null,
-        timeline: undefined
-      };
-      var figures = host.figures.zero();
-      var chips = members.map(function (info) {
-        var chip = chipOf(info);
-        if (chip.volume !== null) {
-          card.machines++;
-          figures = host.figures.add(figures, chip.volume);
+    });
+    // A measured machine first, by bytes, then by id; one with no data after, by id.
+    chips.sort(function (a, b) {
+      if (a.volume === null || b.volume === null) {
+        if (a.volume !== null) {
+          return -1;
         }
-        return chip;
-      });
-      // A measured machine first, by bytes, then by id; one with no data after, by id.
-      chips.sort(function (a, b) {
-        if (a.volume === null || b.volume === null) {
-          if (a.volume !== null) {
-            return -1;
-          }
-          if (b.volume !== null) {
-            return 1;
-          }
-        } else if (a.volume.bytes !== b.volume.bytes) {
-          return descending(a.volume.bytes, b.volume.bytes);
+        if (b.volume !== null) {
+          return 1;
         }
-        return a.client.id - b.client.id;
-      });
-      var restMembers = 0;
-      var rest = host.figures.zero();
-      var folded = [];
-      chips.forEach(function (chip, index) {
-        if (index < limit) {
-          card.chips.push(chip);
-          return;
-        }
-        restMembers++;
-        folded.push(chip);
-        if (chip.volume !== null) {
-          rest = host.figures.add(rest, chip.volume);
-        }
-      });
-      card.current_rate = sumRates(host, chips.map(function (chip) { return chip.current_rate; }));
-      card.current_rate_clients = sampledCount(host, chips);
-      card.interfaces = interfaceIds(chips);
-      card.chip_remainder = host.figures.remainder(restMembers, rest, null);
-      // The machines folded past clients_per_card, each the chip it would have been, in the same
-      // order, with their rate together: what a person's detail lists for every machine.
-      card.chip_remainder.current_rate = sumRates(host, folded.map(function (chip) { return chip.current_rate; }));
-      card.chip_remainder.chips = folded;
-      card.volume = host.figures.volume(figures);
-      card.value = host.figures.value(measure, figures);
-      return card;
-    }
-
-    var data = {
-      measure: measure,
-      cards: [],
-      unassigned: null,
-      totals_exclude_unassigned: false,
-      total: null
-    };
-    var total = host.figures.zero();
-    var hasRows = volumes.length > 0;
-    owners.forEach(function (owner) {
-      if (selected !== null && !selected[owner.id]) {
+      } else if (a.volume.bytes !== b.volume.bytes) {
+        return descending(a.volume.bytes, b.volume.bytes);
+      }
+      return a.client.id - b.client.id;
+    });
+    var restMembers = 0;
+    var rest = host.lib.figures.figures.zero();
+    var folded = [];
+    chips.forEach(function (chip, index) {
+      if (index < limit) {
+        card.chips.push(chip);
         return;
       }
-      var members = [];
-      host.query.rows("widget_owner_activity_clients_of_owner", { owner_id: owner.id }).forEach(function (row) {
-        var info = host.lib.figures.installation.client(host, row.client_id);
-        if (info !== null) {
-          members.push(info);
-        }
-      });
-      var card = build("owner:" + owner.id, owner, members);
-      total = host.figures.add(total, card.volume);
-      data.cards.push(card);
+      restMembers++;
+      folded.push(chip);
+      if (chip.volume !== null) {
+        rest = host.lib.figures.figures.add(rest, chip.volume);
+      }
     });
-    var includeUnassigned = host.params.flag("include_unassigned");
-    if (includeUnassigned && selected === null) {
-      var unassigned = [];
-      volumes.forEach(function (volume) {
-        var info = host.lib.figures.installation.client(host, volume.client_id);
-        if (info !== null && info.owner_id === null) {
-          unassigned.push(info);
-        }
-      });
-      // host.lib.figures.clients.volumes(host) lists the clients by ascending id already.
-      var card = build("unassigned", null, unassigned);
-      total = host.figures.add(total, card.volume);
-      data.unassigned = card;
-    } else if (!includeUnassigned) {
-      data.totals_exclude_unassigned = true;
-    }
-    data.cards = sortCards(host, data.cards, host.params.text("sort"));
-    if (host.params.flag("show_timeline")) {
-      ownerTimelines(host, data, read.covered, scope, measure);
-    }
-    data.total = host.figures.volume(total);
-    return { data: data, has_rows: hasRows };
+    card.current_rate = sumRates(host, chips.map(function (chip) { return chip.current_rate; }));
+    card.current_rate_clients = sampledCount(host, chips);
+    card.interfaces = interfaceIds(chips);
+    card.chip_remainder = host.lib.figures.figures.remainder(restMembers, rest, null);
+    // The machines folded past clients_per_card, each the chip it would have been, in the same
+    // order, with their rate together: what a person's detail lists for every machine.
+    card.chip_remainder.current_rate = sumRates(host, folded.map(function (chip) { return chip.current_rate; }));
+    card.chip_remainder.chips = folded;
+    card.volume = host.lib.figures.figures.volume(figures);
+    card.value = host.lib.figures.figures.value(measure, figures);
+    return card;
   }
-};
+
+  var data = {
+    measure: measure,
+    cards: [],
+    unassigned: null,
+    totals_exclude_unassigned: false,
+    total: null
+  };
+  var total = host.lib.figures.figures.zero();
+  var hasRows = volumes.length > 0;
+  owners.forEach(function (owner) {
+    if (selected !== null && !selected[owner.id]) {
+      return;
+    }
+    var members = [];
+    host.query.rows("widget_owner_activity_clients_of_owner", { owner_id: owner.id }).forEach(function (row) {
+      var info = host.lib.figures.installation.client(host, row.client_id);
+      if (info !== null) {
+        members.push(info);
+      }
+    });
+    var card = build("owner:" + owner.id, owner, members);
+    total = host.lib.figures.figures.add(total, card.volume);
+    data.cards.push(card);
+  });
+  var includeUnassigned = host.params.flag("include_unassigned");
+  if (includeUnassigned && selected === null) {
+    var unassigned = [];
+    volumes.forEach(function (volume) {
+      var info = host.lib.figures.installation.client(host, volume.client_id);
+      if (info !== null && info.owner_id === null) {
+        unassigned.push(info);
+      }
+    });
+    // host.lib.figures.clients.volumes(host) lists the clients by ascending id already.
+    var card = build("unassigned", null, unassigned);
+    total = host.lib.figures.figures.add(total, card.volume);
+    data.unassigned = card;
+  } else if (!includeUnassigned) {
+    data.totals_exclude_unassigned = true;
+  }
+  data.cards = sortCards(host, data.cards, host.params.text("sort"));
+  if (host.params.flag("show_timeline")) {
+    ownerTimelines(host, data, read.covered, scope, measure);
+  }
+  data.total = host.lib.figures.figures.volume(total);
+  return { data: data, has_rows: hasRows };
+}
 
 // sortCards orders the person cards: by the sort parameter, then by key; by name alone, a tie
 // keeping the order the owners were read in (by id).
@@ -284,14 +288,14 @@ function sortCards(host, cards, order) {
         compared = descending(a.volume.blocked_connections, b.volume.blocked_connections);
         break;
       case "name":
-        return host.figures.compare(a.owner.display_name, b.owner.display_name);
+        return host.lib.figures.figures.compare(a.owner.display_name, b.owner.display_name);
       case "machines":
         compared = descending(a.machines, b.machines);
         break;
       default:
         compared = descending(a.value, b.value);
     }
-    return compared !== 0 ? compared : host.figures.compare(a.key, b.key);
+    return compared !== 0 ? compared : host.lib.figures.figures.compare(a.key, b.key);
   });
 }
 
@@ -310,7 +314,7 @@ function ownerTimelines(host, data, covered, scope, measure) {
         sums[key] = {};
       }
       var sum = sums[key][row.bucket_start];
-      sums[key][row.bucket_start] = host.figures.add(sum === undefined ? host.figures.zero() : sum, row);
+      sums[key][row.bucket_start] = host.lib.figures.figures.add(sum === undefined ? host.lib.figures.figures.zero() : sum, row);
     });
   var gaps = host.envelope.gaps();
   var intervals = host.lib.figures.buckets.intervals(window, width);
@@ -326,9 +330,9 @@ function ownerTimelines(host, data, covered, scope, measure) {
         volume: undefined
       };
       if (sum !== undefined || !entry.gap) {
-        var figures = sum === undefined ? host.figures.zero() : sum;
-        entry.value = host.figures.value(measure, figures);
-        entry.volume = host.figures.volume(figures);
+        var figures = sum === undefined ? host.lib.figures.figures.zero() : sum;
+        entry.value = host.lib.figures.figures.value(measure, figures);
+        entry.volume = host.lib.figures.figures.volume(figures);
       }
       return entry;
     });

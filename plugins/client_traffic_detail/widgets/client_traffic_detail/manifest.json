@@ -106,7 +106,8 @@
   "queries": [
     "client_traffic_detail.statements.sql",
     "installation.statements.sql",
-    "rates.statements.sql"
+    "rates.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "client_traffic_detail.js",
   "renderer": {

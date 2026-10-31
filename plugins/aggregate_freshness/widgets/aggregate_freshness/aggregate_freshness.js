@@ -36,7 +36,7 @@ exports.widget = {
       };
       if (host.params.flag("show_bytes")) {
         // A period holding no slot holds no byte: the sum over no row is null, and the figure is 0.
-        row.bytes = host.figures.loggedCount(coverage.bytes === null ? 0 : coverage.bytes);
+        row.bytes = host.lib.figures.figures.loggedCount(coverage.bytes === null ? 0 : coverage.bytes);
       }
       row.read_from = from;
       if (coverage.slots > 0) {

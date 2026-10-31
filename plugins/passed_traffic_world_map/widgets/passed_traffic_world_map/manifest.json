@@ -75,7 +75,8 @@
   ],
   "queries": [
     "volume.statements.sql",
-    "geolocation.statements.sql"
+    "geolocation.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "passed_traffic_world_map.js",
   "renderer": {

@@ -57,95 +57,99 @@ function firstRanked(rows, limit, rank) {
 }
 
 exports.widget = {
-  serve: function (host) {
-    var group = host.params.text("group");
-    var volume = host.lib.figures.volume.window(host);
-    var reasons = host.lib.figures.peers.reasons;
-    var peers = host.lib.figures.peers.outside(host, volume.rows, host.lib.figures.volume.scopes.all, host.refs.ids("interfaces")).peers;
-    var bins = host.lib.figures.peers.bins(host, [reasons.miss, reasons.pending, reasons.no_row]);
-    var groups = {};
-    var groupList = [];
-    // Every peer's figures, summed in one call: host.figures.sum is add folded over a list.
-    var total = host.figures.sum(peers.map(function (peer) { return peer.figures; }));
-    peers.forEach(function (peer) {
-      var geo = host.lib.figures.services.geolocation(host, peer.address);
-      if (geo.lookup_state !== "resolved") {
-        bins.add(host.lib.figures.peers.placementState(geo), peer.figures, 1);
-        return;
-      }
-      var named = groupOf(group, geo);
-      var entry = has(groups, named.key) ? groups[named.key] : null;
-      if (entry === null) {
-        // The named members are the first peer's of the group: peers come by bytes, then address.
-        entry = { named: named, members: [], figures: null, peers: 0, interfaces: [], build: null };
-        groups[named.key] = entry;
-        groupList.push(entry);
-      }
-      entry.members.push(peer.figures);
-      entry.peers++;
-      peer.interfaces.forEach(function (id) {
-        if (entry.interfaces.indexOf(id) < 0) {
-          entry.interfaces.push(id);
-        }
-      });
-      if (geo.dataset_build_at !== null && (entry.build === null || geo.dataset_build_at > entry.build)) {
-        entry.build = geo.dataset_build_at;
-      }
-    });
-
-    var allowed = host.params.has("series", "allowed");
-    var blocked = host.params.has("series", "blocked");
-    // Every group's figures, and its bytes, which rank it; only the groups shown are written as rows.
-    groupList.forEach(function (entry) {
-      entry.figures = host.figures.sum(entry.members);
-    });
-    // The most bytes first; equal bytes by key, in byte order. The rows shown are the first `limit` in
-    // that order, and only they are ranked among themselves: the window's groups are never sorted whole.
-    var rank = function (a, b) {
-      return b.figures.bytes - a.figures.bytes || host.figures.compare(a.named.key, b.named.key);
-    };
-    var limit = host.params.integer("limit");
-    var first = firstRanked(groupList, limit, rank);
-    var isShown = new Map();
-    first.forEach(function (entry) {
-      isShown.set(entry, true);
-    });
-    var shown = first.map(function (entry) {
-      var row = { key: entry.named.key };
-      if (entry.named.asn !== null) {
-        row.asn = entry.named.asn;
-      }
-      if (entry.named.operator !== null) {
-        row.operator = entry.named.operator;
-      }
-      row.bytes = host.figures.byteCount(entry.figures);
-      if (allowed) {
-        row.allowed = host.figures.volume(host.lib.figures.mapfilters.allowedOnly(entry.figures));
-      }
-      if (blocked) {
-        row.blocked = host.figures.volume(host.lib.figures.mapfilters.blockedOnly(entry.figures));
-      }
-      row.peers = entry.peers;
-      row.interfaces = entry.interfaces.sort(numeric);
-      row.dataset_build_at = entry.build;
-      return row;
-    });
-    var dropped = [];
-    groupList.forEach(function (entry) {
-      if (!isShown.has(entry)) {
-        dropped.push(entry.figures);
-      }
-    });
-    var rest = host.figures.sum(dropped);
-    return {
-      data: {
-        group: group,
-        rows: shown,
-        remainder: host.figures.remainder(dropped.length, rest, null),
-        unresolved: bins.list(),
-        total: host.figures.volume(total)
-      },
-      has_rows: peers.length > 0
-    };
-  }
+  serve: function (host) { return host.lib.figures.measure.serve(host, serveInMeasure); }
 };
+
+// serveInMeasure builds the answer under the measure the figures library put in force: it is run
+// once per measure tried, and never names one (ADR 0021, step 5).
+function serveInMeasure(host) {
+  var group = host.params.text("group");
+  var volume = host.lib.figures.volume.window(host);
+  var reasons = host.lib.figures.peers.reasons;
+  var peers = host.lib.figures.peers.outside(host, volume.rows, host.lib.figures.volume.scopes.all, host.refs.ids("interfaces")).peers;
+  var bins = host.lib.figures.peers.bins(host, [reasons.miss, reasons.pending, reasons.no_row]);
+  var groups = {};
+  var groupList = [];
+  // Every peer's figures, summed in one call: host.lib.figures.figures.sum is add folded over a list.
+  var total = host.lib.figures.figures.sum(peers.map(function (peer) { return peer.figures; }));
+  peers.forEach(function (peer) {
+    var geo = host.lib.figures.services.geolocation(host, peer.address);
+    if (geo.lookup_state !== "resolved") {
+      bins.add(host.lib.figures.peers.placementState(geo), peer.figures, 1);
+      return;
+    }
+    var named = groupOf(group, geo);
+    var entry = has(groups, named.key) ? groups[named.key] : null;
+    if (entry === null) {
+      // The named members are the first peer's of the group: peers come by bytes, then address.
+      entry = { named: named, members: [], figures: null, peers: 0, interfaces: [], build: null };
+      groups[named.key] = entry;
+      groupList.push(entry);
+    }
+    entry.members.push(peer.figures);
+    entry.peers++;
+    peer.interfaces.forEach(function (id) {
+      if (entry.interfaces.indexOf(id) < 0) {
+        entry.interfaces.push(id);
+      }
+    });
+    if (geo.dataset_build_at !== null && (entry.build === null || geo.dataset_build_at > entry.build)) {
+      entry.build = geo.dataset_build_at;
+    }
+  });
+
+  var allowed = host.params.has("series", "allowed");
+  var blocked = host.params.has("series", "blocked");
+  // Every group's figures, and its bytes, which rank it; only the groups shown are written as rows.
+  groupList.forEach(function (entry) {
+    entry.figures = host.lib.figures.figures.sum(entry.members);
+  });
+  // The most bytes first; equal bytes by key, in byte order. The rows shown are the first `limit` in
+  // that order, and only they are ranked among themselves: the window's groups are never sorted whole.
+  var rank = function (a, b) {
+    return b.figures.bytes - a.figures.bytes || host.lib.figures.figures.compare(a.named.key, b.named.key);
+  };
+  var limit = host.params.integer("limit");
+  var first = firstRanked(groupList, limit, rank);
+  var isShown = new Map();
+  first.forEach(function (entry) {
+    isShown.set(entry, true);
+  });
+  var shown = first.map(function (entry) {
+    var row = { key: entry.named.key };
+    if (entry.named.asn !== null) {
+      row.asn = entry.named.asn;
+    }
+    if (entry.named.operator !== null) {
+      row.operator = entry.named.operator;
+    }
+    row.bytes = host.lib.figures.figures.byteCount(entry.figures);
+    if (allowed) {
+      row.allowed = host.lib.figures.figures.volume(host.lib.figures.mapfilters.allowedOnly(entry.figures));
+    }
+    if (blocked) {
+      row.blocked = host.lib.figures.figures.volume(host.lib.figures.mapfilters.blockedOnly(entry.figures));
+    }
+    row.peers = entry.peers;
+    row.interfaces = entry.interfaces.sort(numeric);
+    row.dataset_build_at = entry.build;
+    return row;
+  });
+  var dropped = [];
+  groupList.forEach(function (entry) {
+    if (!isShown.has(entry)) {
+      dropped.push(entry.figures);
+    }
+  });
+  var rest = host.lib.figures.figures.sum(dropped);
+  return {
+    data: {
+      group: group,
+      rows: shown,
+      remainder: host.lib.figures.figures.remainder(dropped.length, rest, null),
+      unresolved: bins.list(),
+      total: host.lib.figures.figures.volume(total)
+    },
+    has_rows: peers.length > 0
+  };
+}

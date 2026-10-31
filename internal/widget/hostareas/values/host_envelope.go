@@ -15,6 +15,11 @@ import (
 // computes the condition after it returns; a script records here what only it knows.
 //
 //	host.envelope.state(code)            records a named state beside the data
+//	host.envelope.stateDetail(code, detail)  records the detail of a named state, {interval_states}
+//	host.envelope.snapshot()             a token for what the response holds now: the states, the
+//	                                     withheld paths, the coverage, the condition override
+//	host.envelope.restore(token)         puts the response back as it was at the snapshot, so an
+//	                                     answer set aside leaves nothing behind
 //	host.envelope.withhold(path)         records a field or level the aggregate mode withheld
 //	host.envelope.override(condition)    replaces the computed condition by one of the widget's own
 //	                                     (no_owner_exists answers with no data)
@@ -46,6 +51,28 @@ func init() {
 		}
 		call.Function(area, "state", func(arguments goja.FunctionCall) goja.Value {
 			r.State(text(arguments, "the state"))
+			return goja.Undefined()
+		})
+		call.Function(area, "stateDetail", func(arguments goja.FunctionCall) goja.Value {
+			state := text(arguments, "the state")
+			var detail envelope.StateDetail
+			call.DecodeArgument(arguments.Argument(1), "the state's detail", &detail)
+			r.StateDetail(state, detail)
+			return goja.Undefined()
+		})
+		// The snapshots a script takes, each handed back as its index: a token the script holds and
+		// cannot forge a response from.
+		var snapshots []request.ResponseSnapshot
+		call.Function(area, "snapshot", func(goja.FunctionCall) goja.Value {
+			snapshots = append(snapshots, r.Snapshot())
+			return call.VM.ToValue(len(snapshots) - 1)
+		})
+		call.Function(area, "restore", func(arguments goja.FunctionCall) goja.Value {
+			token := call.IntegerOf(arguments.Argument(0), "the snapshot token")
+			if token < 0 || token >= int64(len(snapshots)) {
+				call.Throw("the snapshot token %d names no snapshot taken by this request", token)
+			}
+			r.Restore(snapshots[token])
 			return goja.Undefined()
 		})
 		call.Function(area, "withhold", func(arguments goja.FunctionCall) goja.Value {

@@ -848,8 +848,10 @@ A widget's statement files hold named statements, each beginning with a marker l
 - **Every column has a name of its own.** The script reads a row as an object of its columns, so a
   result naming one column twice is refused at run time; give each one with `AS`.
 - **`<name>_measured` is `<name>`'s twin in every declared measure** (*Volume figures and their
-  measure*): it binds exactly `<name>`'s parameters and `:measure`, and is a period template exactly
-  when `<name>` is, or the widget is refused when it loads (`measured_twin_mismatch`).
+  measure*): it binds `<name>`'s parameters and `:measure`, and is a period template exactly when
+  `<name>` is. The figures library runs it in `<name>`'s place under a declared measure, with
+  `<name>`'s parameters and the measure's name; a twin that binds otherwise fails there, as any
+  statement bound wrongly fails (`script_failed`, naming the parameter).
 
 Every statement is checked when the widget loads, at every period of a template: it is one `SELECT`
 that PostgreSQL plans, and it reads none of `account`, `session`, `encrypted_credential`, `setting`
@@ -891,15 +893,16 @@ bytes whichever side of the seam built it:
 
 The host is one object per area of the core, `host.<area>.<function>`: the widget's own statements
 (`host.query`), the parsed request (`host.request`, `host.params`, `host.refs`), the envelope's states,
-coverage and conditions (`host.envelope`), the figures and their measure (`host.figures`), the data
-catalogue (`host.datasets`), the settings a widget may read (`host.settings`), the live lease and
-cadence (`host.live`), what the providers' plugins declare of the samples (`host.samples.metrics`),
-the registrable-domain grouping (`host.services`), the envelope of a series (`host.series`), and the
-libraries the plugin may use (`host.lib`, *Libraries*). The reads every widget shares -- the volume
-window, the client volumes, the outside peers, the site names, the attribution, the flows by their
-columns, the traffic series, the samples, the rates, the interfaces, the addresses, the geolocation
-and the installation's members -- are the figures library's areas since ADR 0021 (`plugins/figures`),
-over statements the widget declares and reads through `host.query`. It grants no firewall call, no
+coverage and conditions (`host.envelope`), the data catalogue (`host.datasets`), the settings a widget
+may read (`host.settings`), the live lease and cadence (`host.live`), what the providers' plugins
+declare of the samples (`host.samples.metrics`), the registrable-domain grouping (`host.services`),
+the envelope of a series (`host.series`), and the libraries the plugin may use (`host.lib`,
+*Libraries*). The reads every widget shares -- the volume window, the client volumes, the outside
+peers, the site names, the attribution, the flows by their columns, the traffic series, the samples,
+the rates, the interfaces, the addresses, the geolocation and the installation's members -- and the
+figures themselves, their sum and their measure (`host.lib.figures.figures`, *Volume figures and
+their measure*) are the figures library's since ADR 0021 (`plugins/figures`), over statements the
+widget declares and reads through `host.query`. It grants no firewall call, no
 fetch and no write. A function called wrongly throws a `TypeError`. Every area is
 documented, function by function, in `docs/widget-host.md`, which a test holds to the areas the host
 has. A row or figures a host function hands is read from the core's own value: its members are read,
@@ -925,29 +928,39 @@ NetFlow export reported for the same logged connections, each direction counted 
 (`docs/widget-api.md`, *Volumes and the observation-point limit*). Two measures are never summed, and
 an answer carries one of them.
 
-**The choice is the core's, and a widget names no measure.** A widget serving Volume or byte Count
-figures declares `"volumes": true` in its manifest, and that is all:
+**The choice is the figures library's, and a widget names no measure** (ADR 0021, decision 5). A
+widget serving Volume or byte Count figures declares `"volumes": true` in its manifest, requires the
+`figures` plugin, hands its answer to the library, and declares the two statements the library reads
+the window by:
 
 - the core gives it the parameter `volume_measure` -- `logged`, every declared measure, or
   `best_available`, `best_available` by default -- which its manifest does not declare
-  (`reserved_parameter_key` if it tries);
-- the core decides, from what is stored, whether a measure can answer the window, runs the script in
-  the measure chosen, and judges what it built: `best_available` answers a declared measure only when
-  its window states are covered throughout and every connection the answer counts is covered -- the
-  first such measure in name order -- and falls back to `logged` -- byte for byte what
-  `volume_measure = logged` answers -- with the measure's named state that says why, and that state's
-  detail in `state_details` when it carries one;
-- every figure the core hands the script is already of that measure: `host.volume`, `host.clients`,
-  `host.peers`, `host.sites`, `host.flows`, `host.series` and `host.attribution` read it, and
-  `host.figures` builds every Volume and Count in the figures' own measure.
+  (`reserved_parameter_key` if it tries); the core reads it for the catalogue and the front, never
+  for a figure;
+- its `widget.serve` is one line, `return host.lib.figures.measure.serve(host, answer)`, where
+  `answer(host)` builds `{data, has_rows}` as `widget.serve` does; the library decides, from what is
+  stored, whether a measure can answer the window, runs `answer` under the measure chosen, and judges
+  what it built: `best_available` answers a declared measure only when its window states are covered
+  throughout and every connection the answer counts is covered -- the first such measure in name
+  order -- and falls back to `logged` -- byte for byte what `volume_measure = logged` answers, the
+  logged run made after the measured one -- with the measure's named state that says why, and that
+  state's detail in `state_details` when it carries one;
+- its query files declare `widget_measure_providers` and `widget_measure_intervals`, the two reads of
+  the registry and of `measure_interval` the library makes (every built-in volume widget's
+  `measure.statements.sql` is the text, to copy as it is);
+- every figure the library hands the answer is already of that measure: the library's `volume`,
+  `clients`, `peers`, `sites`, `flows`, `series` and `attribution` areas read it, and under a declared
+  measure `host.query` answers a statement that declares a twin through the twin, bound with the
+  measure's name.
 
-**What a script does to be answered in a declared measure.** It builds its figures through
-`host.figures` and keeps what the core read whole: it sums with `host.figures.add`, which keeps
-`measure` and `measure_parts` -- or, for many figures at once, `host.figures.sum(list)`, the same sum in
-one call; it counts with `host.figures.count(n)` and `byteCount(figures)`
-(`loggedCount(n)` stays a count of logged records); a number drawn on its own -- a node of a tree --
-takes `host.figures.measure` as its measure, and its figures are handed to `host.figures.cover`, which
-also takes an array of figures and judges each. And:
+**What an answer does to be answered in a declared measure.** It builds its figures through
+`host.lib.figures.figures` and keeps what was read whole: it sums with `figures.add`, which keeps
+`measure` and `measure_parts` -- or, for many figures at once, `figures.sum(list)`, the same sum in
+one call; it counts with `figures.count(n)` and `byteCount(figures)` (`loggedCount(n)` stays a count
+of logged records); a number drawn on its own -- a node of a tree -- takes `figures.measure` as its
+measure, and its figures are handed to `figures.cover`, which also takes an array of figures and
+judges each. The library reads the declared measures from `host.request.measures`, and keeps the
+response as it was before a run it sets aside (`host.envelope.snapshot`, `restore`). And:
 
 - a statement of the widget's own that reads volume columns declares ONE twin, `<name>_measured`,
   which serves every declared measure: the same parameters and the same columns, with the measure's
@@ -961,22 +974,23 @@ also takes an array of figures and judges each. And:
   the purge. The built-in `owner_activity`, `traffic_composition` and `traffic_sankey` statement
   files show a twin over the flows; `internal/widget/traffic/buckets.statements.sql` one over an
   aggregate family's `measure_parts`.
-- **a twin binds exactly its statement's parameters and `:measure`**, and is a period template exactly
-  when its statement is: the core runs it in the statement's place with the statement's parameters and
-  the measure's name. A widget whose twin does not is refused when it loads, with
-  `measured_twin_mismatch` (`docs/widget-authoring.md`, *Refusals*).
+- **a twin binds its statement's parameters and `:measure`**, and is a period template exactly when
+  its statement is: the library runs it in the statement's place with the statement's parameters and
+  the measure's name, and finds it by `host.query.declares(name + "_measured")`.
 
-**Nothing wrong is ever served.** A run in a declared measure that builds a figure the core did not
-read in it, or that fails, is not served in that measure: `best_available` answers the logged answer
-with the measure's not-served state (for netflow, `netflow_not_served_by_type`), and an explicit
-`volume_measure` naming the measure answers no figure and the same state.
+**Nothing wrong is ever served.** A run in a declared measure that builds a figure not read in it, or
+that throws, is not served in that measure: `best_available` answers the logged answer with the
+measure's not-served state (for netflow, `netflow_not_served_by_type`), and an explicit
+`volume_measure` naming the measure answers no figure and the same state. A store failure or the
+time bound stops the request itself, as it stops any script.
 
 ### Measures
 
 A plugin whose derivation counts the logged connections a second way declares the **measure** in its
-manifest's `measures` key; the core then serves it in every widget that declares `"volumes": true`,
-adds it to `volume_measure`, and draws its `<measure>_bytes` and `<measure>_packets` in
-`custom_chart`, with no line of Go. "Measure" and "marker" are `opnview`'s own terms
+manifest's `measures` key; the core registers it, adds it to `volume_measure` and hands it to every
+script as `host.request.measures`, the figures library serves it in every widget that declares
+`"volumes": true`, and `custom_chart` draws its `<measure>_bytes` and `<measure>_packets`, with no
+line of Go. "Measure" and "marker" are `opnview`'s own terms
 (`docs/data-model.md`, *Vocabulary*). The netflow plugin's manifest is the worked example.
 
 | Key | What it is |

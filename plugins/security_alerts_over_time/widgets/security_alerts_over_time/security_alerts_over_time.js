@@ -142,8 +142,8 @@ exports.widget = {
       });
       var providers = Object.keys(series.providers).map(function (id) { return series.providers[id]; });
       providers.sort(function (a, b) {
-        var kinds = host.figures.compare(a.kind, b.kind);
-        return kinds !== 0 ? kinds : host.figures.compare(a.provider_key, b.provider_key);
+        var kinds = host.lib.figures.figures.compare(a.kind, b.kind);
+        return kinds !== 0 ? kinds : host.lib.figures.figures.compare(a.provider_key, b.provider_key);
       });
       var entry = {
         key: severity,
@@ -157,7 +157,7 @@ exports.widget = {
       };
       if (severity === "unknown") {
         var reasons = {};
-        Object.keys(series.reasons).sort(host.figures.compare).forEach(function (reason) {
+        Object.keys(series.reasons).sort(host.lib.figures.figures.compare).forEach(function (reason) {
           reasons[reason] = eventCount(series.reasons[reason]);
         });
         entry.reasons = reasons;

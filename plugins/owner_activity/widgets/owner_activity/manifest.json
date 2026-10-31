@@ -91,7 +91,8 @@
     "owner_activity.statements.sql",
     "installation.statements.sql",
     "clients.statements.sql",
-    "rates.statements.sql"
+    "rates.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "owner_activity.js",
   "renderer": {

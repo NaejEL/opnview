@@ -113,7 +113,7 @@ exports.widget = {
       // The signature text of the newest event: a provider may rewrite a rule's text between two
       // rulesets, and the newest is what the rule says now. Ties keep the first in byte order.
       if (row.newest > group.signatureAt ||
-          (row.newest === group.signatureAt && host.figures.compare(row.signature, group.signature) < 0)) {
+          (row.newest === group.signatureAt && host.lib.figures.figures.compare(row.signature, group.signature) < 0)) {
         group.signature = row.signature;
         group.signatureAt = row.newest;
       }
@@ -141,7 +141,7 @@ exports.widget = {
       total += row.events;
     });
 
-    var entries = keys.sort(host.figures.compare).map(function (key) { return groups[key]; });
+    var entries = keys.sort(host.lib.figures.figures.compare).map(function (key) { return groups[key]; });
     // A stable sort on the requested order: entries tied on it keep their key order.
     var order = host.params.text("sort");
     entries = entries.map(function (entry, index) { return { entry: entry, index: index }; });
@@ -203,7 +203,7 @@ exports.widget = {
         clients,
         interfaces,
         entry.thisFirewall,
-        Object.keys(entry.observed).sort(host.figures.compare).map(function (device) { return entry.observed[device]; })
+        Object.keys(entry.observed).sort(host.lib.figures.figures.compare).map(function (device) { return entry.observed[device]; })
       ]);
     });
 

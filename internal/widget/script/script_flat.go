@@ -141,7 +141,7 @@ var (
 	integerType = reflect.TypeFor[int64]()
 	textType    = reflect.TypeFor[string]()
 	floatType   = reflect.TypeFor[float64]()
-	// integersType is exactly []int64: a measure's parts (traffic.MeasureMembers.MeasureParts).
+	// integersType is exactly []int64: a list of ids a host value carries.
 	integersType = reflect.TypeFor[[]int64]()
 )
 

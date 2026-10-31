@@ -56,7 +56,7 @@ function nodeValue(measure, node) {
   return measure === "connections" ? node.connections : node.bytes;
 }
 
-// MEASURE is the measure the answer is given in (host.figures.measure), set when it is served.
+// MEASURE is the measure the answer is given in (host.lib.figures.figures.measure), set when it is served.
 var MEASURE = "";
 
 // figure is a count of records or bytes, in the measure the answer is given in.
@@ -104,14 +104,14 @@ function ordered(host, nodes) {
         difference = b.connections - a.connections;
         break;
       case "name":
-        return host.figures.compare(a.key, b.key);
+        return host.lib.figures.figures.compare(a.key, b.key);
       case "recency":
         difference = b.newest - a.newest;
         break;
       default:
         difference = nodeValue(measure, b) - nodeValue(measure, a);
     }
-    return difference !== 0 ? (difference > 0 ? 1 : -1) : host.figures.compare(a.key, b.key);
+    return difference !== 0 ? (difference > 0 ? 1 : -1) : host.lib.figures.figures.compare(a.key, b.key);
   });
   return remainder === null ? shown : shown.concat([remainder]);
 }
@@ -187,62 +187,66 @@ function finishLevel(host, levels, side, parents, depth) {
 }
 
 exports.widget = {
-  serve: function (host) {
-    coverFlows(host, "tree_beyond_flow_horizon");
-    MEASURE = host.figures.measure;
-    var root = host.params.text("root");
-    var depth = host.params.integer("depth");
-    var measure = host.params.text("measure");
-    var noDomains = host.request.no_domains;
-    var window = host.request.window;
-    var rows = host.query.rows(noDomains ? "widget_tree_nodes_no_domains" : "widget_tree_nodes", {
-      from: window.from,
-      to: window.to,
-      root: root,
-      depth: depth,
-      limit: host.params.integer("limit_per_level"),
-      sort: host.params.text("sort"),
-      value_by: measure,
-      include_blocked: host.params.flag("include_blocked"),
-      interface_ids: host.refs.jsonIds(host.refs.ids("interfaces")),
-      client_ids: host.refs.jsonIds(host.refs.ids("clients")),
-      owner_ids: host.refs.jsonIds(host.refs.ids("owners"))
-    });
-    var levels = {};
-    var total = newNode("total");
-    var hasRows = false;
-    rows.forEach(function (row) {
-      if (row.side === "total") {
-        total.bytes = row.bytes;
-        total.connections = row.connections;
-        total.blocked = row.blocked;
-        hasRows = row.members > 0;
-        // The core judges every connection the tree counts, as it judges a Volume. A logged answer has
-        // nothing to judge: the core records a judgement only while the answer is read in a declared
-        // measure.
-        if (MEASURE !== "logged" && hasRows) {
-          host.figures.cover(row);
-        }
-        return;
-      }
-      var key = levelKey(row.side, row.level, row.parent_first, row.parent_second);
-      if (levels[key] === undefined) {
-        levels[key] = [];
-      }
-      levels[key].push(nodeOf(row));
-    });
-    var data = {
-      root: root,
-      measure: measure,
-      depth: depth,
-      inside: finishLevel(host, levels, "inside", [], Math.min(depth, 2)),
-      outside: finishLevel(host, levels, "outside", [], depth)
-    };
-    if (noDomains) {
-      // The statement read no site name: every destination below the operator is its address.
-      host.envelope.withhold("outside[].children[].site_name");
-    }
-    data.total = written(measure, total);
-    return { data: data, has_rows: hasRows };
-  }
+  serve: function (host) { return host.lib.figures.measure.serve(host, serveInMeasure); }
 };
+
+// serveInMeasure builds the answer under the measure the figures library put in force: it is run
+// once per measure tried, and never names one (ADR 0021, step 5).
+function serveInMeasure(host) {
+  coverFlows(host, "tree_beyond_flow_horizon");
+  MEASURE = host.lib.figures.figures.measure;
+  var root = host.params.text("root");
+  var depth = host.params.integer("depth");
+  var measure = host.params.text("measure");
+  var noDomains = host.request.no_domains;
+  var window = host.request.window;
+  var rows = host.query.rows(noDomains ? "widget_tree_nodes_no_domains" : "widget_tree_nodes", {
+    from: window.from,
+    to: window.to,
+    root: root,
+    depth: depth,
+    limit: host.params.integer("limit_per_level"),
+    sort: host.params.text("sort"),
+    value_by: measure,
+    include_blocked: host.params.flag("include_blocked"),
+    interface_ids: host.refs.jsonIds(host.refs.ids("interfaces")),
+    client_ids: host.refs.jsonIds(host.refs.ids("clients")),
+    owner_ids: host.refs.jsonIds(host.refs.ids("owners"))
+  });
+  var levels = {};
+  var total = newNode("total");
+  var hasRows = false;
+  rows.forEach(function (row) {
+    if (row.side === "total") {
+      total.bytes = row.bytes;
+      total.connections = row.connections;
+      total.blocked = row.blocked;
+      hasRows = row.members > 0;
+      // The core judges every connection the tree counts, as it judges a Volume. A logged answer has
+      // nothing to judge: the core records a judgement only while the answer is read in a declared
+      // measure.
+      if (MEASURE !== "logged" && hasRows) {
+        host.lib.figures.figures.cover(row);
+      }
+      return;
+    }
+    var key = levelKey(row.side, row.level, row.parent_first, row.parent_second);
+    if (levels[key] === undefined) {
+      levels[key] = [];
+    }
+    levels[key].push(nodeOf(row));
+  });
+  var data = {
+    root: root,
+    measure: measure,
+    depth: depth,
+    inside: finishLevel(host, levels, "inside", [], Math.min(depth, 2)),
+    outside: finishLevel(host, levels, "outside", [], depth)
+  };
+  if (noDomains) {
+    // The statement read no site name: every destination below the operator is its address.
+    host.envelope.withhold("outside[].children[].site_name");
+  }
+  data.total = written(measure, total);
+  return { data: data, has_rows: hasRows };
+}

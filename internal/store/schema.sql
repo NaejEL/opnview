@@ -1310,9 +1310,10 @@ CREATE INDEX IF NOT EXISTS idx_connection_measure_due
 -- starts_at, for each provider of the measure's kind, the state of the measure --
 -- covered, or one of its own window states -- until ends_at, or for as long as no
 -- later interval says otherwise when ends_at is NULL. An instant no interval
--- holds is in the measure's unrecorded state. The widget measure reads them to
--- decide whether the measure can answer a window (internal/widget/request,
--- measure.go); no reader of them names a measure or a state.
+-- holds is in the measure's unrecorded state. The figures library reads them,
+-- through a volume widget's own statement, to decide whether the measure can
+-- answer a window (plugins/figures/figures.js, exports.measure); no reader of
+-- them names a measure or a state.
 --
 -- Bounded: a derivation records one interval per change of what it can measure,
 -- and rewrites a provider's intervals as a whole.

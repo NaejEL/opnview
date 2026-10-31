@@ -68,7 +68,8 @@
   "queries": [
     "installation.statements.sql",
     "sites.statements.sql",
-    "attribution.statements.sql"
+    "attribution.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "sites_by_client.js",
   "renderer": {

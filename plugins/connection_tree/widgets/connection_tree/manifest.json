@@ -109,7 +109,8 @@
   "queries": [
     "connection_tree.statements.sql",
     "installation.statements.sql",
-    "geolocation.statements.sql"
+    "geolocation.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "connection_tree.js",
   "renderer": {

@@ -67,7 +67,8 @@
   ],
   "queries": [
     "volume.statements.sql",
-    "geolocation.statements.sql"
+    "geolocation.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "destination_operators.js",
   "renderer": {

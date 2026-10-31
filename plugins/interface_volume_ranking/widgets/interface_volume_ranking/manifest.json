@@ -63,7 +63,8 @@
   "queries": [
     "installation.statements.sql",
     "volume.statements.sql",
-    "interfaces.statements.sql"
+    "interfaces.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "interface_volume_ranking.js",
   "renderer": {

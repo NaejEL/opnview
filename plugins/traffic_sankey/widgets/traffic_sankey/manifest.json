@@ -101,7 +101,8 @@
     "traffic_sankey.statements.sql",
     "installation.statements.sql",
     "volume.statements.sql",
-    "geolocation.statements.sql"
+    "geolocation.statements.sql",
+    "measure.statements.sql"
   ],
   "script": "traffic_sankey.js",
   "renderer": {

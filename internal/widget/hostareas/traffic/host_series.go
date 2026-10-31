@@ -3,7 +3,6 @@ package traffic
 import (
 	"github.com/dop251/goja"
 
-	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/datasets"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/params"
@@ -18,11 +17,6 @@ import (
 // its unresolved references -- for a chart whose series each degrade on their own. The traffic of the
 // window per bucket is the figures library's series area since ADR 0021 (plugins/figures).
 //
-//	host.series.measureState(measure)        null when a declared measure can answer the window (its
-//	                                         window states recorded as covered throughout it,
-//	                                         internal/widget/request/measure.go); otherwise the named state,
-//	                                         which the answer then carries: a series of the measure carries
-//	                                         no figure. A name no plugin declares is the script's mistake
 //	host.series.providers()                  every registered provider with its availability and condition
 //	host.series.kindCondition(availability, kind)
 //	                                         the condition of a provider kind among an availability list:
@@ -61,22 +55,6 @@ type datasetSeriesRead struct {
 func init() {
 	script.RegisterHostArea("series", func(call *script.ScriptCall, area *goja.Object) {
 		r := call.Request
-		call.Function(area, "measureState", func(arguments goja.FunctionCall) goja.Value {
-			name := call.TextOf(arguments.Argument(0), "the measure")
-			measure, declared := vocab.MeasureNamed(name)
-			if !declared {
-				call.Throw("no plugin declares the measure %q", name)
-			}
-			state, err := r.MeasureWindowState(measure)
-			if err != nil {
-				return call.Fail(err)
-			}
-			if state == "" {
-				return goja.Null()
-			}
-			r.MeasureState(measure, state, false)
-			return call.VM.ToValue(state)
-		})
 		call.Function(area, "providers", func(goja.FunctionCall) goja.Value {
 			providers, err := request.ReadProviders(r.Ctx, r.Db)
 			if err != nil {

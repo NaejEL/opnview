@@ -158,12 +158,12 @@ exports.widget = {
     var groups = [];
     var groupBy = host.params.text("group_by");
     if (groupBy === "engine") {
-      Object.keys(countsByKind).sort(host.figures.compare).forEach(function (kind) {
+      Object.keys(countsByKind).sort(host.lib.figures.figures.compare).forEach(function (kind) {
         groups.push({ key: kind, count: countsByKind[kind] });
       });
     } else if (groupBy === "client") {
       host.query.rows("widget_blocked_feed_by_client", filtersWithKinds).forEach(function (row) {
-        groups.push({ key: row.client_id === null ? "client:none" : host.figures.clientKey(row.client_id),
+        groups.push({ key: row.client_id === null ? "client:none" : host.lib.figures.figures.clientKey(row.client_id),
           count: row.refusals });
       });
     } else if (groupBy === "target") {
@@ -189,7 +189,7 @@ exports.widget = {
       if (aWithheld !== bWithheld) {
         return aWithheld ? 1 : -1;
       }
-      var order = aWithheld ? host.figures.nameFreeCompare(a.withheld, b.withheld) : host.figures.compare(a.key, b.key);
+      var order = aWithheld ? host.lib.figures.figures.nameFreeCompare(a.withheld, b.withheld) : host.lib.figures.figures.compare(a.key, b.key);
       return order !== 0 ? order : a.index - b.index;
     });
     // Withheld groups are numbered in the order just settled, which carries no name.

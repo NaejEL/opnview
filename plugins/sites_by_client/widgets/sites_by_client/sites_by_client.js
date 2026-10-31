@@ -16,7 +16,7 @@ function bySiteRank(host) {
     if (a.kind !== b.kind) {
       return a.kind === "site" ? -1 : 1;
     }
-    return a.kind === "site" ? host.figures.compare(a.name, b.name) : host.figures.compare(a.address, b.address);
+    return a.kind === "site" ? host.lib.figures.figures.compare(a.name, b.name) : host.lib.figures.figures.compare(a.address, b.address);
   };
 }
 
@@ -70,135 +70,139 @@ function totalFlows(row) {
 }
 
 exports.widget = {
-  serve: function (host) {
-    var rows = host.lib.figures.sites.rows(host);
-    var interfaces = host.refs.ids("interfaces");
-    var clients = host.refs.ids("clients");
-    // The site rows of each client, by site name, in the order they were read. A Map, so a site
-    // name is never mistaken for a member of an object.
-    var perClient = new Map();
-    rows.forEach(function (row) {
-      if (row.client_id === null) {
-        return;
-      }
-      if (!perClient.has(row.client_id)) {
-        perClient.set(row.client_id, new Map());
-      }
-      var sites = perClient.get(row.client_id);
-      if (!sites.has(row.site)) {
-        sites.set(row.site, []);
-      }
-      sites.get(row.site).push(row);
+  serve: function (host) { return host.lib.figures.measure.serve(host, serveInMeasure); }
+};
+
+// serveInMeasure builds the answer under the measure the figures library put in force: it is run
+// once per measure tried, and never names one (ADR 0021, step 5).
+function serveInMeasure(host) {
+  var rows = host.lib.figures.sites.rows(host);
+  var interfaces = host.refs.ids("interfaces");
+  var clients = host.refs.ids("clients");
+  // The site rows of each client, by site name, in the order they were read. A Map, so a site
+  // name is never mistaken for a member of an object.
+  var perClient = new Map();
+  rows.forEach(function (row) {
+    if (row.client_id === null) {
+      return;
+    }
+    if (!perClient.has(row.client_id)) {
+      perClient.set(row.client_id, new Map());
+    }
+    var sites = perClient.get(row.client_id);
+    if (!sites.has(row.site)) {
+      sites.set(row.site, []);
+    }
+    sites.get(row.site).push(row);
+  });
+  // The destinations of each client no name was inferred for, by address: each a cell of its own,
+  // ranked with the names, never one unnamed bucket (C2).
+  var addressesPerClient = new Map();
+  var addresses = host.lib.figures.sites.addresses(host);
+  addresses.forEach(function (row) {
+    if (row.client_id === null) {
+      return;
+    }
+    if (!addressesPerClient.has(row.client_id)) {
+      addressesPerClient.set(row.client_id, new Map());
+    }
+    var byAddress = addressesPerClient.get(row.client_id);
+    if (!byAddress.has(row.address)) {
+      byAddress.set(row.address, []);
+    }
+    byAddress.get(row.address).push(row);
+    if (!perClient.has(row.client_id)) {
+      perClient.set(row.client_id, new Map());
+    }
+  });
+  // A client with eligible flows and no named one keeps its row.
+  host.lib.figures.attribution.clients(host).forEach(function (id) {
+    if (!perClient.has(id)) {
+      perClient.set(id, new Map());
+    }
+  });
+  var ids = Array.from(perClient.keys());
+  var perRow = host.params.integer("sites_per_client");
+  var minimum = host.params.integer("min_flows");
+  var showRate = host.params.flag("show_attribution_rate");
+  var rank = bySiteRank(host);
+  var measured = host.lib.figures.figures.measure !== host.lib.figures.figures.measures.logged;
+  var answer = [];
+  ids.forEach(function (id) {
+    var info = host.lib.figures.installation.client(host, id);
+    if (info === null || (clients !== null && clients.indexOf(id) < 0) ||
+      (interfaces !== null && (info.interface_id === null || interfaces.indexOf(info.interface_id) < 0))) {
+      return;
+    }
+    // Each site and address of the client, ranked by its flows -- the sum of its rows' -- before any
+    // is summed into the cell it is written as: only the cells shown are (host.sites.accumulate).
+    var sites = [];
+    var named = perClient.get(id).size;
+    perClient.get(id).forEach(function (siteRows, name) {
+      sites.push({ kind: "site", name: name, rows: siteRows, flows: { value: flowsOf(siteRows) } });
     });
-    // The destinations of each client no name was inferred for, by address: each a cell of its own,
-    // ranked with the names, never one unnamed bucket (C2).
-    var addressesPerClient = new Map();
-    var addresses = host.lib.figures.sites.addresses(host);
-    addresses.forEach(function (row) {
-      if (row.client_id === null) {
-        return;
-      }
-      if (!addressesPerClient.has(row.client_id)) {
-        addressesPerClient.set(row.client_id, new Map());
-      }
-      var byAddress = addressesPerClient.get(row.client_id);
-      if (!byAddress.has(row.address)) {
-        byAddress.set(row.address, []);
-      }
-      byAddress.get(row.address).push(row);
-      if (!perClient.has(row.client_id)) {
-        perClient.set(row.client_id, new Map());
+    (addressesPerClient.get(id) || new Map()).forEach(function (addressRows, address) {
+      sites.push({ kind: "address", address: address, rows: addressRows, flows: { value: flowsOf(addressRows) } });
+    });
+    var belowMembers = 0;
+    var below = 0;
+    var eligible = [];
+    var eligibleFlows = 0;
+    sites.forEach(function (site) {
+      if (site.flows.value < minimum) {
+        belowMembers++;
+        below += site.flows.value;
+      } else {
+        eligible.push(site);
+        eligibleFlows += site.flows.value;
       }
     });
-    // A client with eligible flows and no named one keeps its row.
-    host.lib.figures.attribution.clients(host).forEach(function (id) {
-      if (!perClient.has(id)) {
-        perClient.set(id, new Map());
-      }
+    // The cells shown are the first sites_per_client of the eligible ones in rank order: only they are
+    // ranked among themselves, so a client's sites are never sorted whole.
+    var first = firstRanked(eligible, perRow, rank);
+    var isShown = new Map();
+    first.forEach(function (site) {
+      isShown.set(site, true);
     });
-    var ids = Array.from(perClient.keys());
-    var perRow = host.params.integer("sites_per_client");
-    var minimum = host.params.integer("min_flows");
-    var showRate = host.params.flag("show_attribution_rate");
-    var rank = bySiteRank(host);
-    var measured = host.figures.measure !== host.figures.measures.logged;
-    var answer = [];
-    ids.forEach(function (id) {
-      var info = host.lib.figures.installation.client(host, id);
-      if (info === null || (clients !== null && clients.indexOf(id) < 0) ||
-        (interfaces !== null && (info.interface_id === null || interfaces.indexOf(info.interface_id) < 0))) {
-        return;
-      }
-      // Each site and address of the client, ranked by its flows -- the sum of its rows' -- before any
-      // is summed into the cell it is written as: only the cells shown are (host.sites.accumulate).
-      var sites = [];
-      var named = perClient.get(id).size;
-      perClient.get(id).forEach(function (siteRows, name) {
-        sites.push({ kind: "site", name: name, rows: siteRows, flows: { value: flowsOf(siteRows) } });
-      });
-      (addressesPerClient.get(id) || new Map()).forEach(function (addressRows, address) {
-        sites.push({ kind: "address", address: address, rows: addressRows, flows: { value: flowsOf(addressRows) } });
-      });
-      var belowMembers = 0;
-      var below = 0;
-      var eligible = [];
-      var eligibleFlows = 0;
+    var shown = first.map(function (site) {
+      return site.kind === "site" ? host.lib.figures.sites.accumulate(host, site.name, site.rows) :
+        host.lib.figures.sites.accumulateAddress(host, site.address, site.rows);
+    });
+    // The rows of every cell not shown are judged as the cells shown are (host.lib.figures.figures.cover): their
+    // flows are counted in the remainders. A logged answer has nothing to judge.
+    if (measured) {
       sites.forEach(function (site) {
-        if (site.flows.value < minimum) {
-          belowMembers++;
-          below += site.flows.value;
-        } else {
-          eligible.push(site);
-          eligibleFlows += site.flows.value;
+        if (!isShown.has(site)) {
+          host.lib.figures.figures.cover(site.rows);
         }
       });
-      // The cells shown are the first sites_per_client of the eligible ones in rank order: only they are
-      // ranked among themselves, so a client's sites are never sorted whole.
-      var first = firstRanked(eligible, perRow, rank);
-      var isShown = new Map();
-      first.forEach(function (site) {
-        isShown.set(site, true);
-      });
-      var shown = first.map(function (site) {
-        return site.kind === "site" ? host.lib.figures.sites.accumulate(host, site.name, site.rows) :
-          host.lib.figures.sites.accumulateAddress(host, site.address, site.rows);
-      });
-      // The rows of every cell not shown are judged as the cells shown are (host.figures.cover): their
-      // flows are counted in the remainders. A logged answer has nothing to judge.
-      if (measured) {
-        sites.forEach(function (site) {
-          if (!isShown.has(site)) {
-            host.figures.cover(site.rows);
-          }
-        });
-      }
-      var restMembers = eligible.length - shown.length;
-      var rest = eligibleFlows;
-      shown.forEach(function (site) {
-        rest -= site.flows.value;
-      });
-      // The members in the order the matrix's rows have always been written in.
-      var entry = {
-        client: info,
-        state: named === 0 ? "no_site_name_inferred" : "named",
-        sites: shown,
-        remainder: host.figures.remainder(restMembers, null, host.figures.count(rest)),
-        below_min_flows: host.figures.remainder(belowMembers, null, host.figures.count(below))
-      };
-      if (showRate) {
-        entry.attribution = host.lib.figures.attribution.client(host, id);
-      }
-      answer.push(entry);
+    }
+    var restMembers = eligible.length - shown.length;
+    var rest = eligibleFlows;
+    shown.forEach(function (site) {
+      rest -= site.flows.value;
     });
-    // Every order ends on the client id, so no two rows tie.
-    answer.sort(function (a, b) {
-      var ta = totalFlows(a);
-      var tb = totalFlows(b);
-      if (ta !== tb) {
-        return ta > tb ? -1 : 1;
-      }
-      return a.client.id - b.client.id;
-    });
-    return { data: { rows: answer }, has_rows: rows.length > 0 || addresses.length > 0 };
-  }
-};
+    // The members in the order the matrix's rows have always been written in.
+    var entry = {
+      client: info,
+      state: named === 0 ? "no_site_name_inferred" : "named",
+      sites: shown,
+      remainder: host.lib.figures.figures.remainder(restMembers, null, host.lib.figures.figures.count(rest)),
+      below_min_flows: host.lib.figures.figures.remainder(belowMembers, null, host.lib.figures.figures.count(below))
+    };
+    if (showRate) {
+      entry.attribution = host.lib.figures.attribution.client(host, id);
+    }
+    answer.push(entry);
+  });
+  // Every order ends on the client id, so no two rows tie.
+  answer.sort(function (a, b) {
+    var ta = totalFlows(a);
+    var tb = totalFlows(b);
+    if (ta !== tb) {
+      return ta > tb ? -1 : 1;
+    }
+    return a.client.id - b.client.id;
+  });
+  return { data: { rows: answer }, has_rows: rows.length > 0 || addresses.length > 0 };
+}

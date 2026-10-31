@@ -71,7 +71,7 @@ function pfStateRates(host, groupBy) {
     sum["in"] += row.reverse_bits_per_second;
     sum.out += row.forward_bits_per_second;
   });
-  keys.sort(function (a, b) { return host.figures.compare(a, b); });
+  keys.sort(function (a, b) { return host.lib.figures.figures.compare(a, b); });
   var byMember = keys.map(function (key) {
     var sum = sums[key];
     var stale = host.request.now - latest.at > 2 * sum.span;
@@ -160,12 +160,12 @@ function partMember(host, groupBy, part) {
       return null;
     }
     var info = host.lib.figures.installation.client(host, part.client_id);
-    return { key: host.figures.clientKey(part.client_id), slice: newSlice({ client: info === null ? undefined : info }) };
+    return { key: host.lib.figures.figures.clientKey(part.client_id), slice: newSlice({ client: info === null ? undefined : info }) };
   }
   if (part.interface_id === null) {
     return { key: "no_interface", slice: newSlice({}) };
   }
-  return { key: host.figures.interfaceKey(part.interface_id), slice: interfaceSlice(host, part.interface_id) };
+  return { key: host.lib.figures.figures.interfaceKey(part.interface_id), slice: interfaceSlice(host, part.interface_id) };
 }
 
 // ring ranks a set of members by the measure and folds every member past slices into Other.
@@ -176,51 +176,51 @@ function ring(host, members, measure, limit) {
   members.forEach(function (member) {
     if (parts[member.key] === undefined) {
       parts[member.key] = member.slice;
-      sums[member.key] = host.figures.zero();
+      sums[member.key] = host.lib.figures.figures.zero();
       keys.push(member.key);
     }
-    sums[member.key] = host.figures.add(sums[member.key], member.figures);
+    sums[member.key] = host.lib.figures.figures.add(sums[member.key], member.figures);
   });
   var ranked = keys.map(function (key) {
-    return { key: key, value: host.figures.value(measure, sums[key]) };
+    return { key: key, value: host.lib.figures.figures.value(measure, sums[key]) };
   });
-  var total = host.figures.zero();
-  keys.forEach(function (key) { total = host.figures.add(total, sums[key]); });
+  var total = host.lib.figures.figures.zero();
+  keys.forEach(function (key) { total = host.lib.figures.figures.add(total, sums[key]); });
   // By value, then by key in byte order, as every ranking of the core.
   ranked.sort(function (a, b) {
     if (a.value !== b.value) {
       return a.value > b.value ? -1 : 1;
     }
-    return host.figures.compare(a.key, b.key);
+    return host.lib.figures.figures.compare(a.key, b.key);
   });
   var slices = [];
   var folded = [];
   var otherMembers = 0;
-  var otherSum = host.figures.zero();
+  var otherSum = host.lib.figures.figures.zero();
   ranked.forEach(function (member, index) {
     // A copy, so a slice shared by the whole and by a ring keeps each one's own figures.
     var slice = JSON.parse(JSON.stringify(parts[member.key]));
     slice.key = member.key;
     slice.value = member.value;
-    slice.volume = host.figures.volume(sums[member.key]);
+    slice.volume = host.lib.figures.figures.volume(sums[member.key]);
     if (index < limit) {
       slices.push(slice);
       return;
     }
     folded.push(slice);
     otherMembers++;
-    otherSum = host.figures.add(otherSum, sums[member.key]);
+    otherSum = host.lib.figures.figures.add(otherSum, sums[member.key]);
   });
   // Other is always returned, so the slices and it make the whole; whether it is drawn is
   // show_other's, which is rendering-only (a truncation is never silent, A8). It names the members
   // it folds, each the slice it would have been, in the same order (row E8 of the mockup's
   // coverage): what a slice's detail lists as Other's make-up.
-  var other = host.figures.remainder(otherMembers, otherSum, null);
+  var other = host.lib.figures.figures.remainder(otherMembers, otherSum, null);
   other.slices = folded;
   return {
     slices: slices,
     other: other,
-    total: host.figures.volume(total)
+    total: host.lib.figures.figures.volume(total)
   };
 }
 
@@ -245,7 +245,7 @@ function recentPart(host, groupBy, measure, scope, interfaces, clients, shownKey
     }
     var key = shown[member.key] === true ? member.key : "other";
     var byStart = sums[key];
-    byStart[part.bucket_start] = host.figures.add(byStart[part.bucket_start] || host.figures.zero(), part);
+    byStart[part.bucket_start] = host.lib.figures.figures.add(byStart[part.bucket_start] || host.lib.figures.figures.zero(), part);
   });
   var width = recent.bucket_seconds;
   return {
@@ -260,7 +260,7 @@ function recentPart(host, groupBy, measure, scope, interfaces, clients, shownKey
         buckets: recent.buckets.map(function (bucket) {
           var start = bucket.from - host.lib.figures.buckets.floorMod(bucket.from, width);
           var figures = sums[key][start];
-          var value = figures === undefined ? (bucket.gap ? null : 0) : host.figures.value(measure, figures);
+          var value = figures === undefined ? (bucket.gap ? null : 0) : host.lib.figures.figures.value(measure, figures);
           return { from: bucket.from, to: bucket.to, gap: bucket.gap, value: value };
         })
       };
@@ -269,130 +269,134 @@ function recentPart(host, groupBy, measure, scope, interfaces, clients, shownKey
 }
 
 exports.widget = {
-  serve: function (host) {
-    var groupBy = host.params.text("group_by");
-    var measure = host.params.text("measure");
-    var scope = host.params.text("scope");
-    var interfaceIds = host.refs.ids("interfaces");
-    var clientIds = host.refs.ids("clients");
-    var interfaces = idSet(interfaceIds);
-    var clients = idSet(clientIds);
-    var limit = host.params.integer("slices");
-    var effective = host.params.effective();
-    var members = [];
-    function add(key, slice, figures, direction) {
-      members.push({ key: key, slice: slice, figures: figures, direction: direction });
-    }
-    var whole = "all_traffic";
-    var hasRows = false;
-
-    if (groupBy === "client") {
-      whole = "traffic_with_an_inside_client";
-      host.lib.figures.clients.volumes(host).clients.forEach(function (volume) {
-        var info = host.lib.figures.installation.client(host, volume.client_id);
-        if (info === null || (clients !== null && !clients[volume.client_id]) ||
-          (interfaces !== null && (info.interface_id === null || !interfaces[info.interface_id]))) {
-          return;
-        }
-        var key = host.figures.clientKey(volume.client_id);
-        var added = false;
-        Object.keys(volume.by_direction).forEach(function (direction) {
-          var figures = volume.by_direction[direction];
-          if (!directionInScope(host, scope, direction) || (figures.bytes === 0 &&
-            figures.allowed_connections + figures.blocked_connections + figures.unknown_connections === 0)) {
-            return;
-          }
-          added = true;
-          add(key, newSlice({ client: info }), figures, direction);
-        });
-        hasRows = hasRows || added;
-      });
-    } else if (groupBy === "interface" && clients === null) {
-      host.lib.figures.volume.window(host).rows.forEach(function (row) {
-        if (row.exit_leg_device !== null || !host.lib.figures.volume.scopeMatches(scope, row)) {
-          return;
-        }
-        var local = host.lib.figures.volume.localInterface(row);
-        if (interfaces !== null && (local === null || !interfaces[local])) {
-          return;
-        }
-        hasRows = true;
-        if (local === null) {
-          add("no_interface", newSlice({}), row, row.traffic_direction);
-          return;
-        }
-        add(host.figures.interfaceKey(local), interfaceSlice(host, local), row, row.traffic_direction);
-      });
-    } else if (groupBy === "interface") {
-      host.envelope.coverFlows("composition_beyond_flow_horizon");
-      var window = host.request.window;
-      host.query.rows("widget_traffic_composition_interface", {
-        from: window.from,
-        to: window.to,
-        scope: scope,
-        interface_ids: host.refs.jsonIds(interfaceIds),
-        client_ids: host.refs.jsonIds(clientIds)
-      }).forEach(function (row) {
-        hasRows = true;
-        if (row.member === null) {
-          add("no_interface", newSlice({}), row, row.traffic_direction);
-          return;
-        }
-        add(host.figures.interfaceKey(row.member), interfaceSlice(host, row.member), row, row.traffic_direction);
-      });
-    } else {
-      host.envelope.coverFlows("composition_beyond_flow_horizon");
-      host.lib.figures.flows.parts(host, { scope: scope, interfaces: interfaceIds, clients: clientIds }).forEach(function (part) {
-        hasRows = true;
-        var member = partMember(host, groupBy, part);
-        add(member.key, member.slice, part, part.traffic_direction);
-      });
-    }
-
-    var composed = ring(host, members, measure, limit);
-    var data = {
-      group_by: groupBy,
-      measure: measure,
-      slices: composed.slices,
-      other: composed.other,
-      whole: whole,
-      total: composed.total,
-      current_rates: host.lib.figures.rates.current(host, groupBy)
-    };
-    if (groupBy === "protocol" || groupBy === "service_port") {
-      var stateRates = pfStateRates(host, groupBy);
-      data.current_rates.by_member = stateRates.by_member;
-      data.current_rates.by_member_source = stateRates.source;
-    }
-    if (host.params.text("split_by") === "direction") {
-      data.rings = DIRECTIONS.map(function (direction) {
-        var split = ring(host, members.filter(function (member) { return member.direction === direction; }),
-          measure, limit);
-        return { direction: direction, slices: split.slices, other: split.other, total: split.total };
-      });
-    }
-    if (groupBy === "blocking_reason") {
-      var counts = {};
-      host.query.rows("widget_traffic_composition_refusals", { from: host.request.window.from, to: host.request.window.to })
-        .forEach(function (row) { counts[row.engine_kind] = row.refusals; });
-      data.aside = ASIDE_KINDS.map(function (kind) {
-        var value = 0;
-        Object.keys(counts).forEach(function (engineKind) {
-          if (engineKind.slice(0, kind.prefix.length) === kind.prefix) {
-            value += counts[engineKind];
-          }
-        });
-        return {
-          key: kind.key,
-          condition: host.envelope.kindCondition(kind.provider),
-          count: { measure: "refusals", lower_bound: true, value: value }
-        };
-      });
-    }
-    if (effective.window_seconds !== null && effective.window_seconds !== undefined) {
-      data.recent = recentPart(host, groupBy, measure, scope, interfaceIds, clientIds,
-        composed.slices.map(function (slice) { return slice.key; }), host.params.integer("window_seconds"));
-    }
-    return { data: data, has_rows: hasRows };
-  }
+  serve: function (host) { return host.lib.figures.measure.serve(host, serveInMeasure); }
 };
+
+// serveInMeasure builds the answer under the measure the figures library put in force: it is run
+// once per measure tried, and never names one (ADR 0021, step 5).
+function serveInMeasure(host) {
+  var groupBy = host.params.text("group_by");
+  var measure = host.params.text("measure");
+  var scope = host.params.text("scope");
+  var interfaceIds = host.refs.ids("interfaces");
+  var clientIds = host.refs.ids("clients");
+  var interfaces = idSet(interfaceIds);
+  var clients = idSet(clientIds);
+  var limit = host.params.integer("slices");
+  var effective = host.params.effective();
+  var members = [];
+  function add(key, slice, figures, direction) {
+    members.push({ key: key, slice: slice, figures: figures, direction: direction });
+  }
+  var whole = "all_traffic";
+  var hasRows = false;
+
+  if (groupBy === "client") {
+    whole = "traffic_with_an_inside_client";
+    host.lib.figures.clients.volumes(host).clients.forEach(function (volume) {
+      var info = host.lib.figures.installation.client(host, volume.client_id);
+      if (info === null || (clients !== null && !clients[volume.client_id]) ||
+        (interfaces !== null && (info.interface_id === null || !interfaces[info.interface_id]))) {
+        return;
+      }
+      var key = host.lib.figures.figures.clientKey(volume.client_id);
+      var added = false;
+      Object.keys(volume.by_direction).forEach(function (direction) {
+        var figures = volume.by_direction[direction];
+        if (!directionInScope(host, scope, direction) || (figures.bytes === 0 &&
+          figures.allowed_connections + figures.blocked_connections + figures.unknown_connections === 0)) {
+          return;
+        }
+        added = true;
+        add(key, newSlice({ client: info }), figures, direction);
+      });
+      hasRows = hasRows || added;
+    });
+  } else if (groupBy === "interface" && clients === null) {
+    host.lib.figures.volume.window(host).rows.forEach(function (row) {
+      if (row.exit_leg_device !== null || !host.lib.figures.volume.scopeMatches(scope, row)) {
+        return;
+      }
+      var local = host.lib.figures.volume.localInterface(row);
+      if (interfaces !== null && (local === null || !interfaces[local])) {
+        return;
+      }
+      hasRows = true;
+      if (local === null) {
+        add("no_interface", newSlice({}), row, row.traffic_direction);
+        return;
+      }
+      add(host.lib.figures.figures.interfaceKey(local), interfaceSlice(host, local), row, row.traffic_direction);
+    });
+  } else if (groupBy === "interface") {
+    host.envelope.coverFlows("composition_beyond_flow_horizon");
+    var window = host.request.window;
+    host.query.rows("widget_traffic_composition_interface", {
+      from: window.from,
+      to: window.to,
+      scope: scope,
+      interface_ids: host.refs.jsonIds(interfaceIds),
+      client_ids: host.refs.jsonIds(clientIds)
+    }).forEach(function (row) {
+      hasRows = true;
+      if (row.member === null) {
+        add("no_interface", newSlice({}), row, row.traffic_direction);
+        return;
+      }
+      add(host.lib.figures.figures.interfaceKey(row.member), interfaceSlice(host, row.member), row, row.traffic_direction);
+    });
+  } else {
+    host.envelope.coverFlows("composition_beyond_flow_horizon");
+    host.lib.figures.flows.parts(host, { scope: scope, interfaces: interfaceIds, clients: clientIds }).forEach(function (part) {
+      hasRows = true;
+      var member = partMember(host, groupBy, part);
+      add(member.key, member.slice, part, part.traffic_direction);
+    });
+  }
+
+  var composed = ring(host, members, measure, limit);
+  var data = {
+    group_by: groupBy,
+    measure: measure,
+    slices: composed.slices,
+    other: composed.other,
+    whole: whole,
+    total: composed.total,
+    current_rates: host.lib.figures.rates.current(host, groupBy)
+  };
+  if (groupBy === "protocol" || groupBy === "service_port") {
+    var stateRates = pfStateRates(host, groupBy);
+    data.current_rates.by_member = stateRates.by_member;
+    data.current_rates.by_member_source = stateRates.source;
+  }
+  if (host.params.text("split_by") === "direction") {
+    data.rings = DIRECTIONS.map(function (direction) {
+      var split = ring(host, members.filter(function (member) { return member.direction === direction; }),
+        measure, limit);
+      return { direction: direction, slices: split.slices, other: split.other, total: split.total };
+    });
+  }
+  if (groupBy === "blocking_reason") {
+    var counts = {};
+    host.query.rows("widget_traffic_composition_refusals", { from: host.request.window.from, to: host.request.window.to })
+      .forEach(function (row) { counts[row.engine_kind] = row.refusals; });
+    data.aside = ASIDE_KINDS.map(function (kind) {
+      var value = 0;
+      Object.keys(counts).forEach(function (engineKind) {
+        if (engineKind.slice(0, kind.prefix.length) === kind.prefix) {
+          value += counts[engineKind];
+        }
+      });
+      return {
+        key: kind.key,
+        condition: host.envelope.kindCondition(kind.provider),
+        count: { measure: "refusals", lower_bound: true, value: value }
+      };
+    });
+  }
+  if (effective.window_seconds !== null && effective.window_seconds !== undefined) {
+    data.recent = recentPart(host, groupBy, measure, scope, interfaceIds, clientIds,
+      composed.slices.map(function (slice) { return slice.key; }), host.params.integer("window_seconds"));
+  }
+  return { data: data, has_rows: hasRows };
+}

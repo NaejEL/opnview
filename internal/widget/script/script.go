@@ -145,10 +145,7 @@ func (w *ScriptWidget) Serve(r *request.Request) (data any, hasRows bool, err er
 	r.Ctx = ctx
 	defer func() { r.Ctx = requestCtx }()
 
-	vm, exports := newLoggingRuntime(w.Plugin, func(plugin, message string) {
-		// A speculative run holds its lines until its answer is the one served (request.ScriptLog).
-		r.ScriptLog(plugin, message, func(plugin, message string) { ScriptLogger(plugin, message) })
-	})
+	vm, exports := newWidgetRuntime(w.Plugin)
 	call := newScriptCall(r, vm, w)
 	lib, err := library.Bind(vm, w.Libraries)
 	if err != nil {

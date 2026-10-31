@@ -28,91 +28,95 @@ function sortValue(order, row) {
 }
 
 exports.widget = {
-  serve: function (host) {
-    var volume = host.lib.figures.volume.window(host);
-    var reasons = host.lib.figures.peers.reasons;
-    var peers = host.lib.figures.peers.outside(host, volume.rows, host.lib.figures.volume.scopes.all, host.refs.ids("interfaces")).peers;
-    var bins = host.lib.figures.peers.bins(host, [reasons.miss, reasons.pending, reasons.no_row]);
-    var groups = {};
-    var groupList = [];
-    // Every peer's figures, summed in one call: host.figures.sum is add folded over a list.
-    var total = host.figures.sum(peers.map(function (peer) { return peer.figures; }));
-    peers.forEach(function (peer) {
-      var geo = host.lib.figures.services.geolocation(host, peer.address);
-      if (geo.lookup_state !== "resolved") {
-        bins.add(host.lib.figures.peers.placementState(geo), peer.figures, 1);
-        return;
-      }
-      var key = "country:" + (geo.country_code === null ? "none" : geo.country_code);
-      var entry = has(groups, key) ? groups[key] : null;
-      if (entry === null) {
-        // The named members are the first peer's of the group: peers come by bytes, then address.
-        entry = { key: key, country_code: geo.country_code, country_name: geo.country_name,
-          members: [], figures: null, peers: 0, interfaces: [], build: null };
-        groups[key] = entry;
-        groupList.push(entry);
-      }
-      entry.members.push(peer.figures);
-      entry.peers++;
-      peer.interfaces.forEach(function (id) {
-        if (entry.interfaces.indexOf(id) < 0) {
-          entry.interfaces.push(id);
-        }
-      });
-      if (geo.dataset_build_at !== null && (entry.build === null || geo.dataset_build_at > entry.build)) {
-        entry.build = geo.dataset_build_at;
-      }
-    });
-
-    var allowed = host.params.has("series", "allowed");
-    var blocked = host.params.has("series", "blocked");
-    var rows = groupList.map(function (entry) {
-      entry.figures = host.figures.sum(entry.members);
-      var row = { key: entry.key };
-      if (entry.country_code !== null) {
-        row.country_code = entry.country_code;
-      }
-      if (entry.country_name !== null) {
-        row.country_name = entry.country_name;
-      }
-      row.bytes = host.figures.byteCount(entry.figures);
-      if (allowed) {
-        row.allowed = host.figures.volume(host.lib.figures.mapfilters.allowedOnly(entry.figures));
-      }
-      if (blocked) {
-        row.blocked = host.figures.volume(host.lib.figures.mapfilters.blockedOnly(entry.figures));
-      }
-      row.peers = entry.peers;
-      row.interfaces = entry.interfaces.sort(numeric);
-      row.dataset_build_at = entry.build;
-      return { row: row, figures: entry.figures };
-    });
-    // The largest first by the sort parameter's figure; equal figures by key, in byte order.
-    var order = host.params.text("sort");
-    rows.sort(function (a, b) {
-      return sortValue(order, b.row) - sortValue(order, a.row) || host.figures.compare(a.row.key, b.row.key);
-    });
-
-    var limit = host.params.integer("limit");
-    var shown = [];
-    var dropped = [];
-    rows.forEach(function (entry, index) {
-      if (index < limit) {
-        shown.push(entry.row);
-        return;
-      }
-      dropped.push(entry.figures);
-    });
-    var rest = host.figures.sum(dropped);
-    return {
-      data: {
-        group: "country",
-        rows: shown,
-        remainder: host.figures.remainder(dropped.length, rest, null),
-        unresolved: bins.list(),
-        total: host.figures.volume(total)
-      },
-      has_rows: peers.length > 0
-    };
-  }
+  serve: function (host) { return host.lib.figures.measure.serve(host, serveInMeasure); }
 };
+
+// serveInMeasure builds the answer under the measure the figures library put in force: it is run
+// once per measure tried, and never names one (ADR 0021, step 5).
+function serveInMeasure(host) {
+  var volume = host.lib.figures.volume.window(host);
+  var reasons = host.lib.figures.peers.reasons;
+  var peers = host.lib.figures.peers.outside(host, volume.rows, host.lib.figures.volume.scopes.all, host.refs.ids("interfaces")).peers;
+  var bins = host.lib.figures.peers.bins(host, [reasons.miss, reasons.pending, reasons.no_row]);
+  var groups = {};
+  var groupList = [];
+  // Every peer's figures, summed in one call: host.lib.figures.figures.sum is add folded over a list.
+  var total = host.lib.figures.figures.sum(peers.map(function (peer) { return peer.figures; }));
+  peers.forEach(function (peer) {
+    var geo = host.lib.figures.services.geolocation(host, peer.address);
+    if (geo.lookup_state !== "resolved") {
+      bins.add(host.lib.figures.peers.placementState(geo), peer.figures, 1);
+      return;
+    }
+    var key = "country:" + (geo.country_code === null ? "none" : geo.country_code);
+    var entry = has(groups, key) ? groups[key] : null;
+    if (entry === null) {
+      // The named members are the first peer's of the group: peers come by bytes, then address.
+      entry = { key: key, country_code: geo.country_code, country_name: geo.country_name,
+        members: [], figures: null, peers: 0, interfaces: [], build: null };
+      groups[key] = entry;
+      groupList.push(entry);
+    }
+    entry.members.push(peer.figures);
+    entry.peers++;
+    peer.interfaces.forEach(function (id) {
+      if (entry.interfaces.indexOf(id) < 0) {
+        entry.interfaces.push(id);
+      }
+    });
+    if (geo.dataset_build_at !== null && (entry.build === null || geo.dataset_build_at > entry.build)) {
+      entry.build = geo.dataset_build_at;
+    }
+  });
+
+  var allowed = host.params.has("series", "allowed");
+  var blocked = host.params.has("series", "blocked");
+  var rows = groupList.map(function (entry) {
+    entry.figures = host.lib.figures.figures.sum(entry.members);
+    var row = { key: entry.key };
+    if (entry.country_code !== null) {
+      row.country_code = entry.country_code;
+    }
+    if (entry.country_name !== null) {
+      row.country_name = entry.country_name;
+    }
+    row.bytes = host.lib.figures.figures.byteCount(entry.figures);
+    if (allowed) {
+      row.allowed = host.lib.figures.figures.volume(host.lib.figures.mapfilters.allowedOnly(entry.figures));
+    }
+    if (blocked) {
+      row.blocked = host.lib.figures.figures.volume(host.lib.figures.mapfilters.blockedOnly(entry.figures));
+    }
+    row.peers = entry.peers;
+    row.interfaces = entry.interfaces.sort(numeric);
+    row.dataset_build_at = entry.build;
+    return { row: row, figures: entry.figures };
+  });
+  // The largest first by the sort parameter's figure; equal figures by key, in byte order.
+  var order = host.params.text("sort");
+  rows.sort(function (a, b) {
+    return sortValue(order, b.row) - sortValue(order, a.row) || host.lib.figures.figures.compare(a.row.key, b.row.key);
+  });
+
+  var limit = host.params.integer("limit");
+  var shown = [];
+  var dropped = [];
+  rows.forEach(function (entry, index) {
+    if (index < limit) {
+      shown.push(entry.row);
+      return;
+    }
+    dropped.push(entry.figures);
+  });
+  var rest = host.lib.figures.figures.sum(dropped);
+  return {
+    data: {
+      group: "country",
+      rows: shown,
+      remainder: host.lib.figures.figures.remainder(dropped.length, rest, null),
+      unresolved: bins.list(),
+      total: host.lib.figures.figures.volume(total)
+    },
+    has_rows: peers.length > 0
+  };
+}
