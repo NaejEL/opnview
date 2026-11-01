@@ -159,5 +159,7 @@
       "cadence_seconds": 3600,
       "outputs": { "tables": ["provider_rule_info"] }
     }
-  ]
+  ],
+  "statements": ["suricata.statements.sql"],
+  "purge": ["purge_events"]
 }

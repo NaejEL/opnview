@@ -326,5 +326,7 @@
         "uptime_seconds"
       ]
     }
-  ]
+  ],
+  "statements": ["insight.statements.sql"],
+  "purge": ["purge_samples","purge_fine_samples"]
 }

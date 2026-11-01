@@ -29,12 +29,16 @@
         {
           "name": "src_interface_id",
           "type": "integer",
-          "nullable": true
+          "nullable": true,
+          "references": "installation.interface(id)",
+          "on_delete": "cascade"
         },
         {
           "name": "dst_interface_id",
           "type": "integer",
-          "nullable": true
+          "nullable": true,
+          "references": "installation.interface(id)",
+          "on_delete": "cascade"
         },
         {
           "name": "peer_address",
@@ -206,12 +210,16 @@
         {
           "name": "src_interface_id",
           "type": "integer",
-          "nullable": true
+          "nullable": true,
+          "references": "installation.interface(id)",
+          "on_delete": "cascade"
         },
         {
           "name": "dst_interface_id",
           "type": "integer",
-          "nullable": true
+          "nullable": true,
+          "references": "installation.interface(id)",
+          "on_delete": "cascade"
         },
         {
           "name": "peer_address",
@@ -383,12 +391,16 @@
         {
           "name": "src_interface_id",
           "type": "integer",
-          "nullable": true
+          "nullable": true,
+          "references": "installation.interface(id)",
+          "on_delete": "cascade"
         },
         {
           "name": "dst_interface_id",
           "type": "integer",
-          "nullable": true
+          "nullable": true,
+          "references": "installation.interface(id)",
+          "on_delete": "cascade"
         },
         {
           "name": "peer_address",
@@ -560,12 +572,16 @@
         {
           "name": "src_interface_id",
           "type": "integer",
-          "nullable": true
+          "nullable": true,
+          "references": "installation.interface(id)",
+          "on_delete": "cascade"
         },
         {
           "name": "dst_interface_id",
           "type": "integer",
-          "nullable": true
+          "nullable": true,
+          "references": "installation.interface(id)",
+          "on_delete": "cascade"
         },
         {
           "name": "peer_address",
@@ -4069,5 +4085,36 @@
         "refresh_state_advance"
       ]
     }
+  ],
+  "before_purge": [
+    "purged_part"
+  ],
+  "purge": [
+    "purge_pair_volumes",
+    "purge_purged_part",
+    "purge_volume_1h",
+    "purge_volume_24h",
+    "purge_volume_7d",
+    "purge_volume_30d",
+    "purge_owner_volume_1h",
+    "purge_owner_volume_24h",
+    "purge_owner_volume_7d",
+    "purge_owner_volume_30d",
+    "purge_client_volume_1h",
+    "purge_client_volume_24h",
+    "purge_client_volume_7d",
+    "purge_client_volume_30d",
+    "purge_domain_volume_1h",
+    "purge_domain_volume_24h",
+    "purge_domain_volume_7d",
+    "purge_domain_volume_30d",
+    "purge_rule_volume_1h",
+    "purge_rule_volume_24h",
+    "purge_rule_volume_7d",
+    "purge_rule_volume_30d",
+    "purge_peer_volume_1h",
+    "purge_peer_volume_24h",
+    "purge_peer_volume_7d",
+    "purge_peer_volume_30d"
   ]
 }

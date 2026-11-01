@@ -800,3 +800,192 @@ WHERE x.id = r.id;
 
 -- statement: refresh_state_advance
 UPDATE plugin_rollups.refresh_state SET watermark = coalesce(CAST(:ingest_watermark AS BIGINT), CAST(:now AS BIGINT)) WHERE id = 1;
+
+
+-- ---------------------------------------------------------------------------
+-- The retention purge (ADR 0021, step 6), run as this plugin with :now, :retention and :horizon
+-- (docs/plugins.md, "The retention purge"): the purged part first, before any plugin deletes a row,
+-- then the slots, the purged part and the pair volumes past the horizon.
+-- ---------------------------------------------------------------------------
+
+-- THE PURGED PART. Before a flow is deleted, its figures are added to purged_flow_hour, per hour and
+-- per every key an aggregate family reads, so an hour slot computed after the purge -- the current
+-- hour under a retention shorter than an hour, or any hour a reclassification forces -- still counts
+-- the flows the purge removed from it (refresh_hours selects those hours). It runs before any row
+-- goes, so the attribution of a flow it records is still there. A flow with an end that is this
+-- firewall keeps classified_flow's peer_address, the volume family's key, which is NULL when its other
+-- end is not outside; a second leg keeps the device it was logged on, exit_leg_device, the only volume
+-- figure it counts in. Every declared measure of the flows purged goes with them: each flow's parts in
+-- every measure, read through the core's flow_measures before the flows and their measure output are
+-- deleted, so the purged part keeps a purged figure in every measure.
+-- statement: purged_part
+INSERT INTO plugin_rollups.purged_flow_hour (hour_start_at, src_interface_id, dst_interface_id, src_client_id,
+                                             local_client_id, traffic_direction, peer_address, exit_leg_device,
+                                             rule_id, site_name, action, bytes, connections, measure_parts, purged_at)
+SELECT (f.observed_at / 3600) * 3600,
+       f.src_interface_id,
+       f.dst_interface_id,
+       f.src_client_id,
+       f.local_client_id,
+       f.traffic_direction,
+       CASE WHEN f.traffic_direction IN ('to_this_firewall', 'from_this_firewall') THEN f.peer_address
+            WHEN f.src_interface_id IS NOT NULL THEN f.dst_address
+            WHEN f.dst_interface_id IS NOT NULL THEN f.src_address
+            ELSE f.peer_address END,
+       f.exit_leg_device,
+       f.rule_id,
+       a.site_name,
+       f.action,
+       sum(f.packet_bytes),
+       count(*),
+       measure_parts_sum(n.parts),
+       CAST(:now AS BIGINT)
+FROM plugin_pf.classified_flow AS f
+LEFT JOIN plugin_unbound.domain_attribution AS a ON a.flow_id = f.id
+LEFT JOIN LATERAL flow_measures(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
+WHERE f.observed_at < CAST(:horizon AS BIGINT)
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11;
+
+
+-- The daily per-address-pair volumes, purged at the flows' horizon.
+-- statement: purge_pair_volumes
+DELETE FROM plugin_rollups.pair_volume_observation
+WHERE day_start_at < CAST(:horizon AS BIGINT);
+
+
+-- The purged part of an hour is kept exactly as long as the hour slot it feeds: until the hour, its
+-- ISO week and its calendar month have all ended before the horizon. It goes before the clients, so
+-- a client only an expired purged part named is removed with it rather than one purge later.
+-- statement: purge_purged_part
+DELETE FROM plugin_rollups.purged_flow_hour
+WHERE hour_start_at + 3600 < CAST(:horizon AS BIGINT)
+  AND (hour_start_at / 86400) * 86400 - (((hour_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(hour_start_at) < CAST(:horizon AS BIGINT);
+
+
+-- The six families, four periods each, are purged by period_end_at, so every period whose window still
+-- lies inside the horizon stays queryable; only slots entirely older than the horizon go. An hour or a
+-- day slot is kept for as long as the ISO week and the calendar month holding it as well: a week or a
+-- month straddling the horizon has lost flows to the purge, and the refresh composes it from those
+-- finer slots, so they must outlive the flows they were computed from. The client, rule and owner rows
+-- the slots point at are bounded or purged on their own terms; a client removed takes its slots with it
+-- through ON DELETE CASCADE, and the owner rows are untouched: the person outlives the month.
+-- statement: purge_volume_1h
+DELETE FROM plugin_rollups.volume_aggregate_1h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_volume_24h
+DELETE FROM plugin_rollups.volume_aggregate_24h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_volume_7d
+DELETE FROM plugin_rollups.volume_aggregate_7d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_volume_30d
+DELETE FROM plugin_rollups.volume_aggregate_30d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_owner_volume_1h
+DELETE FROM plugin_rollups.owner_volume_aggregate_1h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_owner_volume_24h
+DELETE FROM plugin_rollups.owner_volume_aggregate_24h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_owner_volume_7d
+DELETE FROM plugin_rollups.owner_volume_aggregate_7d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_owner_volume_30d
+DELETE FROM plugin_rollups.owner_volume_aggregate_30d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_client_volume_1h
+DELETE FROM plugin_rollups.client_volume_aggregate_1h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_client_volume_24h
+DELETE FROM plugin_rollups.client_volume_aggregate_24h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_client_volume_7d
+DELETE FROM plugin_rollups.client_volume_aggregate_7d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_client_volume_30d
+DELETE FROM plugin_rollups.client_volume_aggregate_30d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_domain_volume_1h
+DELETE FROM plugin_rollups.domain_volume_aggregate_1h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_domain_volume_24h
+DELETE FROM plugin_rollups.domain_volume_aggregate_24h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_domain_volume_7d
+DELETE FROM plugin_rollups.domain_volume_aggregate_7d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_domain_volume_30d
+DELETE FROM plugin_rollups.domain_volume_aggregate_30d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_rule_volume_1h
+DELETE FROM plugin_rollups.rule_volume_aggregate_1h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_rule_volume_24h
+DELETE FROM plugin_rollups.rule_volume_aggregate_24h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_rule_volume_7d
+DELETE FROM plugin_rollups.rule_volume_aggregate_7d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_rule_volume_30d
+DELETE FROM plugin_rollups.rule_volume_aggregate_30d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_peer_volume_1h
+DELETE FROM plugin_rollups.peer_volume_aggregate_1h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_peer_volume_24h
+DELETE FROM plugin_rollups.peer_volume_aggregate_24h
+WHERE period_end_at < CAST(:horizon AS BIGINT)
+  AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < CAST(:horizon AS BIGINT)
+  AND next_month_start_at(period_start_at) < CAST(:horizon AS BIGINT);
+
+-- statement: purge_peer_volume_7d
+DELETE FROM plugin_rollups.peer_volume_aggregate_7d
+WHERE period_end_at < CAST(:horizon AS BIGINT);
+
+-- statement: purge_peer_volume_30d
+DELETE FROM plugin_rollups.peer_volume_aggregate_30d
+WHERE period_end_at < CAST(:horizon AS BIGINT);

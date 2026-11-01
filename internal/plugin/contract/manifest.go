@@ -91,6 +91,11 @@ type Manifest struct {
 	// the plugin's directory holding named statements under "-- statement: <name>" markers, which its
 	// derivations run inside their transaction. A statement writes only in the plugin's own schema.
 	Statements []string `json:"statements,omitempty"`
+	// BeforePurge and Purge name, among the statements the statement files hold, those the retention
+	// purge runs as the plugin (ADR 0021, step 6; docs/plugins.md "The retention purge"): BeforePurge
+	// before any row of any plugin is purged, Purge to delete the plugin's own rows past the horizon.
+	BeforePurge []string `json:"before_purge,omitempty"`
+	Purge       []string `json:"purge,omitempty"`
 	// Relations are the plugin's relation files (ADR 0018, docs/plugins.md "Relations"): each holding
 	// CREATE OR REPLACE VIEW and CREATE OR REPLACE FUNCTION statements, every object in the plugin's own
 	// schema, applied at every start after its tables are ensured.

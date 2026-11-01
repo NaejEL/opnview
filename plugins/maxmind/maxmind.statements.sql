@@ -47,3 +47,13 @@ SET lookup_state = 'pending',
     looked_up_at = CAST(:now AS BIGINT)
 WHERE g.provider_id IS DISTINCT FROM
       (SELECT p.id FROM opnview.provider AS p WHERE p.kind = 'ip_geolocation' AND p.provider_key = 'maxmind_geolite2');
+
+
+-- ---------------------------------------------------------------------------
+-- The retention purge (ADR 0021, step 6), run as this plugin with :now, :retention and :horizon.
+-- ---------------------------------------------------------------------------
+
+-- A geolocation is purged by the instant it was looked up: an address seen again is looked up again.
+-- statement: purge_geolocations
+DELETE FROM plugin_maxmind.geo_asn
+WHERE looked_up_at < CAST(:horizon AS BIGINT);

@@ -430,5 +430,7 @@
   ],
   "relations": [
     "pf.relations.sql"
-  ]
+  ],
+  "statements": ["pf.statements.sql"],
+  "purge": ["purge_flows"]
 }

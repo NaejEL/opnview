@@ -417,3 +417,33 @@ WHERE f.id = x.flow_id;
 -- The work table is left empty between runs.
 -- statement: attribution_stamp
 DELETE FROM plugin_unbound.attribution_work;
+
+
+-- ---------------------------------------------------------------------------
+-- The retention purge (ADR 0021, step 6), run as this plugin with :now, :retention and :horizon
+-- (docs/plugins.md, "The retention purge"). The pf plugin's flows go first, since pf loads first.
+-- ---------------------------------------------------------------------------
+
+-- An attribution is purged by the instant it was made.
+-- statement: purge_attributions
+DELETE FROM plugin_unbound.domain_attribution
+WHERE attributed_at < CAST(:horizon AS BIGINT);
+
+
+-- A lookup an attribution of a surviving flow still names is kept: it was made up to the attribution
+-- delay before the flow, so it can lie just before the horizon while the flow lies just after it, and
+-- deleting it would take the flow's site name with it.
+-- statement: purge_lookups
+DELETE FROM plugin_unbound.dns_resolution AS r
+WHERE r.looked_up_at < CAST(:horizon AS BIGINT)
+  AND NOT EXISTS (SELECT 1 FROM plugin_unbound.domain_attribution AS a WHERE a.dns_resolution_id = r.id);
+
+
+-- A record the resolver held is purged once its coverage interval ended before the horizon: the
+-- resolver can no longer have held it for any instant the history still keeps. An observation an
+-- attribution of a surviving flow names is kept, for the reason the lookup above is: deleting it
+-- would leave that attribution naming nothing, which the foreign key refuses.
+-- statement: purge_observations
+DELETE FROM plugin_unbound.resource_record_observation AS o
+WHERE o.covered_until_at < CAST(:horizon AS BIGINT)
+  AND NOT EXISTS (SELECT 1 FROM plugin_unbound.domain_attribution AS a WHERE a.address_observation_id = o.id);

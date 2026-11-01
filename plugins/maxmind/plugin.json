@@ -76,5 +76,6 @@
       "cadence_seconds": 300,
       "outputs": { "tables": ["geo_asn"] }
     }
-  ]
+  ],
+  "purge": ["purge_geolocations"]
 }

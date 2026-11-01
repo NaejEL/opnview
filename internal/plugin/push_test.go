@@ -193,6 +193,9 @@ func TestACoreKindEntryMustDeclareItsReplacement(t *testing.T) {
 	delete(manifest, "requires")
 	delete(manifest, "tables")
 	delete(manifest, "relations")
+	// The copy owns no table: nothing to purge, and no statement file to read (ADR 0021, step 6).
+	delete(manifest, "statements")
+	delete(manifest, "purge")
 	script, err := os.ReadFile(filepath.Join("..", "..", "plugins", "pf", "pf.js"))
 	if err != nil {
 		t.Fatal(err)

@@ -3856,30 +3856,25 @@ as the observation-point limit.
 
 ## Purge
 
-`internal/store/purge/purge.sql` is the documented purge. It takes `:now`, reads the
-horizon from `setting`, and removes rows older than it from every growing table:
-`flow`, `dns_resolution`, `domain_attribution`, `security_event`, `dhcp_lease`,
-`client`, `pair_volume_observation`, `geo_asn`, `collection_gap`,
-`measurement_sample`, `state_snapshot`, `interface_address`,
-`address_classification`, `purged_flow_hour`, `resource_record_observation` — by
-`covered_until_at`, the end of its coverage interval — and the twenty-four
-aggregates — six families of four periods each. **Its first statement records the purged part**:
-before any flow is deleted, the figures of the flows it is about to delete are
-added to `purged_flow_hour`, per hour and per every key an aggregate family reads,
-so an hour slot computed afterwards still counts them. An hour or a day slot, and
-an hour's purged part, is kept beyond its own end for as long as the ISO week and
-the calendar month holding it, because a week or a month is composed from them. A
-client the purged part still names is not removed, so no family loses its bytes, a
-client assigned to a person is not removed either (*`client`*, *Retention*),
-and a lookup that an attribution of a surviving flow names is kept, so no flow
-loses its site name while it is kept: the lookup can lie up to the attribution
-delay before the horizon while its flow lies after it. A resolver record an
-attribution of a surviving flow names is kept for the same reason, and the foreign
-key from `domain_attribution.address_observation_id` makes forgetting that an error.
-The purge also records the
-furthest horizon it has applied in `retention_purge`, which the flow and lookup
-inserts read inside the insert statement, so a record the purge already removed is
-never stored again, whenever the purge commits.
+The retention purge runs once a day in one transaction and removes what is older than the horizon
+`setting.retention_seconds` sets, where 0 means unlimited and nothing is deleted. **Each plugin
+purges its own rows** (ADR 0021, step 6; `docs/plugins.md`, *The retention purge*): its manifest names
+the statements the purge runs as the plugin, under `purge`, and those run before any row of any
+plugin is purged, under `before_purge`. `internal/store/purge/purge.sql` keeps the core's own tables
+alone -- `connection_measure`, `collection_gap`, `opnview_downtime`, `provider_source_period` -- and
+records the furthest horizon applied in `retention_purge`, which the flow and lookup inserts read
+inside the insert statement, so a record the purge already removed is never stored again, whenever
+the purge commits. **The rollups' `before_purge` records the purged part**: before any flow is
+deleted, the figures of the flows about to go are added to `purged_flow_hour`, per hour and per every
+key an aggregate family reads, so an hour slot computed afterwards still counts them. An hour or a day
+slot, and an hour's purged part, is kept beyond its own end for as long as the ISO week and the
+calendar month holding it, because a week or a month is composed from them. A client the purged part
+still names is not removed, so no family loses its bytes, a client assigned to a person is not removed
+either (*`client`*, *Retention*), and a lookup that an attribution of a surviving flow names is kept,
+so no flow loses its site name while it is kept: the lookup can lie up to the attribution delay before
+the horizon while its flow lies after it. A resolver record an attribution of a surviving flow names
+is kept for the same reason, and the foreign key from `domain_attribution.address_observation_id`
+makes forgetting that an error.
 
 **The purge is ordered against the passes.** A running service purges through
 `collect.Collector.Purge`, the retention-purge loop's only work, and never through

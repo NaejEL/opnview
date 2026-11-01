@@ -746,3 +746,34 @@ SET pair_outcome = t.outcome,
 FROM targets AS t
 WHERE flow.id = t.id
   AND (flow.pair_outcome IS DISTINCT FROM t.outcome OR flow.paired_flow_id IS DISTINCT FROM t.partner);
+
+
+-- ---------------------------------------------------------------------------
+-- The retention purge (ADR 0021, step 6), run as this plugin with :now, :retention and :horizon. The
+-- clients plugin loads after every plugin whose rows name a client, so its purge runs after theirs.
+-- ---------------------------------------------------------------------------
+
+-- An address's classification record is purged by the instant it was last placed in full; an address
+-- with no record is placed in full again at its next pass.
+-- statement: purge_classifications
+DELETE FROM plugin_clients.address_classification
+WHERE classified_at < CAST(:horizon AS BIGINT);
+
+
+-- A client is removed only once every observation that named it has gone, and NEVER while somebody
+-- has assigned it to a person: an assignment is user input, and a machine somebody attributed
+-- outlives the retention as the person does, so it is still there to be listed, reassigned or
+-- unassigned when it next appears. Purging an identity that a surviving flow still points at would
+-- leave that flow unable to name a machine, and a client the purged part still names keeps a
+-- family's bytes. Every other plugin's purge ran first, so the guards see the purged state.
+-- statement: purge_clients
+DELETE FROM plugin_installation.client AS c
+WHERE c.last_seen_at < CAST(:horizon AS BIGINT)
+  AND c.owner_id IS NULL
+  AND NOT EXISTS (SELECT 1 FROM plugin_pf.flow AS f WHERE f.src_client_id = c.id OR f.dst_client_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.src_client_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_suricata.security_event AS e WHERE e.dst_client_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_leases.dhcp_lease AS l WHERE l.client_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_unbound.dns_resolution AS r WHERE r.client_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_rollups.purged_flow_hour AS p WHERE p.local_client_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM plugin_rollups.purged_flow_hour AS p WHERE p.src_client_id = c.id);

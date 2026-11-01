@@ -15,7 +15,7 @@ import (
 func TestThePurgeRunsAgainstTheCurrentSchema(t *testing.T) {
 	t.Parallel()
 	database := storetest.Open(t)
-	if err := database.Purge(context.Background(), time.Now().Unix()); err != nil {
+	if err := database.Purge(context.Background(), time.Now().Unix(), nil); err != nil {
 		t.Fatalf("the purge: %v", err)
 	}
 }

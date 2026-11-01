@@ -6,6 +6,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/store/plugintables"
 )
 
 // One record representation, one registry (PA14 of the plugin-API amendment to
@@ -108,6 +110,7 @@ type Set struct {
 	failures      []error
 	declarers     []Declarer
 	derivations   []Derivation
+	purgeHooks    []plugintables.PurgeHook
 }
 
 // NewSet returns an empty set.

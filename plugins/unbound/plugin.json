@@ -841,5 +841,6 @@
         "attribution_stamp"
       ]
     }
-  ]
+  ],
+  "purge": ["purge_attributions","purge_lookups","purge_observations"]
 }

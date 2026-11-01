@@ -96,5 +96,6 @@
       ],
       "outputs": { "tables": ["address_classification", "placement", "onlink"] }
     }
-  ]
+  ],
+  "purge": ["purge_classifications","purge_clients"]
 }

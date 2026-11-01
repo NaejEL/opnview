@@ -3,6 +3,9 @@
 var NOW = 1790000400;
 
 test("a volume rollup row is keyed by its slot, its ends, its peer, its direction and its exit leg", function (t) {
+  // The slot names interface 1, which its foreign key to the installation model wants to exist (ADR 0020).
+  t.sql("INSERT INTO plugin_installation.interface (id, identifier, device, description, link_type, link_kind, " +
+    "first_seen_at, last_seen_at) VALUES (1, 'opt1', 'vlan0.10', 'Inside', 'ethernet', 'vlan', :now, :now)", { now: NOW });
   t.sql("INSERT INTO plugin_rollups.volume_aggregate_1h (period_start_at, period_end_at, src_interface_id, dst_interface_id, " +
     "peer_address, traffic_scope, traffic_direction, exit_leg_device, bytes, allowed_bytes, blocked_bytes, unknown_bytes, " +
     "allowed_connections, blocked_connections, unknown_connections, computed_at) VALUES " +

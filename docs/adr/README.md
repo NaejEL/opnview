@@ -33,6 +33,7 @@ change validated on the maintainer's firewall. There are no specifications.
 | [0019](0019-who-owns-the-flow-and-the-client.md) | Who owns the flow, the client and the classification; granted writes | Accepted |
 | [0020](0020-the-migration-of-the-core-tables.md) | The migration of the core tables, in waves, with a transition search path | Proposed |
 | [0021](0021-the-widget-semantics-leave-the-core.md) | The widget semantics leave the core: a shared JavaScript library, the rollups as a derivation, the end of the bridge | Accepted |
+| [0022](0022-the-end-of-the-bridge.md) | The end of the bridge: the core's last reads and writes of the plugins' tables | Proposed |
 
 ## Template
 

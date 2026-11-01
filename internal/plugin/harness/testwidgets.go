@@ -60,6 +60,18 @@ func (w *testWorld) widgetAPI(vm *goja.Runtime, t *goja.Object, fail func(string
 		}
 		return goja.Undefined()
 	})
+	set("purge", func(goja.FunctionCall) goja.Value {
+		if w.database == nil {
+			scripthost.Throw(vm, "t.purge needs a database: the plugin declares neither a table nor a widget")
+		}
+		// The retention purge as the service runs it at the test's instant: the core's statements, the
+		// tables purged by their declared retention, and the purge statements of the plugin under test and
+		// of the plugins it requires, each as its plugin.
+		if err := w.database.Purge(context.Background(), w.reference.Unix(), w.set.PurgeHooks()); err != nil {
+			scripthost.Throw(vm, "t.purge: %v", err)
+		}
+		return goja.Undefined()
+	})
 	set("query", func(call goja.FunctionCall) goja.Value {
 		if w.database == nil {
 			scripthost.Throw(vm, "t.query needs a database: the plugin declares neither a table nor a widget")

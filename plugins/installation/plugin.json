@@ -191,5 +191,7 @@
       ]
     }
   ],
-  "relations": ["installation.relations.sql"]
+  "relations": ["installation.relations.sql"],
+  "statements": ["installation.statements.sql"],
+  "purge": ["purge_interface_addresses"]
 }

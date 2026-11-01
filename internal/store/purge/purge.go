@@ -35,21 +35,19 @@ func (s *PurgeStore) PurgedBefore(ctx context.Context) (int64, bool, error) {
 	return before, true, nil
 }
 
-// Purge applies purge.sql, which reads the horizon from setting.retention_seconds. A horizon of 0
-// means unlimited and deletes nothing: the scalar subquery yields NULL, so every comparison is
-// NULL.
-//
-// The statements run inside one transaction, so a purge is all-or-nothing. The DELETE statements
-// are the file's, unchanged, because sql/schema-checks.sh asserts against that text and two copies
-// would drift. A hypertable's whole chunks past the horizon are dropped first, in the same
-// transaction (dropChunksPastHorizon); the file's row deletion then removes the straddling chunk's
-// rows to the exact second, so the horizon is exact whatever the chunking.
+// Purge applies the retention purge in one transaction, so it is all-or-nothing: every plugin's
+// before_purge statements, then purge.sql -- the core's own tables, reading the horizon from
+// setting.retention_seconds, where 0 means unlimited and deletes nothing: the scalar subquery yields
+// NULL, so every comparison is NULL -- then the plugin tables purged by their declared retention
+// (internal/store/plugindecl/plugintables.go), then every plugin's purge statements, each plugin's as
+// its own role (plugintables.RunPurgeHooks; ADR 0021, step 6). hooks are the loaded plugins', in load
+// order; nil purges the core's tables alone.
 //
 // ORDERING IS THE CALLER'S. A running service purges through collect.Collector.Purge, which never
 // lets this run between a pass storing its rows and the end of that pass's derivation
-// (docs/data-model.md, "Purge"). Whatever the ordering, the hours this writes a purged part for
-// are selected by the next refresh (dirty_hours).
-func (s *PurgeStore) Purge(ctx context.Context, now int64) error {
+// (docs/data-model.md, "Purge"). Whatever the ordering, the hours the rollups' before_purge writes a
+// purged part for are selected by that plugin's next refresh.
+func (s *PurgeStore) Purge(ctx context.Context, now int64, hooks []plugintables.PurgeHook) error {
 	purge, err := purgeFile.ReadFile("purge.sql")
 	if err != nil {
 		return fmt.Errorf("store: reading the embedded purge: %w", err)
@@ -60,6 +58,26 @@ func (s *PurgeStore) Purge(ctx context.Context, now int64) error {
 	}
 	defer func() { _ = transaction.Rollback() }()
 
+	// The two settings are read by the keys purge.sql and schema.sql name them by, not through
+	// internal/config, whose tests open a store: the store cannot import it back.
+	retention, _, err := sqldb.QueryOptionalIntText(ctx, transaction, "the retention",
+		"SELECT CAST(value AS BIGINT) FROM setting WHERE key = 'retention_seconds' AND value ~ '^[0-9]+$'", nil)
+	if err != nil {
+		return err
+	}
+	liveSampleRetention, found, err := sqldb.QueryOptionalIntText(ctx, transaction, "the live sample retention",
+		"SELECT CAST(value AS BIGINT) FROM setting WHERE key = 'live_sample_retention_seconds' AND value ~ '^[1-9][0-9]*$'", nil)
+	if err != nil {
+		return err
+	}
+	if !found {
+		// The default schema.sql seeds for the setting (its settings block): one hour.
+		liveSampleRetention = 3600
+	}
+	parameters := plugintables.PurgeParameters(now, retention, liveSampleRetention)
+	if err := plugintables.RunPurgeHooks(ctx, transaction, hooks, true, parameters); err != nil {
+		return err
+	}
 	for _, statement := range sqldb.SplitStatements(string(purge)) {
 		upper := strings.ToUpper(strings.TrimSpace(stripComments(statement)))
 		if strings.HasPrefix(upper, "BEGIN") || strings.HasPrefix(upper, "COMMIT") {
@@ -69,9 +87,10 @@ func (s *PurgeStore) Purge(ctx context.Context, now int64) error {
 			return fmt.Errorf("store: purging: %w\nstatement: %s", err, sqldb.FirstLine(statement))
 		}
 	}
-	// The tables plugins own, each by its own declared retention
-	// (internal/store/plugindecl/plugintables.go).
 	if err := plugintables.On(s.Handle).PurgePluginTables(ctx, transaction, now); err != nil {
+		return err
+	}
+	if err := plugintables.RunPurgeHooks(ctx, transaction, hooks, false, parameters); err != nil {
 		return err
 	}
 	if err := transaction.Commit(); err != nil {

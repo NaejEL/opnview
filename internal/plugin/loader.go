@@ -164,8 +164,10 @@ type Plugin struct {
 	pushHost *pushHost
 	// declaredDatasets are the datasets its scripts may read (datasetaccess.go).
 	declaredDatasets DeclaredDatasets
-	// derivations are its derivations (derivation.go).
+	// derivations are its derivations (derivation.go), and purge what it does at the retention purge
+	// (purge.go).
 	derivations []*derivation
+	purge       plugintables.PurgeHook
 	// statements are the statements its statement files hold, by name, and relations its relation files
 	// (sqlfiles.go, ADR 0018).
 	statements map[string]string
@@ -517,6 +519,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 	if plugin.derivations, refusal = checkDerivations(plugin, exports, providers, options); refusal != nil {
 		return nil, refusal
 	}
+	if plugin.purge, refusal = checkPurge(plugin); refusal != nil {
+		return nil, refusal
+	}
 	if refusal := loadWidgets(plugin, directory, location, onDisk, origin); refusal != nil {
 		return nil, refusal
 	}
@@ -588,6 +593,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 	}
 	for _, derived := range plugin.derivations {
 		set.AddDerivation(derived)
+	}
+	if purges(plugin.purge) {
+		set.AddPurgeHook(plugin.purge)
 	}
 	plugin.Destinations = append([]string(nil), manifest.Destinations...)
 	// What the plugin declares of its endpoints reaches whichever broker reads this set.

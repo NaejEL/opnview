@@ -126,6 +126,9 @@ const (
 	// manifest does not declare, an output that is not one of the plugin's tables or measures, or a plugin with
 	// no provider whose availability a failed run is recorded in.
 	RefusalDerivationInvalid = "derivation_invalid"
+	// RefusalPurgeInvalid is a manifest whose before_purge or purge names a statement no statement file of the
+	// plugin holds, or one twice (ADR 0021, step 6).
+	RefusalPurgeInvalid = "purge_invalid"
 	// RefusalPushDecodeMissing is a decode function the script does not export under push, an entry of a
 	// protocol whose messages carry no structure that names none, or one of any other protocol that names one.
 	RefusalPushDecodeMissing = "push_decode_missing"

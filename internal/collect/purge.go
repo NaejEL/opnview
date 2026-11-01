@@ -33,7 +33,7 @@ import (
 // describes. It is the retention-purge loop's work.
 func (c *Collector) Purge(ctx context.Context) error {
 	if c.Hooks.Unordered {
-		return c.Store.Purge(ctx, c.Now())
+		return c.Store.Purge(ctx, c.Now(), c.SourceSet.PurgeHooks())
 	}
 	if !c.PurgeMutex.TryLock() {
 		if c.Hooks.PurgeWaits != nil {
@@ -46,7 +46,9 @@ func (c *Collector) Purge(ctx context.Context) error {
 	// stored them (ADR 0020 wave 3), and the hours it writes a purged part for are selected by the
 	// rollups plugin's next refresh whatever ran before (ADR 0021).
 	now := c.Now()
-	if err := c.Store.Purge(ctx, now); err != nil {
+	// The plugins' own purge statements run inside the store's purge transaction, as each plugin
+	// (internal/store/plugintables, purgehook.go).
+	if err := c.Store.Purge(ctx, now, c.SourceSet.PurgeHooks()); err != nil {
 		return err
 	}
 	return c.PurgeMirror(ctx, now)

@@ -69,6 +69,7 @@ double underscore. A plugin directory holds no Go file; a test of the repository
 | `push` | no | The push sources the plugin receives: syslog lines and NetFlow records the firewall sends, and datagrams and lines its script decodes (see *Push sources*). |
 | `datasets` | no | The data-catalogue names its scripts read through `host.datasets` -- core datasets and other plugins' `<plugin>.<table>` (*Datasets a plugin reads*). Its own tables need no entry. |
 | `derivations` | no | Functions of the script the core runs after collection passes, push batches and on a cadence, writing tables, counters and measures (*Derivations*). |
+| `before_purge`, `purge` | no | Statements of the plugin's statement files the retention purge runs as the plugin: before any row of any plugin is purged, and to delete the plugin's own rows past the horizon (*The retention purge*). |
 | `sample_metrics` | no | Which subject kind and which measures of a kind's readings serve a health metric of the catalogue (`cpu`, `memory`...): `{name, provider_kind, subject_kind, measures}`, each a snake_case word, one measure at least and none twice, `provider_kind` one the plugin provides, and a metric declared by one plugin only, else `manifest_invalid`. `host.samples.metrics` answers them; `plugins/insight/plugin.json` declares the built-in ones. |
 
 ### Endpoints
@@ -660,6 +661,33 @@ installation plugin's views `interface_label`, `client_name`, `owner_name` and `
 the names `figures.js` documents. Its tests, `plugins/figures/tests`, show how a library is
 tested: `t.lib` is `host.lib` as the plugin's scripts see it.
 
+## The retention purge
+
+The retention purge removes what is older than the installation's `retention_seconds`, once a day
+and in one transaction. **Each plugin purges its own rows** (ADR 0021, step 6): its manifest names,
+among the statements its statement files hold, the ones the purge runs as the plugin:
+
+| Key | What it is |
+|---|---|
+| `purge` | The statements deleting the plugin's own rows past the horizon, in this order. |
+| `before_purge` | The statements run before any row of any plugin is purged: the rollups' purged part, which reads the flows about to go with their attributions and their measures (`plugins/rollups/rollups.statements.sql`, `purged_part`). |
+
+Every statement runs as the plugin's role, inside the purge's transaction, bound with three
+parameters and no other: `:now`, the instant the purge runs; `:retention`, the installation's
+`retention_seconds` as a number of seconds, 0 for unlimited; `:horizon`, `now - retention`, **null
+when the retention is unlimited**, so `WHERE observed_at < CAST(:horizon AS BIGINT)` deletes
+nothing then, a comparison with null being null; and `:live_sample_retention`, the core's
+`live_sample_retention_seconds` or its default, which the fine samples of a live pass are kept for.
+The phases run across the plugins in load order -- every plugin's `before_purge`, then the core's own
+tables (`internal/store/purge/purge.sql`, which names no plugin's table) and the tables purged by
+their declared `retention`, then every plugin's `purge`. A required plugin loads before the plugins
+requiring it, so a plugin whose rows other plugins' rows point at deletes first, and the `clients`
+plugin, which loads after every table that names a client, removes the clients nothing names any
+more and nobody assigned to a person. A table with a declared `retention` needs no purge statement:
+the core purges it by whole chunks and then to the exact second. A statement the files do not hold is
+refused when the plugin loads (`purge_invalid`). A test runs the purge at the test's instant with
+`t.purge()` (*Testing a widget*).
+
 ## Testing a plugin
 
 A plugin's tests are JavaScript, in `tests/*.test.js`, run by the interpreter that runs the plugin:
@@ -745,6 +773,7 @@ a recorded answer in `testdata/`, `{"__provenance__": {...}, "body": ...}`; `fil
 | `push_parse_missing` | A push entry names a parse function the script does not export under `push`. |
 | `dataset_not_declared` | A script reads, through `host.datasets`, a dataset the manifest does not name under `datasets`. Refused at load when the script names it by a literal; a name computed at run time is refused at the call, a `TypeError` carrying the code. |
 | `derivation_invalid` | A derivation names a function the script does not export, no trigger, a pass of a kind neither core nor its own, a push entry the plugin lacks, a dataset its manifest does not declare, an output that is not one of its tables (with a primary key) or measures, a name twice; or the plugin declares derivations and no provider. |
+| `purge_invalid` | `before_purge` or `purge` names a statement no statement file of the plugin holds, or names one twice. |
 | `push_decode_missing` | A `datagram` or `line` entry names no decode function, or one the script does not export under `push`; or an entry of another protocol names one. |
 
 ## OPNsense versions
@@ -1029,6 +1058,7 @@ applied. Besides the functions of *Testing a plugin*:
 | `t.sql(statement, parameters)` | Runs one statement on the test's database, to arrange the rows a widget reads. |
 | `t.query(text, parameters)` | The rows a `SELECT` returns, on the read role, instants as epoch seconds: what a derivation wrote, what a view serves. |
 | `t.derive(name)` | Runs one of the plugin's derivations now, as a cadence tick would, and writes as the collector writes: `{ran, written, error}`. |
+| `t.purge()` | Runs the retention purge at the test's instant, as the service runs it: the core's tables, the tables purged by their declared retention, and the `before_purge` and `purge` statements of the plugin under test and of the plugins it requires, each as its plugin. The horizon is the `retention_seconds` row of `setting`, which the test arranges with `t.sql`. |
 | `t.widget(type, parameters)` | Asks a widget as `GET /api/widget/{type}` asks it: `{status, condition, body, raw}`, `body` parsed and `raw` the exact bytes. A script that failed answers its reason in `body.reason`, which only a test sees. |
 | `t.golden(file, raw)` | Compares an answer with `tests/<file>`, byte for byte once both are compact. Run the tests once with `OPNVIEW_WRITE_GOLDEN=1` in the environment to write the file instead, then read it before keeping it. |
 
